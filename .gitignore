@@ -1,3 +1,107 @@
+# ============================================================================
+# Swictation Voice Dictation System - Git Ignore
+# ============================================================================
+
+# ============================================================================
+# Python
+# ============================================================================
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments - CRITICAL!
+venv/
+env/
+ENV/
+.venv/
+virtualenv/
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Testing
+.pytest_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+.hypothesis/
+*.cover
+*.py,cover
+.cache
+nosetests.xml
+coverage.xml
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# ============================================================================
+# Project-Specific (Swictation)
+# ============================================================================
+
+# ML Models and caches
+*.nemo
+*.ckpt
+*.pt
+*.pth
+models/
+downloads/
+.cache/
+*.model
+*.pkl
+
+# Audio files and test outputs
+tmp/
+/tmp/
+*.wav
+*.mp3
+*.flac
+*.ogg
+tests/outputs/
+tests/audio_chunks/
+/tests/tmp/
+
+# NeMo/PyTorch cache
+.nemo_cache/
+torch_extensions/
+
+# ============================================================================
+# Claude Flow Runtime State
+# ============================================================================
+
+# Claude Flow environment (tracked in separate repo: swictation-env)
+.claude/
 
 # Claude Flow generated files
 .claude/settings.local.json
@@ -16,12 +120,122 @@ memory/agents/*
 coordination/memory_bank/*
 coordination/subtasks/*
 coordination/orchestration/*
+
+# Database files
 *.db
 *.db-journal
 *.db-wal
+*.db-shm
 *.sqlite
 *.sqlite-journal
 *.sqlite-wal
+
+# Executables
 claude-flow
-# Removed Windows wrapper files per user request
+
+# Hive-mind specific
 hive-mind-prompt-*.txt
+
+# ============================================================================
+# Logs and Debugging
+# ============================================================================
+
+*.log
+logs/
+*.out
+*.err
+debug/
+*.trace
+
+# ============================================================================
+# Security and Credentials
+# ============================================================================
+
+# Environment files
+.env
+.env.local
+.env.production
+.env.*.local
+
+# Keys and certificates
+*.key
+*.pem
+*.cert
+credentials/
+secrets/
+.secrets/
+
+# ============================================================================
+# IDEs and Editors
+# ============================================================================
+
+# VSCode
+.vscode/
+*.code-workspace
+
+# PyCharm
+.idea/
+*.iml
+
+# Vim
+*.swp
+*.swo
+*~
+.vim/
+
+# Emacs
+*~
+\#*\#
+.#*
+
+# Eclipse
+.project
+.pydevproject
+.settings/
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# ============================================================================
+# Operating Systems
+# ============================================================================
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+.directory
+.Trash-*
+
+# ============================================================================
+# Documentation Build
+# ============================================================================
+
+# Sphinx documentation
+docs/_build/
+docs/_static/
+docs/_templates/
+
+# MkDocs
+site/
+
+# ============================================================================
+# Temporary and Backup Files
+# ============================================================================
+
+*.bak
+*.tmp
+*.temp
+*~
+.backup/
+backup/
