@@ -2,150 +2,325 @@
 
 **Real-time voice-to-text dictation daemon for Sway/Wayland with GPU acceleration**
 
-> Hands-free coding on Wayland with <150ms latency, >95% accuracy, and complete privacy.
+> Hands-free coding on Wayland with 382-420ms latency, 95%+ accuracy, and complete privacy.
 
----
-
-## **Product Management Overview**
-
-### **WHY** (The Problem) 🎯
-
-Developers working on Linux with Sway/Wayland compositors face a critical accessibility gap: existing dictation tools like Talon and Dragon NaturallySpeaking are X11-only and incompatible with modern Wayland compositors, while cloud-based solutions suffer from 200-500ms+ network latency and privacy concerns. This creates an impossible tradeoff for developers with RSI, carpal tunnel syndrome, or accessibility needs who require hands-free coding but cannot compromise on speed (<150ms latency), accuracy (>95%), or privacy (no cloud processing). The absence of a Wayland-native, GPU-accelerated, privacy-first dictation solution leaves these users without viable options—even those with consumer NVIDIA GPUs who could leverage local AI acceleration.
-
-### **WHAT** (The Solution) ✨
-
-Swictation is a real-time voice-to-text dictation daemon for Sway/Wayland that provides <150ms end-to-end latency using NVIDIA's state-of-the-art Canary-1B-Flash STT model (5.77% WER, 749-1000x realtime speed) with complete privacy through 100% local GPU processing. It features hotkey-toggle control (Super+Shift+D), memory optimization for 4GB VRAM GPUs, intelligent Voice Activity Detection with only 2.2 MB overhead, code-aware text transformations, and Wayland-native text injection via wtype—making it the only solution optimized for developers on consumer hardware without cloud dependencies. The system achieves 23x faster than realtime processing (3.58s for 84s audio) with perfect speech detection (100% accuracy) while preventing CUDA OOM through intelligent 10-second chunking with 1-second overlap.
-
-### **HOW** (Implementation) 🔧
-
-Swictation uses a multi-threaded streaming pipeline with three core components coordinated through lock-free queues:
-
-- **Audio Capture Module** (src/audio_capture.py): PipeWire-based real-time capture at 16kHz mono with circular buffering, <5ms latency overhead, device enumeration, and loopback support for testing
-- **STT Engine** (NVIDIA Canary-1B-Flash via NeMo 2.5.2): 1GB model using CUDA acceleration, 3.58 GB base VRAM + 8.5 MB per chunk, 6.64s load time, achieving 5.77% WER with 420ms latency on short utterances
-- **Memory Optimizer** (tests/test_canary_chunked.py): 10-second chunking with 1s overlap, automatic GPU cache clearing between chunks, OOM retry mechanism, enabling unlimited audio length on 4GB GPUs
-- **Voice Activity Detection** (Silero VAD): 1MB model with only 2.2 MB GPU overhead, 0.5 speech probability threshold, 100% detection accuracy (10/10 chunks), skipping silence for battery optimization
-- **Text Processing Pipeline** (Planned - Midstream): Code-specific transforms ("new line" → `\n`, "semicolon" → `;`), punctuation restoration, capitalization rules, <10ms latency target
-- **Text Injection** (Planned - wtype): Wayland-native character-by-character streaming with Unicode support, clipboard fallback, <20ms latency per batch
-- **Daemon & Configuration** (Planned - systemd): D-Bus IPC for toggle commands, `~/.config/swictation/config.toml` for settings, Sway keybinding integration (Super+Shift+D)
-
----
-
-## **Performance Metrics** 📈
-
-| Metric | Target | Achieved | Status |
-|--------|--------|----------|--------|
-| **End-to-end Latency** | <150ms | 420ms (short) | ⚠️ Needs optimization |
-| **STT Accuracy (WER)** | <10% | 5.77% | ✅ Excellent |
-| **GPU Memory Usage** | <4GB | 3.58 GB + 8.5 MB/chunk | ✅ Perfect |
-| **VAD Overhead** | <10 MB | 2.2 MB | ✅ Minimal |
-| **Processing Speed** | <1.0x realtime | 0.043x (23x faster) | ✅ Excellent |
-| **Speech Detection** | >95% | 100% (10/10 chunks) | ✅ Perfect |
+[![Status](https://img.shields.io/badge/status-MVP%20Complete-green)](https://github.com/yourusername/swictation)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 
 ---
 
 ## **Quick Start** 🚀
 
-### System Requirements
-
-- Linux with Sway/Wayland compositor
-- NVIDIA GPU with 4GB+ VRAM
-- CUDA 11.8+ compatible drivers
-- PipeWire audio system
-- Python 3.13+
-
-### Installation
+### One-Line Setup (Automated)
 
 ```bash
-# Clone repository
-git clone https://github.com/yourusername/swictation.git
-cd swictation
+sudo /opt/swictation/scripts/setup-sway.sh
+```
 
-# Install dependencies
-pip install -r requirements.txt
+This will:
+- ✅ Add `Alt+Shift+d` keybinding to Sway
+- ✅ Optional daemon autostart
+- ✅ Create config backup
+- ✅ Provide reload instructions
 
-# Test audio capture
-python src/audio_capture.py list
-python src/audio_capture.py 5  # Record 5 seconds
+### Manual Usage
 
-# Test STT engine
-python tests/test_canary.py
+```bash
+# Start daemon
+python3 /opt/swictation/src/swictationd.py
 
-# Test memory-optimized chunking
-python tests/test_canary_chunked.py
+# In another terminal or via Sway keybinding:
+python3 /opt/swictation/src/swictation_cli.py toggle  # Start recording
+# Speak your text...
+python3 /opt/swictation/src/swictation_cli.py toggle  # Stop & transcribe
+```
 
-# Test VAD integration
-python tests/test_canary_vad.py
+### First-Time Test
+
+```bash
+# Test keybinding without Sway
+/opt/swictation/scripts/test-keybinding.sh
+```
+
+📖 **Full Documentation:** See [docs/](docs/) for detailed guides
+
+---
+
+## **Features** ✨
+
+### Core Capabilities
+- 🎯 **382-420ms End-to-End Latency** - NVIDIA Canary-1B-Flash (9.4x realtime)
+- 🔒 **100% Privacy** - All processing on local GPU, no cloud
+- ⚡ **GPU Optimized** - Works on 4GB VRAM (RTX A1000 tested)
+- 🌊 **Wayland Native** - wtype text injection, no X11 dependencies
+- ⌨️ **Hotkey Control** - `Alt+Shift+d` toggle (customizable)
+- 🔄 **systemd Integration** - Auto-start with Sway
+- 📋 **Full Unicode Support** - Emojis, Greek, Chinese, all languages
+
+### Technical Highlights
+- **STT Model:** NVIDIA Canary-1B-Flash (5.77% WER)
+- **Audio Capture:** PipeWire/sounddevice hybrid backend
+- **Text Injection:** wtype (Wayland) with wl-clipboard fallback
+- **Daemon Architecture:** Unix socket IPC, state machine
+- **Model Loading:** Automatic download on first run
+
+---
+
+## **System Requirements** 📋
+
+### Hardware
+- NVIDIA GPU with 4GB+ VRAM (RTX A1000/3050/4060 or better)
+- 8GB+ system RAM
+- x86_64 CPU
+
+### Software
+- Linux with Sway/i3-compatible Wayland compositor
+- NVIDIA driver 535+ (CUDA 11.8+ compatible)
+- PipeWire or PulseAudio
+- Python 3.10+
+
+### Dependencies
+```bash
+# System packages (Arch/Manjaro)
+sudo pacman -S python python-pip wtype wl-clipboard ffmpeg
+
+# System packages (Ubuntu/Debian)
+sudo apt install python3 python3-pip wtype wl-clipboard ffmpeg
+
+# Python packages (see requirements.txt)
+pip install nemo_toolkit[asr] torch sounddevice numpy librosa
 ```
 
 ---
 
-## **Development Status** 🔄
+## **Installation** 📦
 
-### ✅ Phase 1: Core Engine (COMPLETED)
-- [x] NVIDIA driver validation (RTX A1000, 4GB VRAM)
-- [x] NeMo 2.5.2 installation (Python 3.13.3, resolved 30+ dependencies)
-- [x] NVIDIA Canary-1B-Flash model selection and testing
-- [x] Memory optimization (eliminated CUDA OOM on 4GB GPU)
-- [x] Silero VAD integration (2.2 MB overhead, 100% accuracy)
-- [x] Audio capture module (PipeWire support)
+### 1. Clone Repository
+```bash
+git clone https://github.com/yourusername/swictation.git
+cd swictation
+```
 
-### 🔄 Phase 2: Streaming Pipeline (IN PROGRESS)
-- [x] Real-time audio capture implementation
-- [ ] Investigating empty chunk transcriptions (VAD working, likely test audio artifacts)
-- [ ] Streaming pipeline integration
+### 2. Install Dependencies
+```bash
+# Install Python packages
+pip install -r requirements.txt
 
-### 📋 Phase 3: Production System (PLANNED - 18 tasks)
-- [ ] Daemon process with systemd integration
-- [ ] Sway keybinding configuration (Super+Shift+D)
-- [ ] wtype text injection module
-- [ ] Midstream text transformation pipeline
-- [ ] TOML configuration system
-- [ ] Real-time performance monitoring
-- [ ] Comprehensive test suite
-- [ ] Documentation & user guide
+# Download NVIDIA Canary-1B-Flash model (automatic on first run)
+python3 -c "from nemo.collections.asr.models import EncDecMultiTaskModel; EncDecMultiTaskModel.from_pretrained('nvidia/canary-1b-flash')"
+```
+
+### 3. Setup Sway Integration
+```bash
+# Automated setup (recommended)
+sudo /opt/swictation/scripts/setup-sway.sh
+
+# Or manual: Add to ~/.config/sway/config
+echo "bindsym Mod1+Shift+d exec python3 /opt/swictation/src/swictation_cli.py toggle" >> ~/.config/sway/config
+swaymsg reload
+```
+
+### 4. Test Installation
+```bash
+# Run test script
+/opt/swictation/scripts/test-keybinding.sh
+```
+
+---
+
+## **Usage** 📝
+
+### Basic Workflow
+
+1. **Start daemon** (if not using systemd autostart)
+   ```bash
+   python3 /opt/swictation/src/swictationd.py
+   ```
+
+2. **Press `Alt+Shift+d`** to start recording
+3. **Speak your text**
+4. **Press `Alt+Shift+d` again** to stop and transcribe
+5. **Text appears at cursor** in focused application
+
+### CLI Commands
+
+```bash
+# Toggle recording (start/stop)
+python3 /opt/swictation/src/swictation_cli.py toggle
+
+# Check daemon status
+python3 /opt/swictation/src/swictation_cli.py status
+
+# Stop daemon
+python3 /opt/swictation/src/swictation_cli.py stop
+```
+
+### systemd Service (Auto-start)
+
+```bash
+# Copy service file
+cp /opt/swictation/config/swictation.service ~/.config/systemd/user/
+
+# Enable and start
+systemctl --user enable swictation.service
+systemctl --user start swictation.service
+
+# Check status
+systemctl --user status swictation.service
+
+# View logs
+journalctl --user -u swictation.service -f
+```
+
+---
+
+## **Performance** 📈
+
+| Metric | Target | Achieved | Status |
+|--------|--------|----------|--------|
+| **End-to-End Latency** | <150ms | 382-420ms | ⚠️ Good, can optimize |
+| **STT Accuracy (WER)** | <10% | 5.77% | ✅ Excellent |
+| **GPU Memory Usage** | <4GB | 3.37 GB | ✅ Perfect |
+| **Processing Speed (RTFx)** | <1.0x | 0.106x (9.4x faster) | ✅ Excellent |
+
+*Tested on: NVIDIA RTX A1000 Laptop GPU (4GB VRAM)*
 
 ---
 
 ## **Architecture** 🏗️
 
+### System Overview
+
 ```
-┌─────────────────────────────────────────────────────────┐
-│          SWICTATION DAEMON (systemd)                    │
-│  State Machine: [IDLE] ↔ [RECORDING]                   │
-│  IPC: D-Bus socket for toggle commands                 │
-└─────────────────────────────────────────────────────────┘
-            ↓
-    [Audio Capture] → [STT Engine] → [Text Processing] → [Injection]
-    PipeWire/16kHz    Canary-1B     Midstream Pipeline    wtype
-    100ms chunks      + VAD          Code transforms       Wayland
+┌─────────────────────────────────────────────────────────────┐
+│           SWICTATION DAEMON (systemd)                       │
+│  State: [IDLE] ↔ [RECORDING] ↔ [PROCESSING]               │
+│  IPC: Unix socket (/tmp/swictation.sock)                   │
+└─────────────────────────────────────────────────────────────┘
+                          ↓
+    ┌──────────────┬──────────────┬────────────┐
+    │   Audio      │   STT        │    Text    │
+    │   Capture    │   Engine     │  Injection │
+    ├──────────────┼──────────────┼────────────┤
+    │ PipeWire/    │ Canary-1B    │   wtype    │
+    │ sounddevice  │ Flash (GPU)  │  (Wayland) │
+    │ 16kHz mono   │ 5.77% WER    │  Unicode   │
+    └──────────────┴──────────────┴────────────┘
 ```
 
-See [docs/architecture/streaming-pipeline.md](docs/architecture/streaming-pipeline.md) for detailed architecture documentation.
+### Key Components
+
+- **swictationd.py** - Main daemon process (Unix socket IPC, state machine)
+- **audio_capture.py** - Hybrid PipeWire/sounddevice backend
+- **text_injection.py** - wtype integration with Unicode support
+- **swictation_cli.py** - CLI tool for daemon control
+
+📖 **Detailed Architecture:** [docs/architecture.md](docs/architecture.md)
 
 ---
 
-## **Technical Stack** 🛠️
+## **Current Implementation Status** ✅
 
-**Core Dependencies:**
-- Python 3.13.3
-- NVIDIA NeMo 2.5.2 (ASR toolkit)
-- PyTorch with CUDA support
-- Silero VAD (speech detection)
-- sounddevice + PipeWire (audio)
-- librosa (audio processing)
-- wtype (Wayland text injection)
+### Phase 1: Core Engine (COMPLETED)
+- [x] NVIDIA driver validation (RTX A1000, 4GB VRAM)
+- [x] NVIDIA Canary-1B-Flash model integration
+- [x] PipeWire audio capture module
+- [x] Daemon process with Unix socket IPC
+- [x] wtype text injection with full Unicode
+- [x] Sway keybinding configuration (`Alt+Shift+d`)
+- [x] systemd service integration
+- [x] CLI tools (toggle, status, stop)
+- [x] Setup automation scripts
+
+### Phase 2: Experimental Features (TESTED, NOT IN DAEMON)
+- [x] Memory optimization (10s chunking in test_canary_chunked.py)
+- [x] Silero VAD integration (speech detection in test_canary_vad.py)
+- [ ] **TODO:** Integrate VAD into main daemon
+- [ ] **TODO:** Integrate chunking for long audio
+
+### Phase 3: Polish (IN PROGRESS)
+- [x] Documentation & user guide
+- [ ] Quick start guide
+- [ ] Installation script
+- [ ] Comprehensive test suite
+- [ ] Performance monitoring
+- [ ] Configuration system (TOML)
+- [ ] Text transformation pipeline
+
+---
+
+## **Limitations & Known Issues** ⚠️
+
+**Current MVP Limitations:**
+- ⚠️ **No VAD in daemon** - All audio is transcribed (VAD only in tests)
+- ⚠️ **No chunking in daemon** - May fail on very long audio (>60s)
+- ⚠️ **No text transformations** - "new line" does NOT become `\n`
+- ⚠️ **No configuration file** - Settings hardcoded in source
+- ⚠️ **Single-shot transcription** - Not streaming/real-time
+
+**Tested Experimental Features (Not in Main Daemon):**
+- ✅ VAD works perfectly in `test_canary_vad.py` (100% accuracy, 2.2 MB overhead)
+- ✅ Chunking works in `test_canary_chunked.py` (10s chunks with 1s overlap)
+- 🔜 **TODO:** Integrate these into the main daemon
+
+---
+
+## **Documentation** 📚
+
+- **[Installation Guide](docs/sway-integration.md)** - Complete setup instructions
+- **[Architecture](docs/architecture.md)** - System design and components
+- **[Troubleshooting](docs/troubleshooting.md)** - Common issues and solutions
+- **[Voice Commands](docs/voice-commands.md)** - Coding command reference
+
+---
+
+## **Troubleshooting** 🔧
+
+### Quick Fixes
+
+**Daemon not starting?**
+```bash
+# Check if already running
+python3 /opt/swictation/src/swictation_cli.py status
+
+# Kill existing process
+pkill -f swictationd.py
+
+# Start fresh
+python3 /opt/swictation/src/swictationd.py
+```
+
+**No text appearing?**
+```bash
+# Test wtype manually
+echo "test" | wtype -
+
+# Check Wayland socket
+echo $WAYLAND_DISPLAY
+```
+
+**Audio not captured?**
+```bash
+# List audio devices
+python3 /opt/swictation/src/audio_capture.py list
+
+# Test capture
+python3 /opt/swictation/src/audio_capture.py 5  # Record 5 seconds
+```
+
+📖 **Full Troubleshooting:** [docs/troubleshooting.md](docs/troubleshooting.md)
 
 ---
 
 ## **Contributing** 🤝
 
-This project is in active development. Contributions welcome!
+Contributions welcome! Priority areas:
 
-**Priority Areas:**
-1. Streaming pipeline latency optimization (target: <150ms)
-2. Text transformation middleware for coding commands
-3. Daemon process and D-Bus IPC implementation
-4. Comprehensive testing and benchmarking
+1. **Integrate VAD** - Move VAD from tests into main daemon
+2. **Integrate Chunking** - Support unlimited audio length
+3. **Latency Optimization** - Target <200ms end-to-end
+4. **Text Transformations** - Code-specific commands ("new line" → `\n`)
+5. **Testing** - Comprehensive test coverage
 
 ---
 
@@ -153,21 +328,19 @@ This project is in active development. Contributions welcome!
 
 Apache License 2.0 - See [LICENSE](LICENSE) for details.
 
-This project is free and open-source software, encouraging contributions and modifications.
-
 ---
 
 ## **Acknowledgments** 🙏
 
-- NVIDIA for the Canary-1B-Flash model
-- Silero team for lightweight VAD
-- NeMo framework contributors
-- Sway/Wayland community
+- **NVIDIA** - Canary-1B-Flash model
+- **Silero Team** - Lightweight VAD (tested)
+- **NeMo Contributors** - ASR framework
+- **Sway/Wayland Community** - Compositor and tools
 
 ---
 
-**Project Status:** Alpha - Core engine complete, production features in development
+**Status:** MVP Complete - Production Ready for Testing
 
-**Hardware Tested:** NVIDIA RTX A1000 (4GB VRAM)
+**Hardware Tested:** NVIDIA RTX A1000 Laptop GPU (4GB VRAM)
 
-**Target Release:** November 2025
+**Next Milestone:** Integrate VAD and chunking into main daemon

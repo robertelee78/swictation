@@ -22,6 +22,8 @@ from text_injection import TextInjector, InjectionMethod
 
 # STT imports
 import torch
+import gc
+import librosa
 import numpy as np
 import soundfile as sf
 from nemo.collections.asr.models import EncDecMultiTaskModel
@@ -45,7 +47,10 @@ class SwictationDaemon:
         self,
         model_name: str = 'nvidia/canary-1b-flash',
         sample_rate: int = 16000,
-        socket_path: str = '/tmp/swictation.sock'
+        socket_path: str = '/tmp/swictation.sock',
+        chunk_duration: float = 10.0,
+        chunk_overlap: float = 1.0,
+        vad_threshold: float = 0.5
     ):
         """
         Initialize Swictation daemon.
@@ -54,10 +59,16 @@ class SwictationDaemon:
             model_name: STT model to use
             sample_rate: Audio sample rate (16kHz for Canary)
             socket_path: Unix socket path for IPC
+            chunk_duration: Duration of each audio chunk in seconds (for memory optimization)
+            chunk_overlap: Overlap between chunks in seconds (for context continuity)
+            vad_threshold: Voice Activity Detection threshold (0-1)
         """
         self.model_name = model_name
         self.sample_rate = sample_rate
         self.socket_path = socket_path
+        self.chunk_duration = chunk_duration
+        self.chunk_overlap = chunk_overlap
+        self.vad_threshold = vad_threshold
 
         # State
         self.state = DaemonState.IDLE
@@ -68,6 +79,8 @@ class SwictationDaemon:
         self.audio_capture: Optional[AudioCapture] = None
         self.text_injector: Optional[TextInjector] = None
         self.stt_model = None
+        self.vad_model = None
+        self.get_speech_timestamps = None
 
         # IPC socket
         self.server_socket: Optional[socket.socket] = None
@@ -78,6 +91,38 @@ class SwictationDaemon:
         self.temp_dir.mkdir(exist_ok=True)
 
         print("Swictation daemon initialized")
+
+    def load_vad_model(self):
+        """Load Silero VAD model (lightweight, <3 MB)"""
+        print("Loading Silero VAD model...")
+        try:
+            # Download Silero VAD from torch hub
+            vad_model, utils = torch.hub.load(
+                repo_or_dir='snakers4/silero-vad',
+                model='silero_vad',
+                force_reload=False,
+                onnx=False
+            )
+
+            if torch.cuda.is_available():
+                vad_model = vad_model.cuda()
+
+            vad_model.eval()
+
+            # Extract utility functions
+            (get_speech_timestamps, _, _, *_) = utils
+
+            self.vad_model = vad_model
+            self.get_speech_timestamps = get_speech_timestamps
+
+            gpu_mem = torch.cuda.memory_allocated() / 1e6 if torch.cuda.is_available() else 0
+            print(f"✓ Silero VAD loaded ({gpu_mem:.1f} MB GPU memory)")
+
+        except Exception as e:
+            print(f"⚠ Failed to load Silero VAD: {e}")
+            print("  Continuing without VAD (all audio will be transcribed)")
+            self.vad_model = None
+            self.get_speech_timestamps = None
 
     def load_stt_model(self):
         """Load STT model (heavy operation, done once on startup)"""
@@ -96,6 +141,9 @@ class SwictationDaemon:
 
             load_time = time.time() - load_start
             print(f"✓ STT model loaded in {load_time:.2f}s")
+
+            # Load VAD model after STT
+            self.load_vad_model()
 
         except Exception as e:
             print(f"✗ Failed to load STT model: {e}")
@@ -193,35 +241,167 @@ class SwictationDaemon:
             print(f"✗ Failed to stop recording: {e}")
             self.set_state(DaemonState.ERROR)
 
-    def _process_audio(self, audio: np.ndarray):
-        """Process audio: STT → text injection"""
+    def _detect_speech_vad(self, audio: np.ndarray) -> bool:
+        """
+        Use Silero VAD to detect if audio contains speech.
+        Returns True if speech detected, False if silence.
+        """
+        if self.vad_model is None:
+            return True  # No VAD available, assume speech
+
         try:
-            # Save to temp file (NeMo requires file path)
-            temp_audio_path = self.temp_dir / f'capture_{int(time.time())}.wav'
-            sf.write(temp_audio_path, audio, self.sample_rate)
+            # Convert to torch tensor
+            audio_tensor = torch.from_numpy(audio).float()
 
-            # Transcribe
-            print("🧠 Transcribing...")
+            if torch.cuda.is_available():
+                audio_tensor = audio_tensor.cuda()
+
+            # Get speech timestamps
+            speech_timestamps = self.get_speech_timestamps(
+                audio_tensor,
+                self.vad_model,
+                threshold=self.vad_threshold,
+                sampling_rate=self.sample_rate,
+                min_speech_duration_ms=250,
+                min_silence_duration_ms=100
+            )
+
+            has_speech = len(speech_timestamps) > 0
+            return has_speech
+
+        except Exception as e:
+            print(f"    ⚠ VAD error: {e}, assuming speech present")
+            return True
+
+    def _chunk_audio(self, audio: np.ndarray):
+        """
+        Split audio into chunks with overlap for memory optimization.
+        Yields (audio_chunk, start_time, end_time) tuples.
+        """
+        total_duration = len(audio) / self.sample_rate
+        chunk_samples = int(self.chunk_duration * self.sample_rate)
+        overlap_samples = int(self.chunk_overlap * self.sample_rate)
+        stride = chunk_samples - overlap_samples
+
+        start_sample = 0
+        chunk_idx = 0
+
+        while start_sample < len(audio):
+            end_sample = min(start_sample + chunk_samples, len(audio))
+            chunk = audio[start_sample:end_sample]
+
+            start_time = start_sample / self.sample_rate
+            end_time = end_sample / self.sample_rate
+
+            yield chunk, start_time, end_time, chunk_idx
+
+            # Move to next chunk
+            start_sample += stride
+            chunk_idx += 1
+
+            # Break if this was the last chunk
+            if end_sample >= len(audio):
+                break
+
+    def _process_audio(self, audio: np.ndarray):
+        """Process audio: VAD → Chunking → STT → text injection"""
+        try:
+            duration = len(audio) / self.sample_rate
+            print(f"🧠 Processing {duration:.2f}s audio...")
+
+            # Quick VAD check on full audio first
+            if self.vad_model is not None:
+                print("  Checking for speech...")
+                if not self._detect_speech_vad(audio):
+                    print("⚠ No speech detected (silence), skipping transcription")
+                    self.set_state(DaemonState.IDLE)
+                    return
+
             transcribe_start = time.time()
+            transcriptions = []
+            chunks_processed = 0
+            chunks_skipped = 0
 
-            hypothesis = self.stt_model.transcribe(
-                audio=str(temp_audio_path),
-                source_lang='en',
-                target_lang='en',
-                pnc='yes',
-                batch_size=1
-            )[0]
+            # Determine if chunking is needed
+            if duration > self.chunk_duration:
+                print(f"  Long audio ({duration:.1f}s), using chunking...")
 
-            transcription = hypothesis.text if hasattr(hypothesis, 'text') else str(hypothesis)
+                # Process in chunks
+                for chunk, start_time, end_time, chunk_idx in self._chunk_audio(audio):
+                    chunk_duration = end_time - start_time
+
+                    # VAD check per chunk
+                    if self.vad_model is not None:
+                        if not self._detect_speech_vad(chunk):
+                            print(f"    Chunk {chunk_idx+1}: [{start_time:.1f}s-{end_time:.1f}s] Silence - skipped")
+                            chunks_skipped += 1
+                            continue
+
+                    print(f"    Chunk {chunk_idx+1}: [{start_time:.1f}s-{end_time:.1f}s] Transcribing...")
+
+                    # Save chunk to temp file
+                    temp_chunk_path = self.temp_dir / f'chunk_{int(time.time())}_{chunk_idx}.wav'
+                    sf.write(temp_chunk_path, chunk, self.sample_rate)
+
+                    # Transcribe chunk
+                    hypothesis = self.stt_model.transcribe(
+                        audio=str(temp_chunk_path),
+                        source_lang='en',
+                        target_lang='en',
+                        pnc='yes',
+                        batch_size=1
+                    )[0]
+
+                    chunk_text = hypothesis.text if hasattr(hypothesis, 'text') else str(hypothesis)
+
+                    if chunk_text.strip():
+                        transcriptions.append(chunk_text.strip())
+                        print(f"      → \"{chunk_text[:50]}...\"" if len(chunk_text) > 50 else f"      → \"{chunk_text}\"")
+
+                    chunks_processed += 1
+
+                    # Cleanup chunk file
+                    temp_chunk_path.unlink(missing_ok=True)
+
+                    # Clear GPU cache between chunks
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                        gc.collect()
+
+                print(f"  Processed {chunks_processed} chunks, skipped {chunks_skipped} silence chunks")
+
+            else:
+                # Short audio, process in one shot
+                print("  Transcribing (single chunk)...")
+                temp_audio_path = self.temp_dir / f'capture_{int(time.time())}.wav'
+                sf.write(temp_audio_path, audio, self.sample_rate)
+
+                hypothesis = self.stt_model.transcribe(
+                    audio=str(temp_audio_path),
+                    source_lang='en',
+                    target_lang='en',
+                    pnc='yes',
+                    batch_size=1
+                )[0]
+
+                transcription = hypothesis.text if hasattr(hypothesis, 'text') else str(hypothesis)
+
+                if transcription.strip():
+                    transcriptions.append(transcription.strip())
+
+                temp_audio_path.unlink(missing_ok=True)
+
+            # Merge transcriptions
+            full_transcription = ' '.join(transcriptions)
             transcribe_time = time.time() - transcribe_start
 
             print(f"✓ Transcribed in {transcribe_time*1000:.0f}ms")
-            print(f"  Text: {transcription}")
+            print(f"  Text: {full_transcription}")
 
             # Inject text
-            if transcription.strip():
+            if full_transcription.strip():
                 print("⌨️ Injecting text...")
-                success = self.text_injector.inject(transcription)
+                success = self.text_injector.inject(full_transcription)
 
                 if success:
                     print("✓ Text injected successfully")
@@ -230,15 +410,14 @@ class SwictationDaemon:
             else:
                 print("⚠ Empty transcription, nothing to inject")
 
-            # Cleanup temp file
-            temp_audio_path.unlink(missing_ok=True)
-
             # Return to idle
             self.set_state(DaemonState.IDLE)
             print("✓ Ready for next recording\n")
 
         except Exception as e:
             print(f"✗ Processing error: {e}")
+            import traceback
+            traceback.print_exc()
             self.set_state(DaemonState.ERROR)
             time.sleep(1)
             self.set_state(DaemonState.IDLE)
