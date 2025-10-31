@@ -102,6 +102,8 @@ torch_extensions/
 
 # Claude Flow environment (tracked in separate repo: swictation-env)
 .claude/
+.claude
+CLAUDE.md
 
 # Claude Flow generated files
 .claude/settings.local.json
