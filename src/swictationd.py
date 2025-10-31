@@ -132,24 +132,16 @@ class SwictationDaemon:
 
         try:
             self.stt_model = EncDecMultiTaskModel.from_pretrained(self.model_name)
-            print("[DEBUG] from_pretrained() returned", flush=True)
-
             self.stt_model.eval()
-            print("[DEBUG] eval() completed", flush=True)
 
             if torch.cuda.is_available():
-                print("[DEBUG] Calling .cuda()...", flush=True)
                 self.stt_model = self.stt_model.cuda()
-                print("[DEBUG] .cuda() completed", flush=True)
                 print(f"  Using GPU: {torch.cuda.get_device_name(0)}", flush=True)
             else:
                 print("  Using CPU (slower)", flush=True)
 
             load_time = time.time() - load_start
-            print("[DEBUG] Calculated load time", flush=True)
-
             gpu_mem = torch.cuda.memory_allocated() / 1e6 if torch.cuda.is_available() else 0
-            print("[DEBUG] Got GPU memory", flush=True)
 
             print(f"✓ STT model loaded in {load_time:.2f}s", flush=True)
             print(f"  GPU Memory: {gpu_mem:.1f} MB", flush=True)
@@ -460,83 +452,56 @@ class SwictationDaemon:
 
     def _ipc_loop(self):
         """Listen for IPC commands"""
-        print(f"[DEBUG] IPC loop started, self.running={self.running}", flush=True)
         while self.running:
             try:
                 # Accept connection with timeout
                 self.server_socket.settimeout(1.0)
-                print("[DEBUG] Waiting for connection...")
                 conn, addr = self.server_socket.accept()
-                print(f"[DEBUG] Connection accepted from {addr}")
 
                 with conn:
                     # Receive command
-                    print("[DEBUG] Waiting to receive data...")
                     data = conn.recv(1024)
-                    print(f"[DEBUG] Received {len(data)} bytes: {data}")
-
                     if not data:
-                        print("[DEBUG] Empty data, continuing...")
                         continue
 
                     try:
                         command = json.loads(data.decode('utf-8'))
-                        print(f"[DEBUG] Parsed command: {command}")
                         response = self._handle_command(command)
-                        print(f"[DEBUG] Generated response: {response}")
-                    except json.JSONDecodeError as e:
-                        print(f"[DEBUG] JSON decode error: {e}")
+                    except json.JSONDecodeError:
                         response = {'error': 'Invalid JSON'}
 
                     # Send response
-                    response_data = json.dumps(response).encode('utf-8')
-                    print(f"[DEBUG] Sending response: {response_data}")
-                    conn.sendall(response_data)
-                    print("[DEBUG] Response sent!")
+                    conn.sendall(json.dumps(response).encode('utf-8'))
 
             except socket.timeout:
                 # This is normal - just checking if we should still run
                 continue
             except Exception as e:
                 if self.running:
-                    print(f"[DEBUG] IPC error: {e}")
-                    import traceback
-                    traceback.print_exc()
+                    print(f"IPC error: {e}")
 
     def _handle_command(self, command: dict) -> dict:
         """Handle IPC command"""
-        print(f"[DEBUG] _handle_command called with: {command}")
         action = command.get('action', '')
-        print(f"[DEBUG] Action: {action}")
 
         if action == 'toggle':
-            print("[DEBUG] Handling toggle action")
             self.toggle_recording()
-            result = {
+            return {
                 'status': 'ok',
                 'state': self.get_state().value
             }
-            print(f"[DEBUG] Returning toggle result: {result}")
-            return result
 
         elif action == 'status':
-            print("[DEBUG] Handling status action")
-            result = {
+            return {
                 'status': 'ok',
                 'state': self.get_state().value
             }
-            print(f"[DEBUG] Returning status result: {result}")
-            return result
 
         elif action == 'stop':
-            print("[DEBUG] Handling stop action")
             self.running = False
-            result = {'status': 'ok', 'message': 'Stopping daemon'}
-            print(f"[DEBUG] Returning stop result: {result}")
-            return result
+            return {'status': 'ok', 'message': 'Stopping daemon'}
 
         else:
-            print(f"[DEBUG] Unknown action: {action}")
             return {'error': f'Unknown action: {action}'}
 
     def start(self):
@@ -547,28 +512,19 @@ class SwictationDaemon:
 
         try:
             # Load VAD first (prevents torch.hub.load() from hanging)
-            print("[DEBUG] About to load VAD model...", flush=True)
             self.load_vad_model()
-            print("[DEBUG] VAD model loaded, continuing...", flush=True)
 
             # Then load STT model (slow)
-            print("[DEBUG] About to load STT model...", flush=True)
             self.load_stt_model()
-            print("[DEBUG] STT model loaded, continuing...", flush=True)
 
             # Initialize components
-            print("[DEBUG] About to initialize components...", flush=True)
             self.initialize_components()
-            print("[DEBUG] Components initialized, continuing...", flush=True)
 
             # Set running flag FIRST (before IPC server starts the thread)
             self.running = True
-            print(f"[DEBUG] Set self.running = True", flush=True)
 
             # Start IPC server
-            print("[DEBUG] About to start IPC server...", flush=True)
             self.start_ipc_server()
-            print("[DEBUG] IPC server started, continuing...", flush=True)
 
             self.set_state(DaemonState.IDLE)
 
