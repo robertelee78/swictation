@@ -311,6 +311,10 @@ class SwictationDaemon:
                 self._last_transcription = ""         # Full cumulative transcription
                 self._last_injected = ""              # Text already injected (for deduplication)
 
+                # VAD-triggered segmentation state
+                self._silence_duration = 0            # Track silence duration in seconds
+                self._speech_detected = False         # Whether speech was detected in current segment
+
                 # CRITICAL: Reset FrameBatchMultiTaskAED decoder state for new recording
                 # This clears:
                 #   1. Audio buffer (left context window)
@@ -329,25 +333,90 @@ class SwictationDaemon:
             self.set_state(DaemonState.ERROR)
 
     def _on_audio_chunk(self, audio: np.ndarray, frames: int):
-        """Callback for real-time audio chunks during streaming mode"""
+        """
+        Callback for real-time audio chunks during streaming mode.
+        Uses VAD to detect natural pauses (2s silence) and transcribe complete segments.
+        """
+        # 1. Add frames to continuous buffer
         self._streaming_buffer.extend(audio)
         self._streaming_frames += frames
 
-        # Check if we have enough frames for a streaming chunk
-        chunk_frames = int(self.streaming_chunk_size * self.sample_rate)
-        if len(self._streaming_buffer) >= chunk_frames:
-            # Extract chunk
-            chunk = np.array(self._streaming_buffer[:chunk_frames])
-            self._streaming_buffer = self._streaming_buffer[chunk_frames:]
+        # 2. Check if we have enough frames for VAD (512ms window for reliable detection)
+        vad_window_frames = int(0.512 * self.sample_rate)  # 512ms VAD window
 
-            # Process chunk in background (non-blocking)
-            if self._streaming_thread is None or not self._streaming_thread.is_alive():
-                self._streaming_thread = threading.Thread(
-                    target=self._process_streaming_chunk,
-                    args=(chunk.copy(),),
-                    daemon=True
-                )
-                self._streaming_thread.start()
+        if len(self._streaming_buffer) >= vad_window_frames:
+            # 3. Extract last 512ms for VAD check
+            vad_chunk = np.array(self._streaming_buffer[-vad_window_frames:])
+
+            # 4. Run VAD to detect speech/silence
+            has_speech = self._detect_speech_vad(vad_chunk)
+
+            # 5. Track silence duration
+            if has_speech:
+                self._silence_duration = 0
+                self._speech_detected = True
+            else:
+                self._silence_duration += frames / self.sample_rate
+
+            # 6. Trigger transcription on 2s silence AFTER speech was detected
+            min_segment_duration = 1.0  # Don't transcribe segments < 1s
+            silence_threshold = 2.0      # 2 seconds of silence triggers transcription
+
+            if (self._speech_detected and
+                self._silence_duration >= silence_threshold and
+                len(self._streaming_buffer) >= int(min_segment_duration * self.sample_rate)):
+
+                # 7. Transcribe accumulated segment (full context = perfect accuracy)
+                segment = np.array(self._streaming_buffer)
+
+                # Process in background thread
+                if self._streaming_thread is None or not self._streaming_thread.is_alive():
+                    self._streaming_thread = threading.Thread(
+                        target=self._process_vad_segment,
+                        args=(segment.copy(),),
+                        daemon=True
+                    )
+                    self._streaming_thread.start()
+
+                # 8. Clear buffer for next segment
+                self._streaming_buffer = []
+                self._silence_duration = 0
+                self._speech_detected = False
+
+    def _process_vad_segment(self, segment: np.ndarray):
+        """
+        Transcribe VAD-detected speech segment with full context.
+        Each segment is independent (speaker paused), providing perfect accuracy.
+        """
+        try:
+            duration = len(segment) / self.sample_rate
+            print(f"  🎤 VAD segment: {duration:.2f}s", flush=True)
+
+            # Save segment to temp file
+            temp_path = Path(tempfile.mktemp(suffix='.wav'))
+            sf.write(temp_path, segment, self.sample_rate)
+
+            # Transcribe with FULL segment context (not chunks!)
+            hypothesis = self.stt_model.transcribe(
+                [str(temp_path)],
+                batch_size=1,
+                source_lang='en',
+                target_lang='en',
+                pnc='yes'
+            )[0]
+
+            text = hypothesis.text if hasattr(hypothesis, 'text') else str(hypothesis)
+            temp_path.unlink(missing_ok=True)
+
+            # Inject text directly (no delta calculation needed - each segment is independent)
+            if text.strip():
+                print(f"  📝 {text}", flush=True)
+                self.text_injector.inject(text + ' ')  # Add space between segments
+
+        except Exception as e:
+            print(f"  ⚠ VAD segment error: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
 
     def _inject_streaming_delta(self, new_transcription: str):
         """
