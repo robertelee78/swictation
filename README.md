@@ -4,7 +4,7 @@
 
 > Hands-free coding on Wayland with VAD-triggered auto-transcription, <2s latency, 95%+ accuracy, and complete privacy.
 
-[![Status](https://img.shields.io/badge/status-Production%20Ready-green)](https://github.com/yourusername/swictation)
+[![Status](https://img.shields.io/badge/status-Production%20Ready-green)](https://github.com/robertelee78/swictation)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 
 ---
@@ -194,7 +194,7 @@ pip install nemo_toolkit[asr] torch sounddevice numpy librosa
 
 ### 1. Clone Repository
 ```bash
-git clone https://github.com/yourusername/swictation.git
+git clone https://github.com/robertelee78/swictation.git
 cd swictation
 ```
 
