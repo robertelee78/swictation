@@ -53,7 +53,7 @@ class SwictationDaemon:
         chunk_duration: float = 10.0,
         chunk_overlap: float = 1.0,
         vad_threshold: float = 0.5,
-        streaming_mode: bool = True,
+        streaming_mode: bool = False,  # Disabled: batch mode for better accuracy
         streaming_chunk_size: float = 0.4,
         enable_performance_monitoring: bool = True
     ):
@@ -245,13 +245,14 @@ class SwictationDaemon:
         """Initialize audio capture and text injection"""
         print("Initializing components...", flush=True)
 
-        # Audio capture
+        # Audio capture (streaming_mode disabled for batch transcription)
         try:
             self.audio_capture = AudioCapture(
                 sample_rate=self.sample_rate,
-                buffer_duration=30.0  # 30s max recording
+                buffer_duration=30.0,  # 30s max recording
+                streaming_mode=False    # Batch mode for better accuracy
             )
-            print("✓ Audio capture initialized")
+            print("✓ Audio capture initialized (batch mode)")
         except Exception as e:
             print(f"✗ Audio capture init failed: {e}")
             raise
