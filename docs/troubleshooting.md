@@ -309,7 +309,7 @@ echo "export LANG=en_US.UTF-8" >> ~/.bashrc
 
 ### Keybinding Not Working
 
-**Symptoms:** Pressing `Alt+Shift+d` does nothing
+**Symptoms:** Pressing `$mod+Shift+d` does nothing
 
 **Diagnostics:**
 ```bash
@@ -334,7 +334,7 @@ grep -i swictation ~/.config/sway/config
 sudo /opt/swictation/scripts/setup-sway.sh
 
 # Or add manually
-echo "bindsym Mod1+Shift+d exec python3 /opt/swictation/src/swictation_cli.py toggle" >> ~/.config/sway/config
+echo "bindsym \$mod+Shift+d exec python3 /opt/swictation/src/swictation_cli.py toggle" >> ~/.config/sway/config
 ```
 
 **2. Config not reloaded**
@@ -345,11 +345,11 @@ swaymsg reload
 
 **3. Keybinding conflict**
 ```bash
-# Check for existing Mod1+Shift+d binding
-grep "Mod1+Shift+d" ~/.config/sway/config
+# Check for existing $mod+Shift+d binding
+grep "\$mod+Shift+d" ~/.config/sway/config
 
-# Change to different key if conflict exists
-bindsym Mod1+Shift+v exec python3 /opt/swictation/src/swictation_cli.py toggle
+# Change to different key if conflict exists (example uses Shift+v)
+bindsym $mod+Shift+v exec python3 /opt/swictation/src/swictation_cli.py toggle
 ```
 
 ---

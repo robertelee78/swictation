@@ -126,16 +126,20 @@ SWICTATION TYPES:  console.log("hello");
 
 ## Workflow Tips
 
-### Starting and Stopping
+### Starting and Stopping (VAD Streaming)
 
-**Press `Alt+Shift+d` once:**
-- Starts recording
-- Speak your code/text
+**Press `$mod+Shift+d` once:**
+- Starts continuous recording
+- Speak naturally with pauses
 
-**Press `Alt+Shift+d` again:**
+**While recording:**
+- Text appears automatically after 2-second pauses
+- No need to stop between sentences
+- Just keep speaking and pausing naturally
+
+**Press `$mod+Shift+d` again:**
 - Stops recording
-- Transcribes and injects text
-- Text appears at cursor
+- Final segment (if any) is transcribed
 
 ### Best Practices
 

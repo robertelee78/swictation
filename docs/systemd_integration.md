@@ -128,17 +128,17 @@ The service is configured to start automatically with Sway via `WantedBy=sway-se
 2. systemd starts `sway-session.target`
 3. `swictation.service` starts automatically
 4. The daemon loads models (~9 seconds)
-5. Ready to receive toggle commands (Alt+Shift+d)
+5. Ready to receive toggle commands ($mod+Shift+d)
 
 ### Sway Configuration
 
 Your Sway config should include the keybinding:
 ```
 # Swictation voice dictation toggle
-bindsym Mod1+Shift+d exec python3 /opt/swictation/src/swictation_cli.py toggle
+bindsym $mod+Shift+d exec python3 /opt/swictation/src/swictation_cli.py toggle
 ```
 
-See `docs/sway-integration.md` for complete Sway setup.
+Run `./scripts/setup-sway.sh` to add this automatically.
 
 ## Troubleshooting
 
