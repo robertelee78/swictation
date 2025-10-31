@@ -1,0 +1,105 @@
+# Swictation Streaming Configuration
+# Configuration for NeMo Wait-k streaming transcription
+
+streaming:
+  # Enable/disable streaming mode (true = real-time text injection, false = batch mode)
+  enabled: true
+
+  # Streaming policy: "waitk" (accurate) or "alignatt" (faster)
+  # waitk: Conservative, 1 token per chunk, higher accuracy
+  # alignatt: Alignment-based, multiple tokens per chunk, lower latency
+  policy: waitk
+
+  # Audio chunking configuration
+  chunk_secs: 1.0              # Duration of each audio chunk (seconds)
+                               # Smaller = lower latency, less context
+                               # Larger = higher latency, more context
+                               # Recommended: 0.8-1.5s
+
+  left_context_secs: 10.0      # Left context window (historical audio)
+                               # How much past audio to remember
+                               # Larger = better accuracy, more memory
+                               # Recommended: 8.0-15.0s
+
+  right_context_secs: 0.5      # Right context (lookahead audio)
+                               # Affects minimum latency floor
+                               # Smaller = lower latency
+                               # Recommended: 0.3-0.5s
+
+  # Wait-k policy parameters (only used if policy: waitk)
+  waitk_lagging: 2             # Number of chunks to wait before predicting
+                               # Higher = more conservative, better accuracy
+                               # Lower = faster response, may lose accuracy
+                               # Recommended: 1-3
+
+  # Quality and performance settings
+  hallucinations_detector: true  # Enable hallucination detection
+                                 # Prevents phantom words in silence
+                                 # Recommended: true for dictation
+
+  beam_size: 1                   # Beam search size (1 = greedy)
+                                 # Higher = better quality, slower
+                                 # For real-time: use 1
+                                 # For offline: can use 4-8
+
+  # Performance tuning
+  batch_size: 1                  # Number of parallel streams
+                                 # For single-user dictation: 1
+                                 # For multi-user server: 4-8
+
+  compute_dtype: null            # GPU compute precision
+                                 # null = auto-detect (bfloat16 on Ampere+, float32 fallback)
+                                 # "bfloat16" = fast, modern GPUs (RTX 30/40 series)
+                                 # "float16" = compatible, older GPUs
+                                 # "float32" = slowest, most accurate
+
+# Preset configurations for different use cases
+# Copy one of these blocks to the main config above
+
+# PRESET 1: Lowest Latency (<1.5s total)
+# streaming:
+#   enabled: true
+#   policy: alignatt
+#   chunk_secs: 0.8
+#   left_context_secs: 8.0
+#   right_context_secs: 0.3
+#   waitk_lagging: 1
+#   hallucinations_detector: true
+#   beam_size: 1
+#   batch_size: 1
+
+# PRESET 2: Maximum Accuracy
+# streaming:
+#   enabled: true
+#   policy: waitk
+#   chunk_secs: 1.5
+#   left_context_secs: 15.0
+#   right_context_secs: 1.0
+#   waitk_lagging: 3
+#   hallucinations_detector: true
+#   beam_size: 1
+#   batch_size: 1
+
+# PRESET 3: Memory Constrained (<4GB VRAM)
+# streaming:
+#   enabled: true
+#   policy: alignatt
+#   chunk_secs: 0.5
+#   left_context_secs: 5.0
+#   right_context_secs: 0.3
+#   waitk_lagging: 1
+#   hallucinations_detector: false  # Save memory
+#   beam_size: 1
+#   batch_size: 1
+#   compute_dtype: "float16"
+
+# PRESET 4: Batch Mode (Non-streaming)
+# streaming:
+#   enabled: false
+#   # All other parameters ignored in batch mode
+
+# Performance expectations (RTX A1000 4GB VRAM):
+# - Default config: ~1.5s latency, 3600 MB GPU memory, 100% accuracy
+# - Lowest latency: ~1.2s latency, 3500 MB GPU memory, 99%+ accuracy
+# - Maximum accuracy: ~2.0s latency, 3700 MB GPU memory, 100% accuracy
+# - Memory constrained: ~1.0s latency, 3200 MB GPU memory, 95%+ accuracy

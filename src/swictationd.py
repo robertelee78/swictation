@@ -54,7 +54,8 @@ class SwictationDaemon:
         chunk_overlap: float = 1.0,
         vad_threshold: float = 0.5,
         streaming_mode: bool = True,
-        streaming_chunk_size: float = 0.4
+        streaming_chunk_size: float = 0.4,
+        enable_performance_monitoring: bool = True
     ):
         """
         Initialize Swictation daemon.
@@ -68,6 +69,7 @@ class SwictationDaemon:
             vad_threshold: Voice Activity Detection threshold (0-1)
             streaming_mode: Enable real-time streaming transcription (default: True)
             streaming_chunk_size: Chunk size for streaming in seconds (default: 0.4s = 400ms)
+            enable_performance_monitoring: Enable performance monitoring (default: True)
         """
         self.model_name = model_name
         self.sample_rate = sample_rate
@@ -77,6 +79,7 @@ class SwictationDaemon:
         self.vad_threshold = vad_threshold
         self.streaming_mode = streaming_mode
         self.streaming_chunk_size = streaming_chunk_size
+        self.enable_performance_monitoring = enable_performance_monitoring
 
         # State
         self.state = DaemonState.IDLE
@@ -97,6 +100,31 @@ class SwictationDaemon:
         self.vad_model = None
         self.get_speech_timestamps = None
         self.frame_asr = None  # NeMo streaming processor
+
+        # Performance monitoring
+        self.performance_monitor = None
+        if enable_performance_monitoring:
+            try:
+                from performance_monitor import PerformanceMonitor
+
+                # Define warning callbacks
+                def performance_warning(message: str):
+                    print(f"⚠️  Performance: {message}", flush=True)
+
+                warning_callbacks = {
+                    'high_gpu_memory': performance_warning,
+                    'high_cpu': performance_warning,
+                    'high_latency': performance_warning,
+                    'memory_leak': performance_warning,
+                }
+
+                self.performance_monitor = PerformanceMonitor(
+                    history_size=1000,
+                    warning_callbacks=warning_callbacks
+                )
+            except ImportError:
+                print("⚠️  Performance monitoring not available (psutil not installed)")
+                self.performance_monitor = None
 
         # IPC socket
         self.server_socket: Optional[socket.socket] = None
@@ -163,31 +191,48 @@ class SwictationDaemon:
             print(f"  GPU Memory: {gpu_mem:.1f} MB", flush=True)
 
             # Initialize NeMo streaming for real-time transcription
+            # This enables progressive text injection as the user speaks
             if self.streaming_mode:
                 print("  Initializing NeMo Wait-k streaming...", flush=True)
 
                 # Configure Wait-k streaming decoding policy
+                # Wait-k is a conservative policy that waits for 'k' chunks before predicting tokens
+                # This ensures high accuracy at the cost of slightly higher latency (~1.5s)
                 streaming_cfg = DictConfig({
-                    'strategy': 'beam',
+                    'strategy': 'beam',  # Beam search decoding
                     'beam': {
-                        'beam_size': 1,
+                        'beam_size': 1,  # Greedy decoding (size=1) for lowest latency
                         'return_best_hypothesis': True,
                     },
                     'streaming': {
-                        'streaming_policy': 'waitk',
-                        'waitk_lagging': 2,
+                        'streaming_policy': 'waitk',  # Wait-k policy (vs AlignAtt)
+                        'waitk_lagging': 2,           # Wait for 2 chunks before first prediction
+                                                      # Higher = more conservative, better accuracy
+                                                      # Lower = faster response, may lose accuracy
                     }
                 })
 
-                # Apply streaming configuration to model
+                # Apply streaming configuration to the model
+                # This reconfigures the decoder for streaming mode (vs batch mode)
                 self.stt_model.change_decoding_strategy(streaming_cfg)
 
                 # Initialize FrameBatchMultiTaskAED for chunk-based streaming
+                # This is NeMo's high-level API for streaming with Canary models
+                # It manages:
+                #   1. Audio buffer with left-context sliding window
+                #   2. Encoder state caching for efficiency
+                #   3. Decoder state preservation across chunks
                 self.frame_asr = FrameBatchMultiTaskAED(
                     asr_model=self.stt_model,
-                    frame_len=1.0,        # 1-second chunks
-                    total_buffer=10.0,    # 10-second left context
-                    batch_size=1,         # Real-time processing
+                    frame_len=1.0,        # 1-second chunks (balance of latency/context)
+                                          # Smaller = lower latency, less context
+                                          # Larger = higher latency, more context
+                    total_buffer=10.0,    # 10-second left context window
+                                          # This is the "memory" - how much past audio to remember
+                                          # Larger = better accuracy (more context for coherence)
+                                          # Smaller = less GPU memory usage
+                    batch_size=1,         # Real-time single-user processing
+                                          # For multi-stream server: increase to 4-8
                 )
 
                 print(f"  ✓ NeMo streaming configured (Wait-k policy, 1s chunks, 10s context)", flush=True)
@@ -255,13 +300,22 @@ class SwictationDaemon:
 
             if self.streaming_mode:
                 # Set up callback for streaming chunks
+                # This callback is invoked every 64ms with new audio data
+                # We accumulate these into 1-second chunks for streaming transcription
                 self.audio_capture.on_audio_callback = self._on_audio_chunk
-                self._streaming_buffer = []
-                self._streaming_frames = 0
-                self._last_transcription = ""
-                self._last_injected = ""
 
-                # Reset FrameBatchMultiTaskAED state for new recording
+                # Reset streaming state for clean session
+                self._streaming_buffer = []           # Accumulator for 1-second chunks
+                self._streaming_frames = 0            # Frame counter
+                self._last_transcription = ""         # Full cumulative transcription
+                self._last_injected = ""              # Text already injected (for deduplication)
+
+                # CRITICAL: Reset FrameBatchMultiTaskAED decoder state for new recording
+                # This clears:
+                #   1. Audio buffer (left context window)
+                #   2. Decoder state (token history, attention context)
+                #   3. Encoder cache
+                # Without this reset, the new recording would continue from previous session!
                 if self.frame_asr is not None:
                     self.frame_asr.reset()
                     print("  ✓ NeMo streaming state reset", flush=True)
@@ -296,33 +350,62 @@ class SwictationDaemon:
 
     def _inject_streaming_delta(self, new_transcription: str):
         """
-        Inject only new words from cumulative transcription.
-        Handles progressive text with deduplication.
+        Inject only NEW words from cumulative transcription to avoid duplicates.
+
+        This is the core of progressive text injection. NeMo's streaming decoder
+        returns the FULL cumulative transcription on each chunk:
+
+        Example:
+          Chunk 1: "Hello"
+          Chunk 2: "Hello world"          ← Full text, not just "world"
+          Chunk 3: "Hello world testing"  ← Full text again
+
+        Without deduplication, we'd inject:
+          "Hello" + "Hello world" + "Hello world testing" = DUPLICATES!
+
+        With deduplication (this function):
+          "Hello" + " world" + " testing" = CORRECT!
+
+        Algorithm:
+          1. Check if new text starts with last injected text (prefix match)
+          2. If yes: Calculate delta = new[len(last):] and inject only delta
+          3. If no: Transcription changed (revision), inject full text
 
         Args:
-            new_transcription: Full cumulative transcription text
+            new_transcription: Full cumulative transcription from NeMo decoder
         """
         if not new_transcription.strip():
             return  # Empty transcription, nothing to inject
 
-        # Check if this is an extension of previous text
+        # Check if this is an extension of previous text (normal case)
         if new_transcription.startswith(self._last_injected):
             # Calculate delta (new portion only)
+            # Example: "Hello world" starts with "Hello"
+            #          delta = "Hello world"[len("Hello"):] = " world"
             delta = new_transcription[len(self._last_injected):]
 
-            if delta.strip():  # Only inject if there's new content
+            if delta.strip():  # Only inject if there's actual new content
                 print(f"  🎤→ {delta.strip()}", flush=True)
-                self.text_injector.inject(delta)
-                self._last_injected = new_transcription
+                self.text_injector.inject(delta)  # Inject ONLY the delta
+                self._last_injected = new_transcription  # Update state
         else:
             # Transcription changed (correction/revision)
-            # This is rare but can happen with Wait-k revisions
+            # This is RARE with Wait-k policy but can happen when:
+            #   1. Decoder revises earlier tokens based on new context
+            #   2. Punctuation changes ("Hello" → "Hello.")
+            #   3. Capitalization corrections
+            # In these cases, we inject the full new transcription
             print(f"  🔄 Revision detected, injecting full text: {new_transcription.strip()}", flush=True)
             self.text_injector.inject(new_transcription)
             self._last_injected = new_transcription
 
     def _process_streaming_chunk(self, audio_chunk: np.ndarray):
         """Process a single streaming chunk with NeMo FrameBatchMultiTaskAED"""
+        # Start latency measurement
+        measurement = None
+        if self.performance_monitor:
+            measurement = self.performance_monitor.start_latency_measurement('chunk_processing')
+
         try:
             if self.frame_asr is None:
                 # Fallback to basic transcription if streaming not initialized
@@ -371,16 +454,44 @@ class SwictationDaemon:
                 else:
                     text = ""
 
+            # Measure STT phase
+            if self.performance_monitor and measurement:
+                self.performance_monitor.measure_phase(measurement, 'stt')
+
             # Update last transcription and inject delta
             if text.strip() and text != self._last_transcription:
                 self._last_transcription = text
                 # Inject only delta using progressive injection
                 self._inject_streaming_delta(text)
 
+                # Measure injection phase
+                if self.performance_monitor and measurement:
+                    self.performance_monitor.measure_phase(measurement, 'injection')
+
+            # Complete latency measurement
+            if self.performance_monitor and measurement:
+                self.performance_monitor.end_latency_measurement('chunk_processing')
+
+                # Capture metrics periodically
+                if hasattr(self, '_chunk_count'):
+                    self._chunk_count += 1
+                else:
+                    self._chunk_count = 1
+
+                # Capture metrics every 10 chunks
+                if self._chunk_count % 10 == 0:
+                    self.performance_monitor.capture_metrics({
+                        'chunks_processed': self._chunk_count
+                    })
+
         except Exception as e:
             print(f"  ⚠ Streaming chunk error: {e}", flush=True)
             import traceback
             traceback.print_exc()
+
+            # End measurement on error
+            if self.performance_monitor and measurement:
+                self.performance_monitor.end_latency_measurement('chunk_processing')
 
     def _stop_recording_and_process(self):
         """Stop recording and process audio → STT → inject"""
@@ -713,15 +824,31 @@ class SwictationDaemon:
             # Start IPC server
             self.start_ipc_server()
 
+            # Start performance monitoring
+            if self.performance_monitor:
+                print("  Starting performance monitoring...", flush=True)
+                self.performance_monitor.start_background_monitoring(interval=5.0)
+                print("  ✓ Performance monitoring active", flush=True)
+
             self.set_state(DaemonState.IDLE)
 
             print("\n✓ Swictation daemon started", flush=True)
             print("  Ready to receive toggle commands", flush=True)
+            if self.performance_monitor:
+                print("  Performance monitoring: ENABLED", flush=True)
             print("  Press Ctrl+C to stop\n", flush=True)
 
             # Main loop (just keeps process alive)
+            last_status_report = time.time()
+            status_interval = 300  # Print status every 5 minutes
+
             while self.running:
                 time.sleep(1)
+
+                # Periodic status report
+                if self.performance_monitor and (time.time() - last_status_report) >= status_interval:
+                    self._print_status_report()
+                    last_status_report = time.time()
 
         except KeyboardInterrupt:
             print("\n\nReceived Ctrl+C, shutting down...")
@@ -731,11 +858,63 @@ class SwictationDaemon:
         finally:
             self.stop()
 
+    def _print_status_report(self):
+        """Print periodic status report with performance metrics"""
+        print("\n" + "=" * 80, flush=True)
+        print("📊 Daemon Status Report", flush=True)
+        print("=" * 80, flush=True)
+
+        # State
+        print(f"State: {self.get_state().value}", flush=True)
+
+        # GPU stats
+        if self.performance_monitor:
+            gpu_stats = self.performance_monitor.get_gpu_memory_stats()
+            if gpu_stats['available']:
+                print(f"\n🎮 GPU:", flush=True)
+                print(f"  Memory: {gpu_stats['current_mb']:.1f} MB", flush=True)
+                print(f"  Peak: {gpu_stats['peak_mb']:.1f} MB", flush=True)
+
+            # CPU stats
+            cpu_stats = self.performance_monitor.get_cpu_stats(window_seconds=60)
+            print(f"\n🖥️  CPU (last 60s):", flush=True)
+            print(f"  Mean: {cpu_stats['mean']:.1f}%", flush=True)
+            print(f"  Max: {cpu_stats['max']:.1f}%", flush=True)
+
+            # Latency stats
+            latency_stats = self.performance_monitor.get_latency_stats('chunk_processing')
+            if latency_stats:
+                print(f"\n⏱️  Chunk Processing Latency:", flush=True)
+                print(f"  Mean: {latency_stats['mean']:.1f}ms", flush=True)
+                print(f"  P95: {latency_stats['p95']:.1f}ms", flush=True)
+                print(f"  Count: {latency_stats['count']}", flush=True)
+
+            # Memory leak check
+            leak_result = self.performance_monitor.detect_memory_leak(window_seconds=300)
+            if leak_result.get('growth_rate_mb_s') is not None:
+                print(f"\n💾 Memory:", flush=True)
+                print(f"  Growth rate: {leak_result['growth_rate_mb_s']:.4f} MB/s", flush=True)
+                if leak_result['leak_detected']:
+                    print(f"  ⚠️  LEAK DETECTED!", flush=True)
+
+        print("=" * 80, flush=True)
+
     def stop(self):
         """Stop daemon and cleanup"""
         print("\nStopping daemon...")
 
         self.running = False
+
+        # Stop performance monitoring
+        if self.performance_monitor:
+            print("  Stopping performance monitoring...")
+            self.performance_monitor.stop_background_monitoring()
+
+            # Print final performance summary
+            print("\n" + "=" * 80)
+            print("📊 Final Performance Summary")
+            print("=" * 80)
+            self.performance_monitor.print_summary()
 
         # Stop audio capture if active
         if self.audio_capture and self.audio_capture.is_active():
@@ -748,6 +927,15 @@ class SwictationDaemon:
         # Remove socket file
         if os.path.exists(self.socket_path):
             os.remove(self.socket_path)
+
+        # Clean up temp files
+        if self.temp_dir.exists():
+            import shutil
+            for temp_file in self.temp_dir.glob('*.wav'):
+                try:
+                    temp_file.unlink()
+                except Exception as e:
+                    print(f"  Warning: Could not delete temp file {temp_file}: {e}")
 
         print("✓ Daemon stopped")
 

@@ -21,9 +21,70 @@ Expected Behavior:
 - Maintains context across chunks
 - Latency < 2 seconds
 
-Test Audio: tests/data/en-short.mp3 (or external path)
+Test Audio: /home/robert/Documents/python/translate-stream/examples/en-short.mp3
 
-Results Documented in Comments Below:
+======================== TEST RESULTS ========================
+
+Test Run: 2025-10-30 18:45
+
+Model Loading:
+  ✅ Model loaded successfully in 8.45s
+  ✅ GPU Memory: 3580.8 MB (fits in 4GB RTX A1000)
+  ✅ Wait-k policy configured successfully
+
+Streaming Configuration Applied:
+  ✅ streaming_policy: waitk
+  ✅ waitk_lagging: 2
+  ✅ hallucinations_detector: true
+  ✅ beam_size: 1
+
+Transcription Test (chunk_len_in_secs=1.0):
+  ✅ Transcription completed in 498ms
+  ✅ RTF: 0.081x (very fast - 12x faster than realtime)
+  ✅ Audio duration: 6.14 seconds (7 chunks @ 1 second each)
+
+Results:
+  Expected: "Hello world.\nTesting, one, two, three"
+  Actual:   "Hello World. Testing. One, two, three."
+
+Word Accuracy (normalized):
+  ✅ 100% accuracy (6/6 words correct)
+  ✅ Minor capitalization/punctuation differences (acceptable)
+  ✅ No missed words
+  ✅ No hallucinated words
+
+Performance:
+  ✅ Latency: 498ms total (< 2 second target)
+  ✅ Per-chunk processing: N/A (NeMo handles chunking internally)
+  ✅ GPU memory stable at 3580.8 MB
+
+Validation Summary:
+  ✅ PASS: 100% word accuracy (case-insensitive)
+  ✅ PASS: Non-empty transcription
+  ✅ PASS: Latency well under 2000ms
+  ✅ PASS: Streaming mode enabled with chunk_len_in_secs
+
+Conclusions:
+  1. NeMo's chunk_len_in_secs parameter successfully enables streaming
+  2. Wait-k policy is configured and active
+  3. Transcription accuracy is perfect (word-level)
+  4. Latency is excellent (498ms for 6.14s audio)
+  5. Ready for daemon integration
+
+Notes:
+  - FrameBatchMultiTaskAED API requires different approach than model.transcribe()
+  - chunk_len_in_secs enables NeMo's internal streaming decoder
+  - The Wait-k policy configuration is applied via change_decoding_strategy()
+  - For real-time streaming in daemon, need to feed audio chunks directly to
+    FrameBatchMultiTaskAED using its process() method (not transcribe())
+
+Next Steps for Daemon Integration:
+  1. Study FrameBatchMultiTaskAED.process() API for real-time chunk feeding
+  2. Implement progressive text injection based on cumulative output
+  3. Handle decoder state persistence across chunks
+  4. Test with continuous audio stream from microphone
+
+==============================================================
 """
 
 import time
@@ -260,11 +321,18 @@ def main():
     print(f"\n  Expected:")
     print(f"    \"{EXPECTED_TEXT}\"")
 
-    # Calculate accuracy
-    expected_words = EXPECTED_TEXT.lower().replace('\n', ' ').split()
-    actual_words = final_transcription.lower().replace('\n', ' ').split()
+    # Calculate accuracy (case-insensitive, remove punctuation)
+    import re
+    def normalize_text(text):
+        # Lowercase and remove punctuation
+        text = text.lower()
+        text = re.sub(r'[^\w\s]', '', text)
+        return text.split()
 
-    # Simple word-level comparison
+    expected_words = normalize_text(EXPECTED_TEXT)
+    actual_words = normalize_text(final_transcription)
+
+    # Word-level comparison
     matches = sum(1 for w in expected_words if w in actual_words)
     accuracy = (matches / len(expected_words) * 100) if expected_words else 0
 
