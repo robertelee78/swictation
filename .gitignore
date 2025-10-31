@@ -101,25 +101,22 @@ torch_extensions/
 # ============================================================================
 
 # Claude Flow environment (tracked in separate repo: swictation-env)
+# These are symlinks to the shared environment
 .claude/
 .claude
 CLAUDE.md
+claude-flow
+.mcp.json
+.claude-flow
+.hive-mind
+.swarm
+memory
+hive
+coordination
 
 # Claude Flow generated files
 .claude/settings.local.json
-.mcp.json
 claude-flow.config.json
-.swarm
-.swarm/
-.hive-mind
-.hive-mind/
-.claude-flow
-.claude-flow/
-memory
-memory/
-hive
-hive/
-coordination/
 memory/claude-flow-data.json
 memory/sessions/*
 !memory/sessions/README.md
