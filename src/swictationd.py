@@ -424,35 +424,26 @@ class SwictationDaemon:
                 text = hypothesis.text if hasattr(hypothesis, 'text') else str(hypothesis)
                 temp_path.unlink(missing_ok=True)
             else:
-                # Use FrameBatchMultiTaskAED for proper streaming with context
-                # Append audio chunk to streaming buffer
-                self.frame_asr.append_audio(audio_chunk, stream_id=0)
+                # FrameBatchMultiTaskAED streaming not fully working yet
+                # Fall back to simple transcription for now
+                # TODO: Implement proper FrameBatchMultiTaskAED integration
+                # See test_nemo_streaming.py for reference
 
-                # Create metadata for transcription (required for Canary)
-                meta_data = {
-                    'source_lang': 'en',
-                    'target_lang': 'en',
-                    'pnc': 'yes',
-                    'taskname': 'asr'
-                }
+                # Save audio chunk to temp file
+                temp_path = Path(tempfile.mktemp(suffix='.wav'))
+                sf.write(temp_path, audio_chunk, 16000)
 
-                # Get input tokens for the model
-                self.frame_asr.input_tokens = self.frame_asr.get_input_tokens(meta_data)
+                # Use basic transcription with Canary metadata
+                hypothesis = self.stt_model.transcribe(
+                    [str(temp_path)],
+                    batch_size=1,
+                    source_lang='en',
+                    target_lang='en',
+                    pnc='yes'
+                )[0]
 
-                # Transcribe with accumulated context
-                self.frame_asr.transcribe(
-                    tokens_per_chunk=None,
-                    delay=None,
-                    keep_logits=False,
-                    timestamps=False
-                )
-
-                # Get the latest prediction
-                if len(self.frame_asr.all_preds) > 0:
-                    latest_pred = self.frame_asr.all_preds[-1]
-                    text = latest_pred.text if hasattr(latest_pred, 'text') else str(latest_pred)
-                else:
-                    text = ""
+                text = hypothesis.text if hasattr(hypothesis, 'text') else str(hypothesis)
+                temp_path.unlink(missing_ok=True)
 
             # Measure STT phase
             if self.performance_monitor and measurement:
