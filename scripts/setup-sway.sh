@@ -49,21 +49,12 @@ EOF
 
 echo "✓ Keybinding added to $SWAY_CONFIG"
 
-# Add autostart for daemon (optional)
+# Daemon autostart handled by systemd
 echo ""
-read -p "Start Swictation daemon automatically with Sway? (Y/n): " -n 1 -r
-echo
-
-if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-    if grep -q "exec.*swictationd" "$SWAY_CONFIG"; then
-        echo "  Daemon autostart already configured"
-    else
-        cat >> "$SWAY_CONFIG" << 'EOF'
-exec python3 /opt/swictation/src/swictationd.py
-EOF
-        echo "✓ Daemon autostart added to Sway config"
-    fi
-fi
+echo "ℹ️  Daemon autostart:"
+echo "  Swictation uses systemd user service for automatic startup"
+echo "  Run: ./scripts/install-systemd-service.sh"
+echo "  (Manual Sway exec not recommended - would create duplicate instances)"
 
 # Show instructions
 echo ""
@@ -72,12 +63,13 @@ echo "Setup Complete!"
 echo "======================================================================"
 echo ""
 echo "Keybinding added:"
-echo "  Mod1+Shift+d (Alt+Shift+d) → Toggle recording"
+echo "  \$mod+Shift+d → Toggle recording"
+echo "  (Uses your configured \$mod key - typically Mod4=Super/Windows or Mod1=Alt)"
 echo ""
 echo "Next steps:"
-echo "  1. Reload Sway config: swaymsg reload"
-echo "  2. OR restart Sway to apply changes"
-echo "  3. Test: Press Alt+Shift+d and speak"
+echo "  1. Install systemd service: ./scripts/install-systemd-service.sh"
+echo "  2. Reload Sway config: swaymsg reload"
+echo "  3. Test: Press \$mod+Shift+d and speak"
 echo ""
 echo "To revert changes:"
 echo "  cp $SWAY_CONFIG$BACKUP_SUFFIX $SWAY_CONFIG"
