@@ -26,7 +26,9 @@ class AudioCapture:
         dtype: str = 'float32',
         blocksize: int = 1024,
         device: Optional[int] = None,
-        buffer_duration: float = 10.0
+        buffer_duration: float = 10.0,
+        chunk_duration: float = 1.0,
+        streaming_mode: bool = False
     ):
         """
         Initialize audio capture.
@@ -38,6 +40,8 @@ class AudioCapture:
             blocksize: Samples per callback (affects latency)
             device: Audio device index (None = default)
             buffer_duration: Maximum buffer duration in seconds
+            chunk_duration: Duration of chunks for streaming mode (default: 1.0s)
+            streaming_mode: Enable streaming mode with chunk callbacks
         """
         self.sample_rate = sample_rate
         self.channels = channels
@@ -45,10 +49,17 @@ class AudioCapture:
         self.blocksize = blocksize
         self.device = device
 
-        # Circular buffer for audio samples
+        # Circular buffer for audio samples (batch mode)
         self.max_buffer_samples = int(buffer_duration * sample_rate)
         self.buffer = deque(maxlen=self.max_buffer_samples)
         self.buffer_lock = threading.Lock()
+
+        # Streaming mode configuration
+        self.streaming_mode = streaming_mode
+        self.chunk_duration = chunk_duration
+        self.chunk_frames = int(chunk_duration * sample_rate)
+        self._chunk_buffer: list = []
+        self._chunk_buffer_lock = threading.Lock()
 
         # Recording state
         self.stream: Optional[sd.InputStream] = None
@@ -60,6 +71,7 @@ class AudioCapture:
 
         # Callback for audio events
         self.on_audio_callback: Optional[Callable[[np.ndarray, int], None]] = None
+        self.on_chunk_ready: Optional[Callable[[np.ndarray], None]] = None
 
     def list_devices(self):
         """List available audio devices"""
@@ -110,12 +122,29 @@ class AudioCapture:
         else:
             audio = indata[:, 0]
 
-        # Add to buffer
+        # Add to buffer (always for backward compatibility)
         with self.buffer_lock:
             self.buffer.extend(audio)
             self.total_frames += frames
 
-        # Call external callback if provided
+        # Streaming mode: accumulate into chunks
+        if self.streaming_mode:
+            with self._chunk_buffer_lock:
+                self._chunk_buffer.extend(audio)
+
+                # Emit chunk when we have enough samples
+                while len(self._chunk_buffer) >= self.chunk_frames:
+                    # Extract exactly chunk_frames samples
+                    chunk = np.array(self._chunk_buffer[:self.chunk_frames], dtype=self.dtype)
+
+                    # Remove processed samples from buffer
+                    self._chunk_buffer = self._chunk_buffer[self.chunk_frames:]
+
+                    # Call chunk callback if provided
+                    if self.on_chunk_ready:
+                        self.on_chunk_ready(chunk)
+
+        # Call external callback if provided (legacy support)
         if self.on_audio_callback:
             self.on_audio_callback(audio, frames)
 
@@ -138,12 +167,29 @@ class AudioCapture:
                 if self.channels > 1:
                     audio = audio.reshape(-1, self.channels).mean(axis=1)
 
-                # Add to buffer
+                # Add to buffer (always for backward compatibility)
                 with self.buffer_lock:
                     self.buffer.extend(audio)
                     self.total_frames += len(audio)
 
-                # Call external callback
+                # Streaming mode: accumulate into chunks
+                if self.streaming_mode:
+                    with self._chunk_buffer_lock:
+                        self._chunk_buffer.extend(audio)
+
+                        # Emit chunk when we have enough samples
+                        while len(self._chunk_buffer) >= self.chunk_frames:
+                            # Extract exactly chunk_frames samples
+                            chunk = np.array(self._chunk_buffer[:self.chunk_frames], dtype=self.dtype)
+
+                            # Remove processed samples from buffer
+                            self._chunk_buffer = self._chunk_buffer[self.chunk_frames:]
+
+                            # Call chunk callback if provided
+                            if self.on_chunk_ready:
+                                self.on_chunk_ready(chunk)
+
+                # Call external callback (legacy support)
                 if self.on_audio_callback:
                     self.on_audio_callback(audio, len(audio))
 
@@ -164,10 +210,17 @@ class AudioCapture:
         print(f"   Device: {self.device if self.device is not None else 'default'}")
         print(f"   Blocksize: {self.blocksize} samples ({self.blocksize / self.sample_rate * 1000:.1f}ms)")
 
-        # Clear buffer
+        if self.streaming_mode:
+            print(f"   Streaming mode: ENABLED")
+            print(f"   Chunk duration: {self.chunk_duration}s ({self.chunk_frames} frames)")
+
+        # Clear buffers
         with self.buffer_lock:
             self.buffer.clear()
             self.total_frames = 0
+
+        with self._chunk_buffer_lock:
+            self._chunk_buffer.clear()
 
         # Check if device is a PipeWire monitor source (string starting with 'alsa_')
         if isinstance(self.device, str) and (self.device.startswith('alsa_') or '.' in self.device):
@@ -279,6 +332,18 @@ class AudioCapture:
     def is_active(self) -> bool:
         """Check if recording is active"""
         return self.is_recording
+
+    def get_chunk_buffer_size(self) -> int:
+        """Get current chunk buffer size (number of samples accumulated)"""
+        with self._chunk_buffer_lock:
+            return len(self._chunk_buffer)
+
+    def get_chunk_buffer_progress(self) -> float:
+        """Get chunk buffer progress as percentage (0.0 to 1.0)"""
+        with self._chunk_buffer_lock:
+            if self.chunk_frames == 0:
+                return 0.0
+            return min(len(self._chunk_buffer) / self.chunk_frames, 1.0)
 
     def __enter__(self):
         """Context manager entry"""
