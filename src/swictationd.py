@@ -27,6 +27,8 @@ import librosa
 import numpy as np
 import soundfile as sf
 from nemo.collections.asr.models import EncDecMultiTaskModel
+from nemo.collections.asr.parts.utils.streaming_utils import FrameBatchMultiTaskAED
+from omegaconf import DictConfig
 
 
 class DaemonState(Enum):
@@ -85,6 +87,7 @@ class SwictationDaemon:
         self._streaming_buffer = []
         self._streaming_frames = 0
         self._last_transcription = ""
+        self._last_injected = ""  # Track last injected text for deduplication
         self._streaming_thread = None
 
         # Components (initialized on start)
@@ -93,6 +96,7 @@ class SwictationDaemon:
         self.stt_model = None
         self.vad_model = None
         self.get_speech_timestamps = None
+        self.frame_asr = None  # NeMo streaming processor
 
         # IPC socket
         self.server_socket: Optional[socket.socket] = None
@@ -157,6 +161,36 @@ class SwictationDaemon:
 
             print(f"✓ STT model loaded in {load_time:.2f}s", flush=True)
             print(f"  GPU Memory: {gpu_mem:.1f} MB", flush=True)
+
+            # Initialize NeMo streaming for real-time transcription
+            if self.streaming_mode:
+                print("  Initializing NeMo Wait-k streaming...", flush=True)
+
+                # Configure Wait-k streaming decoding policy
+                streaming_cfg = DictConfig({
+                    'strategy': 'beam',
+                    'beam': {
+                        'beam_size': 1,
+                        'return_best_hypothesis': True,
+                    },
+                    'streaming': {
+                        'streaming_policy': 'waitk',
+                        'waitk_lagging': 2,
+                    }
+                })
+
+                # Apply streaming configuration to model
+                self.stt_model.change_decoding_strategy(streaming_cfg)
+
+                # Initialize FrameBatchMultiTaskAED for chunk-based streaming
+                self.frame_asr = FrameBatchMultiTaskAED(
+                    asr_model=self.stt_model,
+                    frame_len=1.0,        # 1-second chunks
+                    total_buffer=10.0,    # 10-second left context
+                    batch_size=1,         # Real-time processing
+                )
+
+                print(f"  ✓ NeMo streaming configured (Wait-k policy, 1s chunks, 10s context)", flush=True)
 
         except Exception as e:
             print(f"✗ Failed to load STT model: {e}")
@@ -225,6 +259,12 @@ class SwictationDaemon:
                 self._streaming_buffer = []
                 self._streaming_frames = 0
                 self._last_transcription = ""
+                self._last_injected = ""
+
+                # Reset FrameBatchMultiTaskAED state for new recording
+                if self.frame_asr is not None:
+                    self.frame_asr.reset()
+                    print("  ✓ NeMo streaming state reset", flush=True)
 
             self.audio_capture.start()
             print("✓ Recording started (speak now)")
@@ -254,40 +294,93 @@ class SwictationDaemon:
                 )
                 self._streaming_thread.start()
 
+    def _inject_streaming_delta(self, new_transcription: str):
+        """
+        Inject only new words from cumulative transcription.
+        Handles progressive text with deduplication.
+
+        Args:
+            new_transcription: Full cumulative transcription text
+        """
+        if not new_transcription.strip():
+            return  # Empty transcription, nothing to inject
+
+        # Check if this is an extension of previous text
+        if new_transcription.startswith(self._last_injected):
+            # Calculate delta (new portion only)
+            delta = new_transcription[len(self._last_injected):]
+
+            if delta.strip():  # Only inject if there's new content
+                print(f"  🎤→ {delta.strip()}", flush=True)
+                self.text_injector.inject(delta)
+                self._last_injected = new_transcription
+        else:
+            # Transcription changed (correction/revision)
+            # This is rare but can happen with Wait-k revisions
+            print(f"  🔄 Revision detected, injecting full text: {new_transcription.strip()}", flush=True)
+            self.text_injector.inject(new_transcription)
+            self._last_injected = new_transcription
+
     def _process_streaming_chunk(self, audio_chunk: np.ndarray):
-        """Process a single streaming chunk with NeMo cache-aware streaming"""
+        """Process a single streaming chunk with NeMo FrameBatchMultiTaskAED"""
         try:
-            # Save chunk to temp file
-            temp_path = self.temp_dir / f'stream_chunk_{int(time.time()*1000)}.wav'
-            sf.write(temp_path, audio_chunk, self.sample_rate)
+            if self.frame_asr is None:
+                # Fallback to basic transcription if streaming not initialized
+                print(f"  ⚠ FrameBatchMultiTaskAED not initialized, using basic transcription", flush=True)
+                temp_path = self.temp_dir / f'stream_chunk_{int(time.time()*1000)}.wav'
+                sf.write(temp_path, audio_chunk, self.sample_rate)
 
-            # Use NeMo's streaming transcription
-            # Note: transcribe_simulate_cache_aware_streaming expects iterator of file paths
-            hypothesis = self.stt_model.transcribe(
-                audio=str(temp_path),
-                source_lang='en',
-                target_lang='en',
-                pnc='yes',
-                batch_size=1
-            )[0]
+                hypothesis = self.stt_model.transcribe(
+                    audio=str(temp_path),
+                    source_lang='en',
+                    target_lang='en',
+                    pnc='yes',
+                    batch_size=1
+                )[0]
 
-            text = hypothesis.text if hasattr(hypothesis, 'text') else str(hypothesis)
+                text = hypothesis.text if hasattr(hypothesis, 'text') else str(hypothesis)
+                temp_path.unlink(missing_ok=True)
+            else:
+                # Use FrameBatchMultiTaskAED for proper streaming with context
+                # Append audio chunk to streaming buffer
+                self.frame_asr.append_audio(audio_chunk, stream_id=0)
 
-            # Inject only new text (diff from last transcription)
+                # Create metadata for transcription (required for Canary)
+                meta_data = {
+                    'source_lang': 'en',
+                    'target_lang': 'en',
+                    'pnc': 'yes',
+                    'taskname': 'asr'
+                }
+
+                # Get input tokens for the model
+                self.frame_asr.input_tokens = self.frame_asr.get_input_tokens(meta_data)
+
+                # Transcribe with accumulated context
+                self.frame_asr.transcribe(
+                    tokens_per_chunk=None,
+                    delay=None,
+                    keep_logits=False,
+                    timestamps=False
+                )
+
+                # Get the latest prediction
+                if len(self.frame_asr.all_preds) > 0:
+                    latest_pred = self.frame_asr.all_preds[-1]
+                    text = latest_pred.text if hasattr(latest_pred, 'text') else str(latest_pred)
+                else:
+                    text = ""
+
+            # Update last transcription and inject delta
             if text.strip() and text != self._last_transcription:
-                # Extract new portion
-                new_text = text[len(self._last_transcription):].strip() if text.startswith(self._last_transcription) else text
-
-                if new_text:
-                    print(f"  🎤→ {new_text}", flush=True)
-                    self.text_injector.inject(new_text + " ")
-                    self._last_transcription = text
-
-            # Cleanup
-            temp_path.unlink(missing_ok=True)
+                self._last_transcription = text
+                # Inject only delta using progressive injection
+                self._inject_streaming_delta(text)
 
         except Exception as e:
             print(f"  ⚠ Streaming chunk error: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
 
     def _stop_recording_and_process(self):
         """Stop recording and process audio → STT → inject"""
@@ -316,6 +409,11 @@ class SwictationDaemon:
             # In streaming mode, we've already processed audio, just clean up
             if self.streaming_mode:
                 print("✓ Streaming transcription complete")
+                # Reset streaming state for next recording
+                self._last_injected = ""
+                self._last_transcription = ""
+                self._streaming_buffer = []
+                self._streaming_frames = 0
                 self.set_state(DaemonState.IDLE)
                 print("✓ Ready for next recording\n", flush=True)
             else:
