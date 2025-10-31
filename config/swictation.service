@@ -6,7 +6,8 @@ PartOf=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 /opt/swictation/src/swictationd.py
+# Use system Python 3 - will find user-installed packages automatically
+ExecStart=/usr/bin/env python3 /opt/swictation/src/swictationd.py
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
@@ -14,7 +15,7 @@ StandardError=journal
 
 # Environment
 Environment="PYTHONUNBUFFERED=1"
-Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+Environment="PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin"
 
 # Resource limits
 MemoryMax=6G

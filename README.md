@@ -22,11 +22,19 @@
 - ✅ Project cloned to `/opt/swictation`
 
 ```bash
-# Install system dependencies (Arch/Manjaro)
+# Install system dependencies
+
+# Arch/Manjaro:
 sudo pacman -S python python-pip wtype wl-clipboard ffmpeg
 
-# Install Python packages
-pip install -r requirements.txt
+# Ubuntu/Debian/Pop!_OS:
+sudo apt install python3 python3-pip wtype wl-clipboard ffmpeg
+
+# Fedora:
+sudo dnf install python3 python3-pip wtype wl-clipboard ffmpeg
+
+# Install Python packages (use the Python version that matches your installed packages)
+pip3 install --break-system-packages -r requirements.txt
 ```
 
 ### 3-Step Setup

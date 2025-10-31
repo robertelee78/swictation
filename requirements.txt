@@ -1,7 +1,7 @@
 # Swictation - Voice Dictation System for Sway/Wayland
-# Successfully tested on Python 3.12 with NVIDIA RTX A1000 (CUDA 12.9)
-# IMPORTANT: Requires Python 3.12 (not 3.13) due to compiled dependencies
-# Installation: pip3.12 install --break-system-packages -r requirements.txt
+# Successfully tested on Python 3.12+ with NVIDIA RTX A1000 (CUDA 12.9)
+# IMPORTANT: Use the Python version where you have installed the packages
+# Installation: pip3 install --break-system-packages -r requirements.txt
 
 # Core ML Framework (pre-installed by user)
 torch==2.8.0+cu129
