@@ -1,6 +1,7 @@
 # Swictation - Voice Dictation System for Sway/Wayland
-# Successfully tested on Python 3.13.3 with NVIDIA RTX A1000 (CUDA 12.9)
-# Installation: pip3 install --break-system-packages -r requirements.txt
+# Successfully tested on Python 3.12 with NVIDIA RTX A1000 (CUDA 12.9)
+# IMPORTANT: Requires Python 3.12 (not 3.13) due to compiled dependencies
+# Installation: pip3.12 install --break-system-packages -r requirements.txt
 
 # Core ML Framework (pre-installed by user)
 torch==2.8.0+cu129
@@ -8,6 +9,7 @@ torchaudio>=2.1.0
 
 # NVIDIA NeMo for Canary-1B-Flash STT
 nemo_toolkit[asr]==2.5.2
+numpy>=1.26.0,<2.0.0  # Required by nemo-toolkit[asr], incompatible with numpy 2.x
 
 # Audio Processing
 sounddevice==0.5.3
@@ -17,15 +19,15 @@ librosa==0.11.0
 # NeMo Dependencies (resolved for Python 3.13)
 # Transformers ecosystem
 huggingface-hub==0.36.0  # Must be <1.0 for transformers compatibility
-tokenizers==0.22.1
+tokenizers==0.21.0
 accelerate==1.11.0
 safetensors==0.6.2
-transformers==4.57.1
+transformers~=4.53.0  # Required by nemo-toolkit[asr]==2.5.2
 
 # Neural network training
 pytorch-lightning==2.5.5
 lightning-utilities==0.15.2
-torchmetrics>=3.0.0
+torchmetrics>=1.0.0,<2.0.0
 
 # Data processing
 datasets==4.3.0
@@ -43,7 +45,7 @@ lilcom==1.8.1
 tabulate==0.9.0
 
 # Text error analysis
-texterrors==1.0.9
+texterrors<1.0.0  # Required by nemo-toolkit[asr]==2.5.2
 Levenshtein==0.27.1
 termcolor==3.2.0
 plac==1.4.5
@@ -75,10 +77,10 @@ setuptools==80.9.0
 graphviz==0.21
 libcst==1.8.5
 
-# Annotation tools
-pyannote.core==6.0.1
-pyannote.metrics==4.0.0
-pyannote-database==6.1.0
+# Annotation tools (downgraded for numpy 1.x compatibility with nemo-toolkit)
+pyannote.core==5.0.0
+pyannote.metrics==3.2.1
+pyannote-database==5.1.0
 sortedcontainers==2.4.0
 
 # Build dependencies
