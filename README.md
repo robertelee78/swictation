@@ -38,8 +38,13 @@ This will:
 ### First-Time Test
 
 ```bash
-# Test keybinding without Sway
-/opt/swictation/scripts/test-keybinding.sh
+# Start daemon manually to test
+python3 /opt/swictation/src/swictationd.py
+
+# In another terminal, test toggle
+python3 /opt/swictation/src/swictation_cli.py toggle
+# Speak for a few seconds, pause 2s, watch text appear
+python3 /opt/swictation/src/swictation_cli.py toggle  # Stop
 ```
 
 📖 **Full Documentation:** See [docs/](docs/) for detailed guides
@@ -218,8 +223,11 @@ swaymsg reload
 
 ### 4. Test Installation
 ```bash
-# Run test script
-/opt/swictation/scripts/test-keybinding.sh
+# Check daemon status
+systemctl --user status swictation.service
+
+# Test manually if needed
+python3 /opt/swictation/src/swictation_cli.py status
 ```
 
 ---

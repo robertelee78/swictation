@@ -215,7 +215,7 @@ chunk_overlap = 1.0     # seconds
 method = "wtype"        # wtype | clipboard
 
 [keybinding]
-toggle = "Mod1+Shift+d"  # Alt+Shift+d
+toggle = "$mod+Shift+d"  # Uses Sway's $mod variable (Mod4=Super/Windows or Mod1=Alt)
 EOF
         echo -e "${GREEN}✓ Created default config: $CONFIG_DIR/config.toml${NC}"
     else
@@ -370,10 +370,10 @@ main() {
     echo "  1. Start daemon (if not auto-started):"
     echo "       systemctl --user start swictation.service"
     echo ""
-    echo "  2. Test keybinding:"
-    echo "       Press Alt+Shift+d in any text editor"
-    echo "       Speak your text"
-    echo "       Press Alt+Shift+d again to transcribe"
+    echo "  2. Test VAD-triggered dictation:"
+    echo "       Press \$mod+Shift+d in any text editor"
+    echo "       Speak continuously (text appears after 2s pauses)"
+    echo "       Press \$mod+Shift+d to stop recording"
     echo ""
     echo "  3. Check status:"
     echo "       python3 $INSTALL_DIR/src/swictation_cli.py status"
