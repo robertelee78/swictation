@@ -221,6 +221,17 @@ class SwictationDaemon:
         load_start = time.time()
 
         try:
+            # Use local models directory instead of HuggingFace cache
+            # This avoids /tmp space issues and gives us full control
+            models_dir = Path('/opt/swictation/models')
+            models_dir.mkdir(exist_ok=True)
+
+            # Set HuggingFace cache to local directory
+            os.environ['HF_HOME'] = str(models_dir / 'huggingface')
+            os.environ['TRANSFORMERS_CACHE'] = str(models_dir / 'huggingface')
+
+            print(f"  Using models directory: {models_dir}", flush=True)
+
             self.stt_model = EncDecMultiTaskModel.from_pretrained(self.model_name)
             self.stt_model.eval()
 
