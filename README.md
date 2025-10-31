@@ -11,43 +11,174 @@
 
 ## **Quick Start** 🚀
 
-### One-Line Setup (After Installing Dependencies)
+### Prerequisites
+
+**Before you begin, ensure you have:**
+- ✅ NVIDIA GPU with 4GB+ VRAM (RTX A1000/3050/4060 or better)
+- ✅ Linux with Sway/Wayland compositor
+- ✅ Python 3.10+, wtype, wl-clipboard, ffmpeg installed
+- ✅ Project cloned to `/opt/swictation`
+
+```bash
+# Install system dependencies (Arch/Manjaro)
+sudo pacman -S python python-pip wtype wl-clipboard ffmpeg
+
+# Install Python packages
+pip install -r requirements.txt
+```
+
+### 3-Step Setup
 
 ```bash
 cd /opt/swictation
-./scripts/install-systemd-service.sh  # Auto-start daemon
-./scripts/setup-sway.sh               # Add keybinding
-swaymsg reload                         # Apply changes
+
+# 1. Install systemd service (auto-starts with Sway)
+./scripts/install-systemd-service.sh
+
+# 2. Add Sway keybinding ($mod+Shift+d)
+./scripts/setup-sway.sh
+
+# 3. Reload Sway to apply changes
+swaymsg reload
 ```
 
-This will:
-- ✅ Install systemd user service (auto-start with Sway)
-- ✅ Add `$mod+Shift+d` keybinding (uses your configured modifier)
-- ✅ Create config backup
-- ✅ Enable VAD-triggered auto-transcription
+**What this does:**
+- ✅ Daemon auto-starts when you log into Sway
+- ✅ Adds `$mod+Shift+d` hotkey for toggle (respects your modifier key)
+- ✅ Backs up your Sway config before changes
+- ✅ Enables VAD-triggered auto-transcription
 
-### Basic Usage
+### Your First Recording
 
-```bash
-# Press $mod+Shift+d to START continuous recording
-# Speak naturally - pause between thoughts (2s silence triggers transcription)
-# Text appears automatically after each pause
-# Press $mod+Shift+d again to STOP recording
+**1. Open any text editor** (kate, gedit, VSCode, vim, etc.)
+
+**2. Press `$mod+Shift+d`** to start recording (you'll see daemon activity in logs)
+
+**3. Speak naturally:**
+```
+YOU SAY:  "Hello world." [pause 2 seconds]
+RESULT:   Hello world.  ← Text appears!
+
+YOU SAY:  "This is a test." [pause 2 seconds]
+RESULT:   This is a test.  ← More text appears!
 ```
 
-### First-Time Test
+**4. Press `$mod+Shift+d`** again to stop recording
+
+**Expected behavior:**
+- 🎤 Recording starts immediately (no visible indicator yet)
+- ⏸️ After 2s of silence, VAD detects pause → transcription happens
+- ⌨️ Text types into your focused window automatically
+- 🛑 Second hotkey press stops recording
+
+### Manual Testing (Without Sway)
 
 ```bash
-# Start daemon manually to test
+# Terminal 1: Start daemon (watch output)
 python3 /opt/swictation/src/swictationd.py
 
-# In another terminal, test toggle
+# Terminal 2: Toggle recording
 python3 /opt/swictation/src/swictation_cli.py toggle
-# Speak for a few seconds, pause 2s, watch text appear
-python3 /opt/swictation/src/swictation_cli.py toggle  # Stop
+
+# Speak a sentence, pause 2 seconds, watch terminal for transcription
+# Example: "The quick brown fox." [wait 2s] → See output in daemon logs
+
+# Stop recording
+python3 /opt/swictation/src/swictation_cli.py toggle
 ```
 
-📖 **Full Documentation:** See [docs/](docs/) for detailed guides
+---
+
+## **Voice Commands Quick Reference** 🎤
+
+Need to code with your voice? Here are the essentials:
+
+### Punctuation
+```
+YOU SAY:              "Hello comma world period"
+SWICTATION TYPES:     Hello, world.
+```
+
+### Symbols
+```
+YOU SAY:              "x equals open bracket one comma two comma three close bracket"
+SWICTATION TYPES:     x = [1, 2, 3]
+```
+
+### Code Example
+```
+YOU SAY:              "def hello underscore world open parenthesis close parenthesis colon"
+SWICTATION TYPES:     def hello_world():
+```
+
+📖 **Complete Guide:** See [docs/voice-commands.md](docs/voice-commands.md) for 400+ examples
+
+---
+
+## **Common Use Cases** 💡
+
+### 1. Writing Documentation
+```
+Press $mod+Shift+d
+"This function calculates the factorial period" [pause 2s]
+"It takes an integer as input period" [pause 2s]
+"Returns the factorial result period" [pause 2s]
+Press $mod+Shift+d
+
+Result:
+This function calculates the factorial. It takes an integer as input. Returns the factorial result.
+```
+
+### 2. Code Comments
+```
+"Hash comment TODO colon implement error handling" [pause 2s]
+
+Result:
+# TODO: implement error handling
+```
+
+### 3. Quick Notes
+```
+"Meeting notes colon" [pause 2s]
+"Discussed authentication refactor period" [pause 2s]
+"Action items colon migrate to JWT tokens period" [pause 2s]
+
+Result:
+Meeting notes: Discussed authentication refactor. Action items: migrate to JWT tokens.
+```
+
+### 4. Git Commits
+```
+"git commit hyphen m quote fix authentication bug quote" [pause 2s]
+
+Result:
+git commit -m "fix authentication bug"
+```
+
+---
+
+## **How It Works** ⚙️
+
+### VAD-Triggered Workflow
+
+```
+┌─────────────────────────────────────────────────┐
+│  1. Press $mod+Shift+d → Recording starts       │
+│  2. Speak: "Hello world."                       │
+│  3. Pause 2 seconds (silence)                   │
+│  4. VAD detects pause → STT transcribes         │
+│  5. Text injected: "Hello world. "              │
+│  6. Speak: "Testing one two three."             │
+│  7. Pause 2 seconds (silence)                   │
+│  8. VAD detects pause → STT transcribes         │
+│  9. Text injected: "Testing one two three. "    │
+│ 10. Press $mod+Shift+d → Recording stops        │
+└─────────────────────────────────────────────────┘
+```
+
+**Key Insight:** You don't toggle between each sentence! Just speak naturally with pauses, and text appears automatically after each 2-second silence.
+
+📖 **Full Documentation:** See [docs/](docs/) for architecture, troubleshooting, and advanced usage
 
 ---
 
@@ -192,99 +323,296 @@ pip install nemo_toolkit[asr] torch sounddevice numpy librosa
 
 ## **Installation** 📦
 
-### 1. Clone Repository
+### Complete Installation Guide
+
+#### Step 1: Verify System Requirements
+
 ```bash
-git clone https://github.com/robertelee78/swictation.git
-cd swictation
+# Check GPU
+nvidia-smi  # Should show your NVIDIA GPU with 4GB+ VRAM
+
+# Check Python version
+python3 --version  # Should be 3.10 or higher
+
+# Check Wayland session
+echo $XDG_SESSION_TYPE  # Should be "wayland"
 ```
 
-### 2. Install Dependencies
+#### Step 2: Install System Dependencies
+
+**Arch/Manjaro:**
 ```bash
-# Install Python packages
+sudo pacman -S python python-pip wtype wl-clipboard ffmpeg cuda
+```
+
+**Ubuntu/Debian:**
+```bash
+sudo apt update
+sudo apt install python3 python3-pip wtype wl-clipboard ffmpeg nvidia-cuda-toolkit
+```
+
+#### Step 3: Clone Repository
+
+```bash
+# Clone to /opt (recommended location)
+sudo mkdir -p /opt
+sudo chown $USER:$USER /opt
+git clone https://github.com/robertelee78/swictation.git /opt/swictation
+cd /opt/swictation
+```
+
+#### Step 4: Install Python Dependencies
+
+```bash
+# Install packages (this may take 5-10 minutes)
 pip install -r requirements.txt
 
-# Download NVIDIA Canary-1B-Flash model (automatic on first run)
+# Download NVIDIA Canary-1B-Flash model (~3.5GB download)
+# This happens automatically on first run, or manually:
 python3 -c "from nemo.collections.asr.models import EncDecMultiTaskModel; EncDecMultiTaskModel.from_pretrained('nvidia/canary-1b-flash')"
 ```
 
-### 3. Setup Sway Integration
+**Expected output:**
+```
+Downloading model checkpoint...
+Model nvidia/canary-1b-flash downloaded successfully
+```
+
+#### Step 5: Setup Sway Integration
+
 ```bash
 cd /opt/swictation
 
-# Step 1: Install systemd service
+# Install systemd service (auto-start with Sway)
 ./scripts/install-systemd-service.sh
 
-# Step 2: Add Sway keybinding
+# Add keybinding to Sway config
 ./scripts/setup-sway.sh
 
-# Step 3: Reload Sway
+# Apply changes
 swaymsg reload
 ```
 
-### 4. Test Installation
+**Expected output:**
+```
+✓ Service installed: ~/.config/systemd/user/swictation.service
+✓ Keybinding added to ~/.config/sway/config
+✓ Backup created: ~/.config/sway/config.backup
+```
+
+#### Step 6: Verify Installation
+
 ```bash
-# Check daemon status
+# Check daemon is running
 systemctl --user status swictation.service
 
-# Test manually if needed
-python3 /opt/swictation/src/swictation_cli.py status
+# Should see: Active: active (running)
+```
+
+**If not running:**
+```bash
+# Start manually
+systemctl --user start swictation.service
+
+# Enable auto-start
+systemctl --user enable swictation.service
+
+# Check logs
+journalctl --user -u swictation.service -n 50
+```
+
+#### Step 7: Test Recording
+
+1. Open a text editor (kate, gedit, etc.)
+2. Press `$mod+Shift+d`
+3. Say "hello world" and pause 2 seconds
+4. Text should appear!
+5. Press `$mod+Shift+d` to stop
+
+**Troubleshooting:** See [Troubleshooting](#troubleshooting-) section below if issues occur.
+
+---
+
+## **Understanding the System** 🧠
+
+### What Happens When You Press $mod+Shift+d?
+
+```
+1. Sway keybinding triggers:
+   bindsym $mod+Shift+d exec python3 /opt/swictation/src/swictation_cli.py toggle
+
+2. CLI sends command to daemon via Unix socket (/tmp/swictation.sock)
+
+3. Daemon state changes:
+   IDLE → RECORDING (start capturing audio)
+   or
+   RECORDING → IDLE (stop capturing audio)
+
+4. While RECORDING:
+   - Audio capture: PipeWire → 16kHz mono stream
+   - VAD monitor: Silero VAD watches for 2s silence
+   - On 2s silence: Send audio buffer to Canary-1B-Flash STT
+   - STT output: Text transcription
+   - Text injection: wtype sends text to focused window
+   - Buffer cleared, continue recording
+
+5. When IDLE:
+   - No audio capture
+   - GPU models remain loaded (for fast restart)
+```
+
+### Memory Layout
+
+```
+GPU VRAM (~3.6 GB total):
+├── Canary-1B-Flash STT model: 3.6 GB
+└── Silero VAD model: 2.2 MB
+
+System RAM (~250 MB):
+├── Audio buffer: ~10-30 MB (dynamic)
+├── Python process: ~200 MB
+└── Daemon overhead: ~20 MB
+```
+
+### File Structure
+
+```
+/opt/swictation/
+├── src/
+│   ├── swictationd.py          # Main daemon (state machine + IPC)
+│   ├── audio_capture.py         # PipeWire audio streaming
+│   ├── text_injection.py        # wtype Wayland text injection
+│   └── swictation_cli.py        # CLI tool for daemon control
+├── scripts/
+│   ├── install-systemd-service.sh
+│   └── setup-sway.sh
+├── config/
+│   └── swictation.service       # systemd unit file
+└── docs/
+    ├── architecture.md           # System design
+    ├── voice-commands.md         # Voice coding reference
+    └── troubleshooting.md        # Detailed troubleshooting
 ```
 
 ---
 
 ## **Usage** 📝
 
-### Basic Workflow
+### Daily Workflow
 
-1. **Install systemd service** (one-time setup)
-   ```bash
-   cd /opt/swictation
-   ./scripts/install-systemd-service.sh
-   ```
+**The daemon runs in the background automatically after installation.**
 
-2. **Press `$mod+Shift+d`** to START continuous recording
-3. **Speak naturally** - pause between thoughts (2s silence triggers transcription)
-4. **Text appears automatically** after each pause
-5. **Press `$mod+Shift+d`** again to STOP recording
+1. **Open any text editor, terminal, or code editor**
+2. **Press `$mod+Shift+d`** → Recording starts
+3. **Speak naturally with pauses**
+4. **Text types automatically** after 2-second pauses
+5. **Press `$mod+Shift+d`** → Recording stops
 
-**Example Session:**
+### Example Session: Writing Code
+
+```python
+# Open VSCode, focus on editor
+
+[Press $mod+Shift+d to start]
+
+YOU SAY: "def calculate underscore sum open parenthesis numbers close parenthesis colon"
+[pause 2s] → def calculate_sum(numbers):
+
+YOU SAY: "return sum open parenthesis numbers close parenthesis"
+[pause 2s] → return sum(numbers)
+
+[Press $mod+Shift+d to stop]
+
+# Result:
+# def calculate_sum(numbers):
+#     return sum(numbers)
 ```
+
+### Example Session: Documentation
+
+```markdown
+# Open kate or gedit, start typing
+
 [Press $mod+Shift+d]
-"This is the first sentence." [pause 2s] → Text appears!
-"Here's another thought." [pause 2s] → More text appears!
-"Final sentence." [pause 2s] → Text appears!
-[Press $mod+Shift+d] → Stop recording
+
+YOU SAY: "This function processes user input period"
+[pause 2s] → This function processes user input.
+
+YOU SAY: "It validates the data and returns a cleaned version period"
+[pause 2s] → It validates the data and returns a cleaned version.
+
+[Press $mod+Shift+d]
 ```
 
-### CLI Commands
+### Example Session: Terminal Commands
 
 ```bash
-# Toggle recording (start/stop)
+# Focus on terminal
+
+[Press $mod+Shift+d]
+
+YOU SAY: "git add period"
+[pause 2s] → git add.
+
+YOU SAY: "git commit hyphen m quote update readme quote"
+[pause 2s] → git commit -m "update readme"
+
+[Press $mod+Shift+d]
+
+# Then press Enter to execute!
+```
+
+### CLI Commands (Advanced)
+
+```bash
+# Toggle recording (alternative to hotkey)
 python3 /opt/swictation/src/swictation_cli.py toggle
 
 # Check daemon status
 python3 /opt/swictation/src/swictation_cli.py status
+# Output: Recording: active / idle
 
-# Stop daemon
+# Stop daemon completely
 python3 /opt/swictation/src/swictation_cli.py stop
 ```
 
-### systemd Service (Auto-start)
+### Managing the Daemon
 
 ```bash
-# Copy service file
-cp /opt/swictation/config/swictation.service ~/.config/systemd/user/
-
-# Enable and start
-systemctl --user enable swictation.service
-systemctl --user start swictation.service
-
-# Check status
+# Check daemon status
 systemctl --user status swictation.service
 
-# View logs
+# Start daemon
+systemctl --user start swictation.service
+
+# Stop daemon (save battery)
+systemctl --user stop swictation.service
+
+# Restart daemon (after config changes)
+systemctl --user restart swictation.service
+
+# View real-time logs
 journalctl --user -u swictation.service -f
+
+# View last 50 log lines
+journalctl --user -u swictation.service -n 50
 ```
+
+### Tips for Best Results
+
+**DO:**
+- ✅ Speak clearly at normal pace
+- ✅ Pause 2+ seconds between thoughts
+- ✅ Focus your text editor before speaking
+- ✅ Use consistent punctuation ("period", "comma")
+- ✅ Test in simple editor first (kate, gedit)
+
+**DON'T:**
+- ❌ Speak continuously for 30+ seconds
+- ❌ Speak too fast without pauses
+- ❌ Forget to say punctuation marks
+- ❌ Expect automatic capitalization (not implemented)
+- ❌ Switch windows during transcription
 
 ---
 
@@ -384,39 +712,151 @@ journalctl --user -u swictation.service -f
 
 ## **Troubleshooting** 🔧
 
-### Quick Fixes
+### Quick Diagnostics
 
-**Daemon not starting?**
+**Is the daemon running?**
 ```bash
-# Check if already running
+systemctl --user status swictation.service
+# or
 python3 /opt/swictation/src/swictation_cli.py status
+```
 
-# Kill existing process
-pkill -f swictationd.py
+**✅ Expected:** `Active: active (running)`
+**❌ If not running:**
+```bash
+# Check logs for errors
+journalctl --user -u swictation.service -n 50
 
-# Start fresh
+# Restart daemon
+systemctl --user restart swictation.service
+```
+
+### Common Issues
+
+#### 1. Hotkey Not Working ($mod+Shift+d does nothing)
+
+**Cause:** Sway keybinding not configured or daemon not running
+
+**Fix:**
+```bash
+# Verify daemon is running
+systemctl --user status swictation.service
+
+# Re-run setup script
+cd /opt/swictation
+./scripts/setup-sway.sh
+swaymsg reload
+
+# Test manually
+python3 /opt/swictation/src/swictation_cli.py toggle
+```
+
+#### 2. No Text Appears After Speaking
+
+**Cause:** wtype not working or wrong window focus
+
+**Fix:**
+```bash
+# Test wtype manually (open text editor first!)
+echo "test text" | wtype -
+
+# If nothing appears, check Wayland
+echo $WAYLAND_DISPLAY  # Should show "wayland-0" or similar
+
+# Verify you're in Wayland, not Xorg
+echo $XDG_SESSION_TYPE  # Should be "wayland"
+```
+
+**Also check:**
+- Is your text editor focused when transcription happens?
+- Try a simple editor first (kate, gedit) before VSCode/vim
+
+#### 3. Audio Not Being Captured
+
+**Cause:** Wrong audio device or PipeWire issue
+
+**Fix:**
+```bash
+# List audio devices
+python3 -c "import sounddevice as sd; print(sd.query_devices())"
+
+# Test recording (speaks back what you say)
+python3 /opt/swictation/src/audio_capture.py 5
+
+# Check PipeWire is running
+systemctl --user status pipewire
+```
+
+#### 4. GPU Out of Memory
+
+**Cause:** VRAM < 4GB or other GPU processes running
+
+**Fix:**
+```bash
+# Check GPU memory
+nvidia-smi
+
+# Kill other GPU processes if needed
+# Canary-1B-Flash requires ~3.6GB VRAM
+```
+
+#### 5. Daemon Crashes on Startup
+
+**Cause:** Missing dependencies or model download failure
+
+**Fix:**
+```bash
+# Reinstall dependencies
+pip install --force-reinstall -r requirements.txt
+
+# Manually download model
+python3 -c "from nemo.collections.asr.models import EncDecMultiTaskModel; EncDecMultiTaskModel.from_pretrained('nvidia/canary-1b-flash')"
+
+# Check logs
+journalctl --user -u swictation.service -n 100
+```
+
+### Performance Issues
+
+**High latency (>3s after pause)?**
+- Check GPU load: `nvidia-smi`
+- Verify no CPU throttling
+- Ensure daemon isn't using CPU fallback
+
+**Text appears in wrong order?**
+- This is a known limitation when speaking too fast
+- Solution: Pause 2+ seconds between thoughts
+
+**Battery draining fast?**
+- VAD is very efficient (2.2 MB GPU)
+- Main drain is continuous STT model in VRAM
+- Consider stopping daemon when not in use:
+  ```bash
+  systemctl --user stop swictation.service  # Stop
+  systemctl --user start swictation.service  # Start later
+  ```
+
+### Getting More Help
+
+**Check detailed logs:**
+```bash
+# Real-time logs
+journalctl --user -u swictation.service -f
+
+# Last 200 lines
+journalctl --user -u swictation.service -n 200
+```
+
+**Debug mode:**
+```bash
+# Stop systemd service
+systemctl --user stop swictation.service
+
+# Run manually to see all output
 python3 /opt/swictation/src/swictationd.py
 ```
 
-**No text appearing?**
-```bash
-# Test wtype manually
-echo "test" | wtype -
-
-# Check Wayland socket
-echo $WAYLAND_DISPLAY
-```
-
-**Audio not captured?**
-```bash
-# List audio devices
-python3 /opt/swictation/src/audio_capture.py list
-
-# Test capture
-python3 /opt/swictation/src/audio_capture.py 5  # Record 5 seconds
-```
-
-📖 **Full Troubleshooting:** [docs/troubleshooting.md](docs/troubleshooting.md)
+📖 **Full Troubleshooting Guide:** [docs/troubleshooting.md](docs/troubleshooting.md)
 
 ---
 
