@@ -109,10 +109,16 @@ CLAUDE.md
 .claude/settings.local.json
 .mcp.json
 claude-flow.config.json
+.swarm
 .swarm/
+.hive-mind
 .hive-mind/
+.claude-flow
 .claude-flow/
+memory
 memory/
+hive
+hive/
 coordination/
 memory/claude-flow-data.json
 memory/sessions/*
