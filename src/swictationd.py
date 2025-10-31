@@ -19,6 +19,7 @@ import tempfile
 # Import our modules
 from audio_capture import AudioCapture
 from text_injection import TextInjector, InjectionMethod
+from memory_manager import MemoryManager, MemoryPressureLevel
 
 # STT imports
 import torch
@@ -126,6 +127,38 @@ class SwictationDaemon:
                 print("⚠️  Performance monitoring not available (psutil not installed)")
                 self.performance_monitor = None
 
+        # Memory pressure management
+        self.memory_manager = None
+        if torch.cuda.is_available():
+            # Define memory pressure callbacks
+            def memory_warning(status):
+                print(f"⚠️  Memory Warning: {status.usage_percent*100:.1f}% usage", flush=True)
+
+            def memory_critical(status):
+                print(f"🔴 Memory Critical: {status.usage_percent*100:.1f}% usage - Aggressive cleanup!", flush=True)
+
+            def memory_emergency(status):
+                print(f"🚨 Memory Emergency: {status.usage_percent*100:.1f}% usage - Offloading models!", flush=True)
+
+            def memory_normal(status):
+                print(f"✓ Memory Normal: {status.usage_percent*100:.1f}% usage", flush=True)
+
+            memory_callbacks = {
+                'warning': memory_warning,
+                'critical': memory_critical,
+                'emergency': memory_emergency,
+                'normal': memory_normal,
+                'emergency_shutdown': lambda: self._emergency_memory_shutdown()
+            }
+
+            self.memory_manager = MemoryManager(
+                check_interval=2.0,
+                warning_threshold=0.80,
+                critical_threshold=0.90,
+                emergency_threshold=0.95,
+                callbacks=memory_callbacks
+            )
+
         # IPC socket
         self.server_socket: Optional[socket.socket] = None
         self.socket_thread: Optional[threading.Thread] = None
@@ -149,8 +182,21 @@ class SwictationDaemon:
                 onnx=False
             )
 
+            # Try GPU with fallback to CPU on memory pressure
             if torch.cuda.is_available():
-                vad_model = vad_model.cuda()
+                try:
+                    vad_model = vad_model.cuda()
+
+                    # Register VAD model with memory manager
+                    if self.memory_manager:
+                        self.memory_manager.register_model('vad_model', vad_model)
+
+                except RuntimeError as e:
+                    if "out of memory" in str(e).lower():
+                        print(f"  ⚠️  GPU OOM loading VAD, using CPU instead", flush=True)
+                        vad_model = vad_model.cpu()
+                    else:
+                        raise
 
             vad_model.eval()
 
@@ -178,9 +224,25 @@ class SwictationDaemon:
             self.stt_model = EncDecMultiTaskModel.from_pretrained(self.model_name)
             self.stt_model.eval()
 
+            # CUDA error recovery: Try GPU first, fallback to CPU on error
             if torch.cuda.is_available():
-                self.stt_model = self.stt_model.cuda()
-                print(f"  Using GPU: {torch.cuda.get_device_name(0)}", flush=True)
+                try:
+                    self.stt_model = self.stt_model.cuda()
+                    print(f"  Using GPU: {torch.cuda.get_device_name(0)}", flush=True)
+
+                    # Register model with memory manager
+                    if self.memory_manager:
+                        self.memory_manager.register_model('stt_model', self.stt_model)
+
+                except RuntimeError as e:
+                    if "out of memory" in str(e).lower():
+                        print(f"  ⚠️  GPU OOM during model load, falling back to CPU", flush=True)
+                        # Clear CUDA cache and retry on CPU
+                        torch.cuda.empty_cache()
+                        gc.collect()
+                        self.stt_model = self.stt_model.cpu()
+                    else:
+                        raise
             else:
                 print("  Using CPU (slower)", flush=True)
 
@@ -397,14 +459,42 @@ class SwictationDaemon:
             temp_path = Path(tempfile.mktemp(suffix='.wav'))
             sf.write(temp_path, segment, self.sample_rate)
 
-            # Transcribe with FULL segment context (not chunks!)
-            hypothesis = self.stt_model.transcribe(
-                [str(temp_path)],
-                batch_size=1,
-                source_lang='en',
-                target_lang='en',
-                pnc='yes'
-            )[0]
+            # Transcribe with CUDA error recovery
+            try:
+                # Transcribe with FULL segment context (not chunks!)
+                hypothesis = self.stt_model.transcribe(
+                    [str(temp_path)],
+                    batch_size=1,
+                    source_lang='en',
+                    target_lang='en',
+                    pnc='yes'
+                )[0]
+
+                # Reset error count on success
+                if self.memory_manager:
+                    self.memory_manager.reset_error_count()
+
+            except RuntimeError as e:
+                # Handle CUDA errors
+                if "CUDA" in str(e) or "out of memory" in str(e).lower():
+                    print(f"  ⚠️  CUDA error during transcription: {e}", flush=True)
+
+                    # Try recovery with memory manager
+                    if self.memory_manager and not self.memory_manager.handle_cuda_error(e):
+                        # Fallback to CPU
+                        print(f"  → Falling back to CPU transcription", flush=True)
+                        self.stt_model = self.stt_model.cpu()
+
+                    # Retry transcription (will use CPU if offloaded)
+                    hypothesis = self.stt_model.transcribe(
+                        [str(temp_path)],
+                        batch_size=1,
+                        source_lang='en',
+                        target_lang='en',
+                        pnc='yes'
+                    )[0]
+                else:
+                    raise
 
             text = hypothesis.text if hasattr(hypothesis, 'text') else str(hypothesis)
             temp_path.unlink(missing_ok=True)
@@ -614,8 +704,17 @@ class SwictationDaemon:
             # Convert to torch tensor
             audio_tensor = torch.from_numpy(audio).float()
 
-            if torch.cuda.is_available():
-                audio_tensor = audio_tensor.cuda()
+            # Use GPU if model is on GPU and CUDA available
+            if torch.cuda.is_available() and next(self.vad_model.parameters()).is_cuda:
+                try:
+                    audio_tensor = audio_tensor.cuda()
+                except RuntimeError as e:
+                    # Handle CUDA errors with memory manager
+                    if self.memory_manager and not self.memory_manager.handle_cuda_error(e):
+                        # Fallback to CPU
+                        print(f"    ⚠️  VAD: Falling back to CPU mode", flush=True)
+                        self.vad_model = self.vad_model.cpu()
+                        audio_tensor = audio_tensor.cpu()
 
             # Get speech timestamps
             speech_timestamps = self.get_speech_timestamps(
@@ -630,6 +729,15 @@ class SwictationDaemon:
             has_speech = len(speech_timestamps) > 0
             return has_speech
 
+        except RuntimeError as e:
+            # Handle CUDA errors
+            if "CUDA" in str(e) or "out of memory" in str(e).lower():
+                if self.memory_manager:
+                    self.memory_manager.handle_cuda_error(e)
+                print(f"    ⚠ VAD CUDA error: {e}, assuming speech present")
+            else:
+                print(f"    ⚠ VAD error: {e}, assuming speech present")
+            return True
         except Exception as e:
             print(f"    ⚠ VAD error: {e}, assuming speech present")
             return True
@@ -892,12 +1000,20 @@ class SwictationDaemon:
                 self.performance_monitor.start_background_monitoring(interval=5.0)
                 print("  ✓ Performance monitoring active", flush=True)
 
+            # Start memory pressure monitoring
+            if self.memory_manager:
+                print("  Starting memory pressure monitoring...", flush=True)
+                self.memory_manager.start_monitoring()
+                print("  ✓ Memory pressure monitoring active", flush=True)
+
             self.set_state(DaemonState.IDLE)
 
             print("\n✓ Swictation daemon started", flush=True)
             print("  Ready to receive toggle commands", flush=True)
             if self.performance_monitor:
                 print("  Performance monitoring: ENABLED", flush=True)
+            if self.memory_manager:
+                print("  Memory protection: ENABLED", flush=True)
             print("  Press Ctrl+C to stop\n", flush=True)
 
             # Main loop (just keeps process alive)
@@ -967,6 +1083,11 @@ class SwictationDaemon:
 
         self.running = False
 
+        # Stop memory monitoring first
+        if self.memory_manager:
+            print("  Stopping memory monitoring...")
+            self.memory_manager.stop_monitoring()
+
         # Stop performance monitoring
         if self.performance_monitor:
             print("  Stopping performance monitoring...")
@@ -977,6 +1098,10 @@ class SwictationDaemon:
             print("📊 Final Performance Summary")
             print("=" * 80)
             self.performance_monitor.print_summary()
+
+        # Print memory status
+        if self.memory_manager:
+            print("\n" + self.memory_manager.get_status_report())
 
         # Stop audio capture if active
         if self.audio_capture and self.audio_capture.is_active():
@@ -1000,6 +1125,24 @@ class SwictationDaemon:
                     print(f"  Warning: Could not delete temp file {temp_file}: {e}")
 
         print("✓ Daemon stopped")
+
+    def _emergency_memory_shutdown(self):
+        """Emergency shutdown triggered by memory manager"""
+        print("\n🚨 Emergency memory shutdown triggered!")
+        print("  Stopping all operations...")
+
+        # Stop recording if active
+        if self.get_state() == DaemonState.RECORDING:
+            try:
+                self.audio_capture.stop()
+            except:
+                pass
+
+        # Set error state
+        self.set_state(DaemonState.ERROR)
+
+        # Stop daemon
+        self.running = False
 
 
 def main():

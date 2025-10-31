@@ -115,10 +115,16 @@ class PerformanceMonitor:
         # Warning thresholds
         self.thresholds = {
             'gpu_memory_mb': 4000,      # 4GB
+            'gpu_memory_percent': 80.0, # 80% of total GPU memory
             'cpu_percent': 50.0,        # 50%
             'latency_ms': 2000,         # 2 seconds
             'memory_growth_mb_s': 1.0,  # 1 MB/s sustained growth
         }
+
+        # Track GPU total memory for percentage calculations
+        self.gpu_total_memory = 0
+        if self.has_gpu:
+            self.gpu_total_memory = torch.cuda.get_device_properties(0).total_memory / 1e6
 
         # Background monitoring
         self.monitoring_active = False
@@ -334,20 +340,34 @@ class PerformanceMonitor:
         Get GPU memory statistics.
 
         Returns:
-            Dict with current, peak, and reserved GPU memory in MB
+            Dict with current, peak, reserved GPU memory in MB, plus percentages
         """
         if not self.has_gpu:
             return {
                 'current_mb': 0.0,
                 'peak_mb': 0.0,
                 'reserved_mb': 0.0,
+                'total_mb': 0.0,
+                'free_mb': 0.0,
+                'current_percent': 0.0,
+                'peak_percent': 0.0,
                 'available': False
             }
 
+        current = torch.cuda.memory_allocated() / 1e6
+        peak = torch.cuda.max_memory_allocated() / 1e6
+        reserved = torch.cuda.memory_reserved() / 1e6
+        total = self.gpu_total_memory
+        free = total - current
+
         return {
-            'current_mb': torch.cuda.memory_allocated() / 1e6,
-            'peak_mb': torch.cuda.max_memory_allocated() / 1e6,
-            'reserved_mb': torch.cuda.memory_reserved() / 1e6,
+            'current_mb': current,
+            'peak_mb': peak,
+            'reserved_mb': reserved,
+            'total_mb': total,
+            'free_mb': free,
+            'current_percent': (current / total * 100) if total > 0 else 0,
+            'peak_percent': (peak / total * 100) if total > 0 else 0,
             'available': True,
             'device_name': torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'N/A'
         }
@@ -418,12 +438,23 @@ class PerformanceMonitor:
     def _check_thresholds(self, metrics: PerformanceMetrics):
         """Check metrics against thresholds and trigger warnings."""
 
-        # GPU memory check
-        if self.has_gpu and metrics.gpu_memory_allocated > self.thresholds['gpu_memory_mb']:
-            self._trigger_warning(
-                'high_gpu_memory',
-                f"GPU memory: {metrics.gpu_memory_allocated:.0f}MB (threshold: {self.thresholds['gpu_memory_mb']:.0f}MB)"
-            )
+        # GPU memory check (absolute and percentage)
+        if self.has_gpu:
+            # Absolute threshold
+            if metrics.gpu_memory_allocated > self.thresholds['gpu_memory_mb']:
+                self._trigger_warning(
+                    'high_gpu_memory',
+                    f"GPU memory: {metrics.gpu_memory_allocated:.0f}MB (threshold: {self.thresholds['gpu_memory_mb']:.0f}MB)"
+                )
+
+            # Percentage threshold
+            if self.gpu_total_memory > 0:
+                gpu_percent = (metrics.gpu_memory_allocated / self.gpu_total_memory) * 100
+                if gpu_percent > self.thresholds['gpu_memory_percent']:
+                    self._trigger_warning(
+                        'high_gpu_memory',
+                        f"GPU memory: {gpu_percent:.1f}% (threshold: {self.thresholds['gpu_memory_percent']:.1f}%)"
+                    )
 
         # CPU check
         if metrics.cpu_percent > self.thresholds['cpu_percent']:
@@ -449,9 +480,11 @@ class PerformanceMonitor:
         gpu_stats = self.get_gpu_memory_stats()
         print(f"\n🎮 GPU Memory:")
         if gpu_stats['available']:
-            print(f"  Current: {gpu_stats['current_mb']:.1f} MB")
-            print(f"  Peak: {gpu_stats['peak_mb']:.1f} MB")
+            print(f"  Current: {gpu_stats['current_mb']:.1f} MB ({gpu_stats['current_percent']:.1f}%)")
+            print(f"  Peak: {gpu_stats['peak_mb']:.1f} MB ({gpu_stats['peak_percent']:.1f}%)")
             print(f"  Reserved: {gpu_stats['reserved_mb']:.1f} MB")
+            print(f"  Free: {gpu_stats['free_mb']:.1f} MB")
+            print(f"  Total: {gpu_stats['total_mb']:.1f} MB")
             print(f"  Device: {gpu_stats['device_name']}")
         else:
             print(f"  No GPU available")
