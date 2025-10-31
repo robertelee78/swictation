@@ -132,16 +132,24 @@ class SwictationDaemon:
 
         try:
             self.stt_model = EncDecMultiTaskModel.from_pretrained(self.model_name)
+            print("[DEBUG] from_pretrained() returned")
+
             self.stt_model.eval()
+            print("[DEBUG] eval() completed")
 
             if torch.cuda.is_available():
+                print("[DEBUG] Calling .cuda()...")
                 self.stt_model = self.stt_model.cuda()
+                print("[DEBUG] .cuda() completed")
                 print(f"  Using GPU: {torch.cuda.get_device_name(0)}")
             else:
                 print("  Using CPU (slower)")
 
             load_time = time.time() - load_start
+            print("[DEBUG] Calculated load time")
+
             gpu_mem = torch.cuda.memory_allocated() / 1e6 if torch.cuda.is_available() else 0
+            print("[DEBUG] Got GPU memory")
 
             print(f"✓ STT model loaded in {load_time:.2f}s")
             print(f"  GPU Memory: {gpu_mem:.1f} MB")
