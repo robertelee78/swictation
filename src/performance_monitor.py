@@ -122,9 +122,8 @@ class PerformanceMonitor:
         }
 
         # Track GPU total memory for percentage calculations
-        self.gpu_total_memory = 0
-        if self.has_gpu:
-            self.gpu_total_memory = torch.cuda.get_device_properties(0).total_memory / 1e6
+        # Defer CUDA initialization until first use to avoid context issues
+        self.gpu_total_memory = None
 
         # Background monitoring
         self.monitoring_active = False
@@ -354,11 +353,23 @@ class PerformanceMonitor:
                 'available': False
             }
 
+        # Lazy initialization of GPU total memory on first use
+        if self.gpu_total_memory is None and self.has_gpu:
+            try:
+                self.gpu_total_memory = torch.cuda.get_device_properties(0).total_memory / 1e6
+            except RuntimeError:
+                # CUDA not initialized yet, return zeros
+                return {
+                    'current_mb': 0, 'peak_mb': 0, 'reserved_mb': 0,
+                    'total_mb': 0, 'free_mb': 0, 'current_percent': 0,
+                    'peak_percent': 0, 'reserved_percent': 0, 'free_percent': 0
+                }
+
         current = torch.cuda.memory_allocated() / 1e6
         peak = torch.cuda.max_memory_allocated() / 1e6
         reserved = torch.cuda.memory_reserved() / 1e6
-        total = self.gpu_total_memory
-        free = total - current
+        total = self.gpu_total_memory or 0
+        free = total - current if total > 0 else 0
 
         return {
             'current_mb': current,
@@ -447,8 +458,8 @@ class PerformanceMonitor:
                     f"GPU memory: {metrics.gpu_memory_allocated:.0f}MB (threshold: {self.thresholds['gpu_memory_mb']:.0f}MB)"
                 )
 
-            # Percentage threshold
-            if self.gpu_total_memory > 0:
+            # Percentage threshold (only if GPU total memory is known)
+            if self.gpu_total_memory and self.gpu_total_memory > 0:
                 gpu_percent = (metrics.gpu_memory_allocated / self.gpu_total_memory) * 100
                 if gpu_percent > self.thresholds['gpu_memory_percent']:
                     self._trigger_warning(
