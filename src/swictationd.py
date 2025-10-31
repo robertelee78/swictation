@@ -50,7 +50,9 @@ class SwictationDaemon:
         socket_path: str = '/tmp/swictation.sock',
         chunk_duration: float = 10.0,
         chunk_overlap: float = 1.0,
-        vad_threshold: float = 0.5
+        vad_threshold: float = 0.5,
+        streaming_mode: bool = True,
+        streaming_chunk_size: float = 0.4
     ):
         """
         Initialize Swictation daemon.
@@ -62,6 +64,8 @@ class SwictationDaemon:
             chunk_duration: Duration of each audio chunk in seconds (for memory optimization)
             chunk_overlap: Overlap between chunks in seconds (for context continuity)
             vad_threshold: Voice Activity Detection threshold (0-1)
+            streaming_mode: Enable real-time streaming transcription (default: True)
+            streaming_chunk_size: Chunk size for streaming in seconds (default: 0.4s = 400ms)
         """
         self.model_name = model_name
         self.sample_rate = sample_rate
@@ -69,11 +73,19 @@ class SwictationDaemon:
         self.chunk_duration = chunk_duration
         self.chunk_overlap = chunk_overlap
         self.vad_threshold = vad_threshold
+        self.streaming_mode = streaming_mode
+        self.streaming_chunk_size = streaming_chunk_size
 
         # State
         self.state = DaemonState.IDLE
         self.state_lock = threading.Lock()
         self.running = False
+
+        # Streaming state
+        self._streaming_buffer = []
+        self._streaming_frames = 0
+        self._last_transcription = ""
+        self._streaming_thread = None
 
         # Components (initialized on start)
         self.audio_capture: Optional[AudioCapture] = None
@@ -203,8 +215,16 @@ class SwictationDaemon:
     def _start_recording(self):
         """Start audio capture"""
         try:
-            print("\n🎤 Starting recording...")
+            mode_str = "streaming" if self.streaming_mode else "batch"
+            print(f"\n🎤 Starting recording ({mode_str} mode)...")
             self.set_state(DaemonState.RECORDING)
+
+            if self.streaming_mode:
+                # Set up callback for streaming chunks
+                self.audio_capture.on_audio_callback = self._on_audio_chunk
+                self._streaming_buffer = []
+                self._streaming_frames = 0
+                self._last_transcription = ""
 
             self.audio_capture.start()
             print("✓ Recording started (speak now)")
@@ -213,11 +233,74 @@ class SwictationDaemon:
             print(f"✗ Failed to start recording: {e}")
             self.set_state(DaemonState.ERROR)
 
+    def _on_audio_chunk(self, audio: np.ndarray, frames: int):
+        """Callback for real-time audio chunks during streaming mode"""
+        self._streaming_buffer.extend(audio)
+        self._streaming_frames += frames
+
+        # Check if we have enough frames for a streaming chunk
+        chunk_frames = int(self.streaming_chunk_size * self.sample_rate)
+        if len(self._streaming_buffer) >= chunk_frames:
+            # Extract chunk
+            chunk = np.array(self._streaming_buffer[:chunk_frames])
+            self._streaming_buffer = self._streaming_buffer[chunk_frames:]
+
+            # Process chunk in background (non-blocking)
+            if self._streaming_thread is None or not self._streaming_thread.is_alive():
+                self._streaming_thread = threading.Thread(
+                    target=self._process_streaming_chunk,
+                    args=(chunk.copy(),),
+                    daemon=True
+                )
+                self._streaming_thread.start()
+
+    def _process_streaming_chunk(self, audio_chunk: np.ndarray):
+        """Process a single streaming chunk with NeMo cache-aware streaming"""
+        try:
+            # Save chunk to temp file
+            temp_path = self.temp_dir / f'stream_chunk_{int(time.time()*1000)}.wav'
+            sf.write(temp_path, audio_chunk, self.sample_rate)
+
+            # Use NeMo's streaming transcription
+            # Note: transcribe_simulate_cache_aware_streaming expects iterator of file paths
+            hypothesis = self.stt_model.transcribe(
+                audio=str(temp_path),
+                source_lang='en',
+                target_lang='en',
+                pnc='yes',
+                batch_size=1
+            )[0]
+
+            text = hypothesis.text if hasattr(hypothesis, 'text') else str(hypothesis)
+
+            # Inject only new text (diff from last transcription)
+            if text.strip() and text != self._last_transcription:
+                # Extract new portion
+                new_text = text[len(self._last_transcription):].strip() if text.startswith(self._last_transcription) else text
+
+                if new_text:
+                    print(f"  🎤→ {new_text}", flush=True)
+                    self.text_injector.inject(new_text + " ")
+                    self._last_transcription = text
+
+            # Cleanup
+            temp_path.unlink(missing_ok=True)
+
+        except Exception as e:
+            print(f"  ⚠ Streaming chunk error: {e}", flush=True)
+
     def _stop_recording_and_process(self):
         """Stop recording and process audio → STT → inject"""
         try:
             print("\n🛑 Stopping recording...")
             self.set_state(DaemonState.PROCESSING)
+
+            # Clear audio callback if streaming
+            if self.streaming_mode:
+                self.audio_capture.on_audio_callback = None
+                # Wait for any in-flight streaming transcription
+                if self._streaming_thread and self._streaming_thread.is_alive():
+                    self._streaming_thread.join(timeout=2)
 
             # Stop capture and get audio
             audio = self.audio_capture.stop()
@@ -230,13 +313,19 @@ class SwictationDaemon:
             duration = len(audio) / self.sample_rate
             print(f"✓ Captured {duration:.2f}s audio")
 
-            # Transcribe in background thread
-            thread = threading.Thread(
-                target=self._process_audio,
-                args=(audio,),
-                daemon=True
-            )
-            thread.start()
+            # In streaming mode, we've already processed audio, just clean up
+            if self.streaming_mode:
+                print("✓ Streaming transcription complete")
+                self.set_state(DaemonState.IDLE)
+                print("✓ Ready for next recording\n", flush=True)
+            else:
+                # Batch mode: Transcribe in background thread
+                thread = threading.Thread(
+                    target=self._process_audio,
+                    args=(audio,),
+                    daemon=True
+                )
+                thread.start()
 
         except Exception as e:
             print(f"✗ Failed to stop recording: {e}")
