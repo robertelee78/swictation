@@ -93,10 +93,11 @@ class SwictationDaemon:
         print("Swictation daemon initialized")
 
     def load_vad_model(self):
-        """Load Silero VAD model (lightweight, <3 MB)"""
+        """Load Silero VAD model (lightweight, 2.2 MB on GPU)"""
         print("Loading Silero VAD model...")
         try:
             # Download Silero VAD from torch hub
+            # IMPORTANT: Must be loaded BEFORE STT to avoid torch.hub.load() hanging
             vad_model, utils = torch.hub.load(
                 repo_or_dir='snakers4/silero-vad',
                 model='silero_vad',
@@ -140,10 +141,10 @@ class SwictationDaemon:
                 print("  Using CPU (slower)")
 
             load_time = time.time() - load_start
-            print(f"✓ STT model loaded in {load_time:.2f}s")
+            gpu_mem = torch.cuda.memory_allocated() / 1e6 if torch.cuda.is_available() else 0
 
-            # Load VAD model after STT
-            self.load_vad_model()
+            print(f"✓ STT model loaded in {load_time:.2f}s")
+            print(f"  GPU Memory: {gpu_mem:.1f} MB")
 
         except Exception as e:
             print(f"✗ Failed to load STT model: {e}")
@@ -509,7 +510,10 @@ class SwictationDaemon:
         print("=" * 80)
 
         try:
-            # Load model (slow)
+            # Load VAD first (prevents torch.hub.load() from hanging)
+            self.load_vad_model()
+
+            # Then load STT model (slow)
             self.load_stt_model()
 
             # Initialize components
