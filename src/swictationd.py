@@ -53,7 +53,7 @@ class SwictationDaemon:
         chunk_duration: float = 10.0,
         chunk_overlap: float = 1.0,
         vad_threshold: float = 0.5,
-        streaming_mode: bool = False,  # Disabled: batch mode for better accuracy
+        streaming_mode: bool = True,  # VAD-triggered segmentation (auto-transcribe on silence)
         streaming_chunk_size: float = 0.4,
         enable_performance_monitoring: bool = True
     ):
@@ -245,14 +245,15 @@ class SwictationDaemon:
         """Initialize audio capture and text injection"""
         print("Initializing components...", flush=True)
 
-        # Audio capture (streaming_mode disabled for batch transcription)
+        # Audio capture with streaming for VAD-triggered segmentation
         try:
             self.audio_capture = AudioCapture(
                 sample_rate=self.sample_rate,
-                buffer_duration=30.0,  # 30s max recording
-                streaming_mode=False    # Batch mode for better accuracy
+                buffer_duration=30.0,  # 30s max recording per segment
+                streaming_mode=self.streaming_mode  # Enable callbacks for VAD
             )
-            print("✓ Audio capture initialized (batch mode)")
+            mode_str = "streaming (VAD-triggered)" if self.streaming_mode else "batch"
+            print(f"✓ Audio capture initialized ({mode_str})")
         except Exception as e:
             print(f"✗ Audio capture init failed: {e}")
             raise
