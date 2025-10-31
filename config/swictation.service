@@ -27,4 +27,6 @@ ProtectHome=read-only
 NoNewPrivileges=true
 
 [Install]
-WantedBy=default.target
+WantedBy=sway-session.target
+# Fallback to default.target if sway-session.target doesn't exist
+Also=default.target
