@@ -226,6 +226,7 @@ git commit -m "fix authentication bug"
 - ⌨️ **Hotkey Control** - `$mod+Shift+d` toggle (user configurable)
 - 🔄 **systemd Integration** - Auto-start with Sway
 - 📋 **Full Unicode Support** - Emojis, Greek, Chinese, all languages
+- 📊 **Performance Metrics** - Track WPM, latency, trends (`swictation stats`)
 
 ### Technical Highlights
 - **STT Model:** NVIDIA Canary-1B-Flash (5.77% WER)
@@ -597,6 +598,11 @@ python3 /opt/swictation/src/swictation_cli.py status
 
 # Stop daemon completely
 python3 /opt/swictation/src/swictation_cli.py stop
+
+# View performance metrics
+python3 /opt/swictation/src/swictation_cli.py stats       # Latest session details
+python3 /opt/swictation/src/swictation_cli.py history     # Recent sessions table
+python3 /opt/swictation/src/swictation_cli.py summary     # Lifetime statistics
 ```
 
 ### Managing the Daemon
