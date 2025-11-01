@@ -395,6 +395,7 @@ class SwictationDaemon:
         Safe text transformation with error handling and fallback.
 
         Transforms voice commands to symbols using MidStream PyO3 bindings.
+        Also handles special keyboard actions (backspace, delete, enter, etc.)
         Performance: ~0.25µs average (tested with 10,000 iterations)
 
         Args:
@@ -438,6 +439,71 @@ class SwictationDaemon:
             self.transform_stats['errors'] += 1
             print(f"  ⚠️  Transform error: {e}, using original text", flush=True)
             return text  # Fallback to original
+
+    def _inject_text_with_keys(self, transformed_text: str) -> bool:
+        """
+        Inject text that may contain special key markers like <KEY:BackSpace>.
+
+        Handles mixed text and keyboard actions intelligently:
+        - Plain text → inject normally with wtype
+        - <KEY:...> markers → execute as key presses
+
+        Args:
+            transformed_text: Text with potential <KEY:...> markers
+
+        Returns:
+            True if successful, False otherwise
+
+        Examples:
+            "Hello, world" → types "Hello, world"
+            "Hello<KEY:BackSpace>" → types "Hello" then presses backspace
+            "<KEY:Return>" → presses enter key
+        """
+        import re
+
+        # Pattern to match <KEY:KeyName>
+        key_pattern = re.compile(r'<KEY:([^>]+)>')
+
+        # Split text into parts (text and key markers)
+        parts = []
+        last_end = 0
+
+        for match in key_pattern.finditer(transformed_text):
+            # Add text before the key marker
+            if match.start() > last_end:
+                text_part = transformed_text[last_end:match.start()]
+                if text_part:
+                    parts.append(('text', text_part))
+
+            # Add the key marker
+            key_name = match.group(1)
+            parts.append(('key', key_name))
+            last_end = match.end()
+
+        # Add remaining text after last key marker
+        if last_end < len(transformed_text):
+            remaining = transformed_text[last_end:]
+            if remaining:
+                parts.append(('text', remaining))
+
+        # If no special keys, just inject normally
+        if not parts or all(part_type == 'text' for part_type, _ in parts):
+            return self.text_injector.inject(transformed_text)
+
+        # Execute mixed text and key actions
+        try:
+            for part_type, content in parts:
+                if part_type == 'text':
+                    if not self.text_injector.inject(content):
+                        return False
+                else:  # part_type == 'key'
+                    if not self.text_injector.inject_with_keys([content]):
+                        print(f"  ⚠️  Key injection failed: {content}", flush=True)
+                        return False
+            return True
+        except Exception as e:
+            print(f"  ⚠️  Mixed injection error: {e}", flush=True)
+            return False
 
     def toggle_recording(self):
         """Toggle recording on/off (main functionality)"""
@@ -605,11 +671,11 @@ class SwictationDaemon:
             if transformed != text and self.transformer_available:
                 print(f"  ⚡ {text} → {transformed}", flush=True)
 
-            # Inject transformed text
+            # Inject transformed text (handles both text and special keys)
             if transformed.strip():
                 if not self.transformer_available:
                     print(f"  📝 {transformed}", flush=True)
-                self.text_injector.inject(transformed + ' ')
+                self._inject_text_with_keys(transformed + ' ')
 
         except Exception as e:
             print(f"  ⚠ VAD segment error: {e}", flush=True)
@@ -985,8 +1051,8 @@ class SwictationDaemon:
                 if transformed != full_transcription and self.transformer_available:
                     print(f"  ⚡ Transformed text ({len(full_transcription)} → {len(transformed)} chars)")
 
-                # Inject transformed text
-                success = self.text_injector.inject(transformed)
+                # Inject transformed text (handles both text and special keys)
+                success = self._inject_text_with_keys(transformed)
 
                 if success:
                     print("✓ Text injected successfully")
