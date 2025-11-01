@@ -16,7 +16,7 @@
 # - If missing soft speech or quiet words: Lower to 0.3-0.4
 # - If triggering on background noise: Raise to 0.6-0.7
 #
-threshold = 0.5
+threshold = 0.4
 
 # Silence duration threshold (seconds)
 #
@@ -33,7 +33,7 @@ threshold = 0.5
 # - If waiting too long for text to appear: Decrease to 1.0-1.5
 # - For rapid-fire dictation: Try 0.5-1.0
 #
-silence_duration = 2.0
+silence_duration = 0.8
 
 [metrics]
 # Performance metrics tracking
