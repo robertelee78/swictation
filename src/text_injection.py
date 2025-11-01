@@ -202,6 +202,15 @@ class TextInjector:
 
         try:
             # wtype uses -k flag for special keys
+            # Modifier name mapping: 'super' -> 'logo' (wtype uses 'logo' for Super/Windows key)
+            modifier_map = {
+                'super': 'logo',  # Super/Windows/Mod4 key
+                'ctrl': 'ctrl',
+                'shift': 'shift',
+                'alt': 'alt',
+                'win': 'logo',    # Alias for super
+            }
+
             for key in keys:
                 # Parse modifiers and key from pattern like 'super-shift-Left' or 'ctrl-u'
                 parts = key.split('-')
@@ -217,9 +226,11 @@ class TextInjector:
                 elif len(parts) == 2:
                     # Single modifier (e.g., 'ctrl-u', 'super-Left', 'super-1')
                     modifier, keyname = parts
+                    # Map 'super' -> 'logo' for wtype compatibility
+                    wtype_modifier = modifier_map.get(modifier, modifier)
                     # wtype -M <modifier> -k <key> -m <modifier>
                     subprocess.run(
-                        ['wtype', '-M', modifier, '-k', keyname, '-m', modifier],
+                        ['wtype', '-M', wtype_modifier, '-k', keyname, '-m', wtype_modifier],
                         capture_output=True,
                         check=True,
                         timeout=2
@@ -227,9 +238,12 @@ class TextInjector:
                 elif len(parts) == 3:
                     # Two modifiers (e.g., 'super-shift-Left', 'super-shift-1')
                     mod1, mod2, keyname = parts
+                    # Map modifiers for wtype compatibility
+                    wtype_mod1 = modifier_map.get(mod1, mod1)
+                    wtype_mod2 = modifier_map.get(mod2, mod2)
                     # wtype -M <mod1> -M <mod2> -k <key> -m <mod2> -m <mod1>
                     subprocess.run(
-                        ['wtype', '-M', mod1, '-M', mod2, '-k', keyname, '-m', mod2, '-m', mod1],
+                        ['wtype', '-M', wtype_mod1, '-M', wtype_mod2, '-k', keyname, '-m', wtype_mod2, '-m', wtype_mod1],
                         capture_output=True,
                         check=True,
                         timeout=2
