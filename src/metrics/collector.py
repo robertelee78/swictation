@@ -220,11 +220,11 @@ class MetricsCollector:
                 words=words,
                 characters=characters,
                 text=transcription if self.store_transcription_text else "",
-                vad_detection_ms=0.0,  # Set by caller if available
-                audio_save_ms=0.0,  # Set by caller if available
-                stt_transcription_ms=stt_latency_ms,
-                text_transformation_us=transform_latency_us,
-                text_injection_ms=injection_latency_ms,
+                vad_latency_ms=0.0,  # Set by caller if available
+                audio_save_latency_ms=0.0,  # Set by caller if available
+                stt_latency_ms=stt_latency_ms,
+                transform_latency_us=transform_latency_us,
+                injection_latency_ms=injection_latency_ms,
                 total_latency_ms=total_latency_ms,
                 transformations_count=transformations,
                 keyboard_actions_count=keyboard_actions
@@ -305,9 +305,9 @@ class MetricsCollector:
         print(f"✓ Segment {segment_num}: {segment.duration_s:.1f}s | "
               f"{segment.words} words | {wpm:.0f} wpm | "
               f"{segment.total_latency_ms:.0f}ms{latency_indicator}", flush=True)
-        print(f"   └─ STT: {segment.stt_transcription_ms:.0f}ms | "
-              f"Transform: {segment.text_transformation_us:.1f}µs | "
-              f"Inject: {segment.text_injection_ms:.0f}ms\n", flush=True)
+        print(f"   └─ STT: {segment.stt_latency_ms:.0f}ms | "
+              f"Transform: {segment.transform_latency_us:.1f}µs | "
+              f"Inject: {segment.injection_latency_ms:.0f}ms\n", flush=True)
 
         # Check for performance warnings
         if self.current_session.segments_processed > 1:

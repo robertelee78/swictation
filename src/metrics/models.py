@@ -87,12 +87,12 @@ class SegmentMetrics:
     characters: int = 0
     text: str = ""
 
-    # Latency breakdown
-    vad_detection_ms: float = 0.0
-    audio_save_ms: float = 0.0
-    stt_transcription_ms: float = 0.0
-    text_transformation_us: float = 0.0
-    text_injection_ms: float = 0.0
+    # Latency breakdown (match database column names)
+    vad_latency_ms: float = 0.0
+    audio_save_latency_ms: float = 0.0
+    stt_latency_ms: float = 0.0
+    transform_latency_us: float = 0.0
+    injection_latency_ms: float = 0.0
     total_latency_ms: float = 0.0
 
     # Quality indicators
