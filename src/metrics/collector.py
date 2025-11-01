@@ -29,7 +29,12 @@ class MetricsCollector:
         self,
         db_path: str = "~/.local/share/swictation/metrics.db",
         typing_baseline_wpm: float = 40.0,
-        store_transcription_text: bool = False
+        store_transcription_text: bool = False,
+        warnings_enabled: bool = True,
+        high_latency_threshold_ms: float = 1000.0,
+        gpu_memory_threshold_percent: float = 80.0,
+        degradation_multiplier: float = 1.5,
+        accuracy_spike_multiplier: float = 3.0
     ):
         """
         Initialize metrics collector.
@@ -38,10 +43,23 @@ class MetricsCollector:
             db_path: Path to metrics database
             typing_baseline_wpm: Baseline typing speed for comparisons
             store_transcription_text: Whether to store full transcription text
+            warnings_enabled: Enable performance warnings
+            high_latency_threshold_ms: Threshold for high latency warnings
+            gpu_memory_threshold_percent: Threshold for GPU memory warnings
+            degradation_multiplier: Multiplier for degradation detection
+            accuracy_spike_multiplier: Multiplier for accuracy spike detection
         """
         self.db = MetricsDatabase(db_path)
         self.typing_baseline_wpm = typing_baseline_wpm
         self.store_transcription_text = store_transcription_text
+
+        # Warning configuration
+        self.warnings_enabled = warnings_enabled
+        self.high_latency_threshold_ms = high_latency_threshold_ms
+        self.gpu_memory_threshold_percent = gpu_memory_threshold_percent
+        self.degradation_multiplier = degradation_multiplier
+        self.accuracy_spike_multiplier = accuracy_spike_multiplier
+        self.last_warning_time = {}  # Rate limiting
 
         # Current session tracking
         self.current_session: Optional[SessionMetrics] = None
@@ -310,10 +328,115 @@ class MetricsCollector:
               f"Inject: {segment.injection_latency_ms:.0f}ms\n", flush=True)
 
         # Check for performance warnings
-        if self.current_session.segments_processed > 1:
-            avg_latency = np.mean([s.total_latency_ms for s in self.session_segments[:-1]])
-            if segment.total_latency_ms > 2.0 * avg_latency:
-                print(f"   ⚠️  Performance warning: Latency {segment.total_latency_ms/avg_latency:.1f}x session average\n", flush=True)
+        if self.warnings_enabled:
+            self._check_warnings(segment, gpu_memory_mb)
+
+    def _should_warn(self, warning_type: str, cooldown_seconds: float = 30.0) -> bool:
+        """
+        Rate limit warnings to avoid spam.
+
+        Args:
+            warning_type: Type of warning (e.g., 'high_latency', 'gpu_memory')
+            cooldown_seconds: Minimum time between warnings of same type
+
+        Returns:
+            True if warning should be shown
+        """
+        current_time = time.time()
+        last_time = self.last_warning_time.get(warning_type, 0)
+
+        if current_time - last_time >= cooldown_seconds:
+            self.last_warning_time[warning_type] = current_time
+            return True
+        return False
+
+    def _check_warnings(self, segment: SegmentMetrics, gpu_memory_mb: float = 0.0):
+        """
+        Check for various performance issues and emit warnings.
+
+        Args:
+            segment: Current segment metrics
+            gpu_memory_mb: Current GPU memory usage in MB
+        """
+        # 1. High latency detection
+        if segment.total_latency_ms > self.high_latency_threshold_ms:
+            if self._should_warn('high_latency', 60.0):
+                self._warn_high_latency(segment)
+
+        # 2. GPU memory pressure
+        if gpu_memory_mb > 0:
+            # Estimate total GPU memory (assuming 4GB for common GPUs)
+            gpu_total_mb = 4000.0
+            gpu_percent = (gpu_memory_mb / gpu_total_mb) * 100
+            if gpu_percent > self.gpu_memory_threshold_percent:
+                if self._should_warn('gpu_memory', 120.0):
+                    self._warn_gpu_memory(gpu_memory_mb, gpu_total_mb, gpu_percent)
+
+        # 3. Performance degradation (compare last 3 segments to session average)
+        if self.current_session and self.current_session.segments_processed >= 4:
+            recent_segments = self.session_segments[-3:]
+            earlier_segments = self.session_segments[:-3]
+
+            recent_avg = np.mean([s.total_latency_ms for s in recent_segments])
+            session_avg = np.mean([s.total_latency_ms for s in earlier_segments])
+
+            if recent_avg > session_avg * self.degradation_multiplier:
+                if self._should_warn('degradation', 90.0):
+                    self._warn_degradation(recent_avg, session_avg)
+
+        # 4. Accuracy proxy (keyboard corrections spike)
+        if self.current_session and self.current_session.segments_processed >= 3:
+            recent_corrections = segment.keyboard_actions_count
+            earlier_segments = self.session_segments[:-1]
+            avg_corrections = np.mean([s.keyboard_actions_count for s in earlier_segments])
+
+            if recent_corrections > avg_corrections * self.accuracy_spike_multiplier and recent_corrections > 3:
+                if self._should_warn('accuracy', 60.0):
+                    self._warn_accuracy_spike(recent_corrections, avg_corrections)
+
+    def _warn_high_latency(self, segment: SegmentMetrics):
+        """Warn about high latency with breakdown."""
+        print(f"\n⚠️  HIGH LATENCY WARNING: {segment.total_latency_ms:.0f}ms (threshold: {self.high_latency_threshold_ms:.0f}ms)", flush=True)
+        print(f"   Breakdown:", flush=True)
+        print(f"     ├─ STT: {segment.stt_latency_ms:.0f}ms", end="", flush=True)
+        if segment.stt_latency_ms > 800:
+            print(" ⚠️  SLOW", flush=True)
+        else:
+            print(" (normal)", flush=True)
+        print(f"     ├─ Transform: {segment.transform_latency_us:.1f}µs (normal)", flush=True)
+        print(f"     └─ Inject: {segment.injection_latency_ms:.0f}ms", end="", flush=True)
+        if segment.injection_latency_ms > 50:
+            print(" ⚠️  SLOW", flush=True)
+        else:
+            print(" (normal)", flush=True)
+        print(f"   Suggestion: Check GPU usage with 'nvidia-smi'\n", flush=True)
+
+    def _warn_gpu_memory(self, current_mb: float, total_mb: float, percent: float):
+        """Warn about GPU memory pressure."""
+        print(f"\n⚠️  GPU MEMORY WARNING: {current_mb:.0f}MB / {total_mb:.0f}MB ({percent:.0f}%)", flush=True)
+        print(f"   Status: Approaching threshold ({self.gpu_memory_threshold_percent:.0f}%)", flush=True)
+        print(f"   Impact: May experience increased latency", flush=True)
+        print(f"   Suggestion: Close other GPU applications if latency degrades\n", flush=True)
+
+    def _warn_degradation(self, recent_avg: float, session_avg: float):
+        """Warn about performance degradation."""
+        ratio = recent_avg / session_avg
+        print(f"\n⚠️  PERFORMANCE DEGRADATION: Last 3 segments slower", flush=True)
+        print(f"   Recent average: {recent_avg:.0f}ms", flush=True)
+        print(f"   Session average: {session_avg:.0f}ms", flush=True)
+        print(f"   Increase: {ratio:.1f}x ({(ratio-1)*100:.0f}% slower)", flush=True)
+        print(f"   Suggestion: Check system load or restart daemon if persists\n", flush=True)
+
+    def _warn_accuracy_spike(self, recent: int, average: float):
+        """Warn about potential accuracy issues."""
+        print(f"\n⚠️  ACCURACY PROXY WARNING: {recent} keyboard corrections in segment", flush=True)
+        print(f"   Your average: {average:.1f} corrections/segment", flush=True)
+        print(f"   Spike: {recent/average:.1f}x average", flush=True)
+        print(f"   Possible causes:", flush=True)
+        print(f"     • Background noise increased", flush=True)
+        print(f"     • Speaking faster/less clearly", flush=True)
+        print(f"     • Technical vocabulary not recognized", flush=True)
+        print(f"   Suggestion: Check microphone position and background noise\n", flush=True)
 
     def _count_words(self, text: str) -> int:
         """
