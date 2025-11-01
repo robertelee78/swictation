@@ -675,7 +675,16 @@ class SwictationDaemon:
             if transformed.strip():
                 if not self.transformer_available:
                     print(f"  📝 {transformed}", flush=True)
-                self._inject_text_with_keys(transformed + ' ')
+
+                # Only add trailing space if text doesn't end with a key action
+                # Key actions should not have spaces after them
+                import re
+                if re.search(r'<KEY:[^>]+>$', transformed):
+                    # Ends with a key action - don't add space
+                    self._inject_text_with_keys(transformed)
+                else:
+                    # Regular text or mixed - add space between segments
+                    self._inject_text_with_keys(transformed + ' ')
 
         except Exception as e:
             print(f"  ⚠ VAD segment error: {e}", flush=True)
