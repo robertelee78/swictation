@@ -35,12 +35,15 @@ def patch_aggregate_tokenizer_lang_id():
             # Check if using AggregateTokenizer (has lang_id parameter)
             tokenizer_class_name = self.tokenizer.__class__.__name__
 
-            if tokenizer_class_name == 'AggregateTokenizer' and lang is None:
-                # Default to English for Canary multilingual model
-                lang = 'en'
-
-            # Call original method with lang parameter
-            return original_decode_tokens_to_str(self, tokens, lang=lang)
+            if tokenizer_class_name == 'AggregateTokenizer':
+                # AggregateTokenizer ALWAYS requires lang_id
+                if lang is None:
+                    lang = 'en'  # Default to English
+                # Call tokenizer directly with lang parameter
+                return self.tokenizer.tokens_to_text(tokens, lang)
+            else:
+                # For other tokenizers, use original method
+                return original_decode_tokens_to_str(self, tokens, lang=lang)
 
         # Apply patch
         MultiTaskDecoding.decode_tokens_to_str = patched_decode_tokens_to_str
