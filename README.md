@@ -439,27 +439,20 @@ journalctl --user -u swictation.service -n 50
 ### What Happens When You Press $mod+Shift+d?
 
 ```
-1. Sway keybinding triggers:
-   bindsym $mod+Shift+d exec python3 /opt/swictation/src/swictation_cli.py toggle
+1. Sway keybinding → CLI → Unix socket (/tmp/swictation.sock)
 
-2. CLI sends command to daemon via Unix socket (/tmp/swictation.sock)
+2. Daemon state: IDLE ↔ RECORDING
 
-3. Daemon state changes:
-   IDLE → RECORDING (start capturing audio)
-   or
-   RECORDING → IDLE (stop capturing audio)
-
-4. While RECORDING:
+3. While RECORDING:
    - Audio capture: PipeWire → 16kHz mono stream
    - VAD monitor: Silero VAD watches for 2s silence
-   - On 2s silence: Send audio buffer to Canary-1B-Flash STT
-   - STT output: Text transcription
-   - Text injection: wtype sends text to focused window
+   - On 2s silence:
+     → Send buffer to Canary-1B-Flash STT
+     → Transform text (MidStream PyO3, ~1µs)
+     → wtype injects text to focused window
    - Buffer cleared, continue recording
 
-5. When IDLE:
-   - No audio capture
-   - GPU models remain loaded (for fast restart)
+4. When IDLE: Models stay loaded in GPU for instant restart
 ```
 
 ### Memory Layout
