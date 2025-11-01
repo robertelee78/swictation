@@ -86,6 +86,15 @@ def test_wtype_command_generation():
 
     def generate_wtype_command(key):
         """Simulate the command generation logic from text_injection.py"""
+        # Modifier name mapping: 'super' -> 'logo' (wtype uses 'logo' for Super/Windows key)
+        modifier_map = {
+            'super': 'logo',
+            'ctrl': 'ctrl',
+            'shift': 'shift',
+            'alt': 'alt',
+            'win': 'logo',
+        }
+
         parts = key.split('-')
 
         if len(parts) == 1:
@@ -94,24 +103,27 @@ def test_wtype_command_generation():
         elif len(parts) == 2:
             # Single modifier
             modifier, keyname = parts
-            return ['wtype', '-M', modifier, '-k', keyname, '-m', modifier]
+            wtype_modifier = modifier_map.get(modifier, modifier)
+            return ['wtype', '-M', wtype_modifier, '-k', keyname, '-m', wtype_modifier]
         elif len(parts) == 3:
             # Two modifiers
             mod1, mod2, keyname = parts
-            return ['wtype', '-M', mod1, '-M', mod2, '-k', keyname, '-m', mod2, '-m', mod1]
+            wtype_mod1 = modifier_map.get(mod1, mod1)
+            wtype_mod2 = modifier_map.get(mod2, mod2)
+            return ['wtype', '-M', wtype_mod1, '-M', wtype_mod2, '-k', keyname, '-m', wtype_mod2, '-m', wtype_mod1]
         else:
             return None
 
     tests = [
-        # Single modifier
-        ("super-Left", ['wtype', '-M', 'super', '-k', 'Left', '-m', 'super']),
-        ("super-1", ['wtype', '-M', 'super', '-k', '1', '-m', 'super']),
-        ("super-f", ['wtype', '-M', 'super', '-k', 'f', '-m', 'super']),
+        # Single modifier (super -> logo)
+        ("super-Left", ['wtype', '-M', 'logo', '-k', 'Left', '-m', 'logo']),
+        ("super-1", ['wtype', '-M', 'logo', '-k', '1', '-m', 'logo']),
+        ("super-f", ['wtype', '-M', 'logo', '-k', 'f', '-m', 'logo']),
 
-        # Two modifiers
-        ("super-shift-Left", ['wtype', '-M', 'super', '-M', 'shift', '-k', 'Left', '-m', 'shift', '-m', 'super']),
-        ("super-shift-5", ['wtype', '-M', 'super', '-M', 'shift', '-k', '5', '-m', 'shift', '-m', 'super']),
-        ("super-shift-q", ['wtype', '-M', 'super', '-M', 'shift', '-k', 'q', '-m', 'shift', '-m', 'super']),
+        # Two modifiers (super -> logo)
+        ("super-shift-Left", ['wtype', '-M', 'logo', '-M', 'shift', '-k', 'Left', '-m', 'shift', '-m', 'logo']),
+        ("super-shift-5", ['wtype', '-M', 'logo', '-M', 'shift', '-k', '5', '-m', 'shift', '-m', 'logo']),
+        ("super-shift-q", ['wtype', '-M', 'logo', '-M', 'shift', '-k', 'q', '-m', 'shift', '-m', 'logo']),
 
         # Ctrl for comparison
         ("ctrl-u", ['wtype', '-M', 'ctrl', '-k', 'u', '-m', 'ctrl']),
