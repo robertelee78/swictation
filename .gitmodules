@@ -1,0 +1,3 @@
+[submodule "external/midstream"]
+	path = external/midstream
+	url = https://github.com/robertelee78/midstream.git
