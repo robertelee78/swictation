@@ -2,7 +2,7 @@
 
 **Real-time voice-to-text dictation daemon for Sway/Wayland with GPU acceleration**
 
-> Hands-free coding on Wayland with VAD-triggered auto-transcription, <2s latency, 95%+ accuracy, and complete privacy.
+> Hands-free coding on Wayland with VAD-triggered auto-transcription, sub-second latency, 95%+ accuracy, and complete privacy.
 
 [![Status](https://img.shields.io/badge/status-Production%20Ready-green)](https://github.com/robertelee78/swictation)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
@@ -78,10 +78,10 @@ swaymsg reload
 
 **3. Speak naturally:**
 ```
-YOU SAY:  "Hello world." [pause 2 seconds]
+YOU SAY:  "Hello world." [brief pause]
 RESULT:   Hello world.  ← Text appears!
 
-YOU SAY:  "This is a test." [pause 2 seconds]
+YOU SAY:  "This is a test." [brief pause]
 RESULT:   This is a test.  ← More text appears!
 ```
 
@@ -89,7 +89,7 @@ RESULT:   This is a test.  ← More text appears!
 
 **Expected behavior:**
 - 🎤 Recording starts immediately (no visible indicator yet)
-- ⏸️ After 2s of silence, VAD detects pause → transcription happens
+- ⏸️ After configured silence duration, VAD detects pause → transcription happens
 - ⌨️ Text types into your focused window automatically
 - 🛑 Second hotkey press stops recording
 
@@ -102,8 +102,8 @@ python3 /opt/swictation/src/swictationd.py
 # Terminal 2: Toggle recording
 python3 /opt/swictation/src/swictation_cli.py toggle
 
-# Speak a sentence, pause 2 seconds, watch terminal for transcription
-# Example: "The quick brown fox." [wait 2s] → See output in daemon logs
+# Speak a sentence, pause briefly, watch terminal for transcription
+# Example: "The quick brown fox." [brief pause] → See output in daemon logs
 
 # Stop recording
 python3 /opt/swictation/src/swictation_cli.py toggle
@@ -153,9 +153,9 @@ SWICTATION TYPES:     def hello_world():
 ### 1. Writing Documentation
 ```
 Press $mod+Shift+d
-"This function calculates the factorial period" [pause 2s]
-"It takes an integer as input period" [pause 2s]
-"Returns the factorial result period" [pause 2s]
+"This function calculates the factorial period" [brief pause]
+"It takes an integer as input period" [brief pause]
+"Returns the factorial result period" [brief pause]
 Press $mod+Shift+d
 
 Result:
@@ -164,7 +164,7 @@ This function calculates the factorial. It takes an integer as input. Returns th
 
 ### 2. Code Comments
 ```
-"Hash comment TODO colon implement error handling" [pause 2s]
+"Hash comment TODO colon implement error handling" [brief pause]
 
 Result:
 # TODO: implement error handling
@@ -172,9 +172,9 @@ Result:
 
 ### 3. Quick Notes
 ```
-"Meeting notes colon" [pause 2s]
-"Discussed authentication refactor period" [pause 2s]
-"Action items colon migrate to JWT tokens period" [pause 2s]
+"Meeting notes colon" [brief pause]
+"Discussed authentication refactor period" [brief pause]
+"Action items colon migrate to JWT tokens period" [brief pause]
 
 Result:
 Meeting notes: Discussed authentication refactor. Action items: migrate to JWT tokens.
@@ -182,7 +182,7 @@ Meeting notes: Discussed authentication refactor. Action items: migrate to JWT t
 
 ### 4. Git Commits
 ```
-"git commit hyphen m quote fix authentication bug quote" [pause 2s]
+"git commit hyphen m quote fix authentication bug quote" [brief pause]
 
 Result:
 git commit -m "fix authentication bug"
@@ -198,18 +198,18 @@ git commit -m "fix authentication bug"
 ┌─────────────────────────────────────────────────┐
 │  1. Press $mod+Shift+d → Recording starts       │
 │  2. Speak: "Hello world."                       │
-│  3. Pause 2 seconds (silence)                   │
+│  3. Brief pause (silence)                       │
 │  4. VAD detects pause → STT transcribes         │
 │  5. Text injected: "Hello world. "              │
 │  6. Speak: "Testing one two three."             │
-│  7. Pause 2 seconds (silence)                   │
+│  7. Brief pause (silence)                       │
 │  8. VAD detects pause → STT transcribes         │
 │  9. Text injected: "Testing one two three. "    │
 │ 10. Press $mod+Shift+d → Recording stops        │
 └─────────────────────────────────────────────────┘
 ```
 
-**Key Insight:** You don't toggle between each sentence! Just speak naturally with pauses, and text appears automatically after each 2-second silence.
+**Key Insight:** You don't toggle between each sentence! Just speak naturally with pauses, and text appears automatically after configured silence duration.
 
 📖 **Full Documentation:** See [docs/](docs/) for architecture, troubleshooting, and advanced usage
 
@@ -218,8 +218,8 @@ git commit -m "fix authentication bug"
 ## **Features** ✨
 
 ### Core Capabilities
-- 🎙️ **VAD-Triggered Segmentation** - Auto-transcribe on natural pauses (2s silence)
-- 🎯 **<2s Streaming Latency** - Real-time text injection with full segment accuracy
+- 🎙️ **VAD-Triggered Segmentation** - Auto-transcribe on natural pauses (configurable)
+- 🎯 **Sub-Second Latency** - Real-time text injection with full segment accuracy
 - 🔒 **100% Privacy** - All processing on local GPU, no cloud
 - ⚡ **GPU Optimized** - FP16 mixed precision: 1.8GB model + 400MB buffer = ~2.2GB total
 - 🌊 **Wayland Native** - wtype text injection, no X11 dependencies
@@ -251,7 +251,7 @@ Swictation uses **Voice Activity Detection (VAD)** to automatically segment and 
     ↓
 [You speak] → Audio accumulates in buffer
     ↓
-[2s silence] → VAD detects pause → Transcribe segment → Inject text
+[Brief silence] → VAD detects pause → Transcribe segment → Inject text
     ↓
 [You speak] → New segment starts
     ↓
@@ -270,32 +270,32 @@ Swictation uses **Voice Activity Detection (VAD)** to automatically segment and 
 
 - **VAD Model:** Silero VAD (2.2 MB GPU memory)
 - **VAD Window:** 512ms for speech/silence detection
-- **Silence Threshold:** 2 seconds triggers transcription
+- **Silence Threshold:** Configurable (default: 0.8s) - See `~/.config/swictation/config.toml`
 - **Min Segment:** 1 second (filters very short utterances)
 - **STT Model:** NVIDIA Canary-1B-Flash (3.6 GB)
 
 **Example:**
 ```
-User: "Hello world." [pause 2s] "Testing one two three."
+User: "Hello world." [brief pause] "Testing one two three."
 
 Timeline:
-0-2s:   Speak "Hello world." → buffer accumulating
-2-4s:   Silence detected → transcribe → inject "Hello world. "
-4-7s:   Speak "Testing one two three." → buffer accumulating
-7-9s:   Silence detected → transcribe → inject "Testing one two three. "
+0-1s:     Speak "Hello world." → buffer accumulating
+1-1.8s:   Silence detected → transcribe → inject "Hello world. "
+2-4s:     Speak "Testing one two three." → buffer accumulating
+4-4.8s:   Silence detected → transcribe → inject "Testing one two three. "
 ```
 
 ### Performance Characteristics
 
-**Latency breakdown (RTX A1000):**
+**Latency breakdown (RTX A1000, default 0.8s silence threshold):**
 ```
 Speech detection (VAD)  → 50ms
-Silence (2s threshold) → 2000ms
+Silence threshold       → 800ms (configurable)
 STT transcription       → 150-250ms
 Text transformation     → 1µs (negligible!)
 Text injection (wtype)  → 10-50ms
 ────────────────────────────────
-Total after pause       → ~2.2s
+Total after pause       → ~1.0s
 ```
 
 **Memory usage:**
@@ -439,7 +439,7 @@ journalctl --user -u swictation.service -n 50
 
 1. Open a text editor (kate, gedit, etc.)
 2. Press `$mod+Shift+d`
-3. Say "hello world" and pause 2 seconds
+3. Say "hello world" and pause briefly
 4. Text should appear!
 5. Press `$mod+Shift+d` to stop
 
@@ -458,8 +458,8 @@ journalctl --user -u swictation.service -n 50
 
 3. While RECORDING:
    - Audio capture: PipeWire → 16kHz mono stream
-   - VAD monitor: Silero VAD watches for 2s silence
-   - On 2s silence:
+   - VAD monitor: Silero VAD watches for configured silence duration
+   - On silence detection:
      → Send buffer to Canary-1B-Flash STT
      → Transform text (MidStream PyO3, ~1µs)
      → wtype injects text to focused window
@@ -540,10 +540,10 @@ System RAM (~250 MB):
 [Press $mod+Shift+d to start]
 
 YOU SAY: "def calculate underscore sum open parenthesis numbers close parenthesis colon"
-[pause 2s] → def calculate_sum(numbers):
+[brief pause] → def calculate_sum(numbers):
 
 YOU SAY: "return sum open parenthesis numbers close parenthesis"
-[pause 2s] → return sum(numbers)
+[brief pause] → return sum(numbers)
 
 [Press $mod+Shift+d to stop]
 
@@ -560,10 +560,10 @@ YOU SAY: "return sum open parenthesis numbers close parenthesis"
 [Press $mod+Shift+d]
 
 YOU SAY: "This function processes user input period"
-[pause 2s] → This function processes user input.
+[brief pause] → This function processes user input.
 
 YOU SAY: "It validates the data and returns a cleaned version period"
-[pause 2s] → It validates the data and returns a cleaned version.
+[brief pause] → It validates the data and returns a cleaned version.
 
 [Press $mod+Shift+d]
 ```
@@ -576,10 +576,10 @@ YOU SAY: "It validates the data and returns a cleaned version period"
 [Press $mod+Shift+d]
 
 YOU SAY: "git add period"
-[pause 2s] → git add.
+[brief pause] → git add.
 
 YOU SAY: "git commit hyphen m quote update readme quote"
-[pause 2s] → git commit -m "update readme"
+[brief pause] → git commit -m "update readme"
 
 [Press $mod+Shift+d]
 
@@ -650,7 +650,7 @@ journalctl --user -u swictation.service -n 50
 | Metric | Value | Status |
 |--------|-------|--------|
 | **VAD Latency** | <50ms | ✅ Excellent |
-| **Segment Transcription** | <2s | ✅ Good |
+| **Segment Transcription** | <1s | ✅ Good |
 | **STT Accuracy (WER)** | 5.77% | ✅ Excellent |
 | **GPU Memory** | 3.6 GB (VAD: 2.2 MB, STT: 3.6 GB) | ✅ Perfect |
 | **Processing Speed** | 0.106x RTF (9.4x realtime) | ✅ Excellent |
@@ -696,7 +696,7 @@ journalctl --user -u swictation.service -n 50
 ### Phase 1: Core Engine (COMPLETED)
 - [x] NVIDIA Canary-1B-Flash model integration
 - [x] Silero VAD integration (automatic speech segmentation)
-- [x] VAD-triggered transcription (auto-transcribe on 2s silence)
+- [x] VAD-triggered transcription (auto-transcribe on configurable silence)
 - [x] PipeWire audio capture with streaming callbacks
 - [x] wtype text injection with full Unicode
 - [x] Sway keybinding ($mod+Shift+d, user configurable)
@@ -714,7 +714,7 @@ journalctl --user -u swictation.service -n 50
 - [x] systemd integration guide
 
 ### Phase 3: Polish (IN PROGRESS)
-- [ ] Performance optimization (reduce 2s silence threshold)
+- [ ] Performance optimization (adaptive silence threshold)
 - [ ] Configuration system (YAML for VAD/streaming params)
 - [ ] Extended voice command library (400+ commands)
 - [ ] GUI status indicator
@@ -724,7 +724,7 @@ journalctl --user -u swictation.service -n 50
 ## **Limitations & Known Issues** ⚠️
 
 **Current Limitations:**
-- ⚠️ **Fixed 2s silence threshold** - Not configurable yet (requires YAML config)
+- ✅ **Configurable silence threshold** - Set via `~/.config/swictation/config.toml`
 - ⚠️ **Limited voice command library** - Common symbols only (see docs/voice-commands.md)
 - ⚠️ **Manual systemd setup** - Setup scripts available but require manual run
 - ⚠️ **No visual indicator** - No on-screen feedback when recording (daemon logs only)
@@ -910,7 +910,7 @@ python3 /opt/swictation/src/swictationd.py
 Contributions welcome! Priority areas:
 
 1. **Configuration System** - YAML config for VAD thresholds and parameters
-2. **Performance Optimization** - Reduce 2s silence threshold with smarter detection
+2. **Performance Optimization** - Adaptive silence threshold with smarter detection
 3. **Extended Voice Commands** - Expand MidStream transformer library (see docs/voice-commands.md)
 4. **GUI Status Indicator** - Visual feedback for recording state
 5. **Testing** - Additional edge case coverage and integration tests
