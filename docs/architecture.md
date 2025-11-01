@@ -45,22 +45,31 @@ class SwictationDaemon:
     _speech_detected: bool = False
 ```
 
-**State Machine (VAD Streaming):**
+**State Machine:**
 ```
-[IDLE] ──────(toggle)─────► [RECORDING]
-   ↑                             │
-   │                             │ (continuous audio streaming)
-   │                             │ ↓
-   │                      [VAD Detection Loop]
-   │                             │ • 512ms window checks
-   │                             │ • Track silence duration
-   │                             │ • When silence >= 2s:
-   │                             │   → Transcribe segment
-   │                             │   → Inject text
-   │                             │   → Clear buffer
-   │                             │ ↓
-   └─────(toggle)───────────────┘
+[IDLE] ──────(toggle)─────► [RECORDING] ─────(VAD silence)────► [PROCESSING]
+   ↑                             │                                      │
+   │                             │ (continuous audio streaming)         │
+   │                             │ ↓                                    │
+   │                      [VAD Detection Loop]                          │
+   │                             │ • 512ms window checks                │
+   │                             │ • Track silence duration             │
+   │                             │ • When silence >= 2s:                │
+   │                             │   → Enter PROCESSING state           │
+   │                             │                                      │
+   │                             │                              • Transcribe segment
+   │                             │                              • Transform text (PyO3)
+   │                             │                              • Inject text
+   │                             │                              • Clear buffer
+   │                             │                                      │
+   └─────(toggle or processing complete)───────────────────────────────┘
 ```
+
+**States (from src/swictationd.py:49-53):**
+- `IDLE`: Daemon running, not recording
+- `RECORDING`: Continuously capturing audio, VAD monitoring
+- `PROCESSING`: Transcribing and injecting text
+- `ERROR`: Error state (not currently used)
 
 **Key Features:**
 - VAD-triggered automatic segmentation (2s silence threshold)
@@ -243,11 +252,53 @@ text = mt.transform("def hello underscore world open parentheses close parenthes
 - ✅ Simple integration (just `import`)
 - ✅ Comprehensive test coverage
 
-See [pyo3-integration.md](pyo3-integration.md) and [voice-commands.md](voice-commands.md) for details.
+---
+
+### 6. NeMo Patches (`nemo_patches.py`)
+
+**Purpose:** Fix bugs in NVIDIA NeMo library for Canary multilingual model support
+
+**Critical Bug Fixed:**
+```python
+# Problem: NeMo's AggregateTokenizer.tokens_to_text() requires lang_id parameter
+# But chunking_utils.py calls decode_tokens_to_str() WITHOUT lang parameter
+# Result: TypeError crash
+
+# Solution (src/nemo_patches.py:31-46):
+def patched_decode_tokens_to_str(self, tokens: List[str], lang: str = None) -> str:
+    tokenizer_class_name = self.tokenizer.__class__.__name__
+
+    if tokenizer_class_name == 'AggregateTokenizer':
+        if lang is None:
+            lang = 'en'  # Default to English
+        return self.tokenizer.tokens_to_text(tokens, lang)
+    else:
+        return original_decode_tokens_to_str(self, tokens, lang=lang)
+```
+
+**Integration:**
+```python
+# src/swictationd.py:19-22 (BEFORE importing NeMo!)
+from nemo_patches import apply_all_patches
+apply_all_patches()
+
+# THEN import NeMo
+from nemo.collections.asr.models import EncDecMultiTaskModel
+```
+
+**Applied Patches:**
+1. ✅ `patch_aggregate_tokenizer_lang_id()` - Fixes missing lang_id parameter
+
+**Output on startup:**
+```
+🔧 Applying NeMo compatibility patches...
+✅ Applied NeMo patch: AggregateTokenizer lang_id fix
+✓ Applied 1 NeMo patch(es)
+```
 
 ---
 
-### 6. Text Injection Module (`text_injection.py`)
+### 7. Text Injection Module (`text_injection.py`)
 
 **Purpose:** Inject transcribed text into focused Wayland application
 

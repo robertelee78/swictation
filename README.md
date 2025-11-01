@@ -37,7 +37,19 @@ sudo dnf install python3 python3-pip wtype wl-clipboard ffmpeg
 pip3 install --break-system-packages -r requirements.txt
 ```
 
-### 3-Step Setup
+### Complete Installation
+
+**IMPORTANT:** The Quick Start above is simplified. For a fresh install, you need additional steps:
+
+1. **Clone with submodules** (or run `git submodule update --init --recursive`)
+2. **Install Rust toolchain** (required to build text transformer)
+3. **Build and install midstream transformer** (provides voice command → symbol conversion)
+4. **Install Python dependencies**
+5. **Setup systemd service and Sway keybinding**
+
+**See [docs/install.md](docs/install.md) for complete step-by-step instructions.**
+
+### Quick Setup (After Following Complete Installation)
 
 ```bash
 cd /opt/swictation
@@ -131,8 +143,8 @@ YOU SAY:              "def hello underscore world open parenthesis close parenth
 SWICTATION TYPES:     def hello_world():
 ```
 
-📖 **Complete Guide:** See [docs/voice-commands.md](docs/voice-commands.md) for 400+ examples
-⚡ **Technical Details:** See [docs/pyo3-integration.md](docs/pyo3-integration.md) for transformer architecture
+⚡ **Performance:** 266 transformation rules loaded, ~0.3μs latency via Rust/PyO3
+📖 **Technical Details:** See [docs/architecture.md](docs/architecture.md) for system design
 
 ---
 
