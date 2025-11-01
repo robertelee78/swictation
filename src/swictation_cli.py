@@ -98,6 +98,49 @@ def cmd_stop(args):
     return 0
 
 
+def cmd_stats(args):
+    """Show session statistics"""
+    from metrics.cli import MetricsCLI
+    cli = MetricsCLI()
+    try:
+        cli.show_stats(args.session_id if hasattr(args, 'session_id') else None)
+        return 0
+    except Exception as e:
+        print(f"✗ Error: {e}", file=sys.stderr)
+        return 1
+    finally:
+        cli.close()
+
+
+def cmd_history(args):
+    """Show session history"""
+    from metrics.cli import MetricsCLI
+    cli = MetricsCLI()
+    try:
+        limit = args.limit if hasattr(args, 'limit') else 10
+        cli.show_history(limit)
+        return 0
+    except Exception as e:
+        print(f"✗ Error: {e}", file=sys.stderr)
+        return 1
+    finally:
+        cli.close()
+
+
+def cmd_summary(args):
+    """Show lifetime statistics"""
+    from metrics.cli import MetricsCLI
+    cli = MetricsCLI()
+    try:
+        cli.show_summary()
+        return 0
+    except Exception as e:
+        print(f"✗ Error: {e}", file=sys.stderr)
+        return 1
+    finally:
+        cli.close()
+
+
 def main():
     """CLI entry point"""
     parser = argparse.ArgumentParser(
@@ -126,6 +169,39 @@ def main():
         help='Stop daemon'
     )
     stop_parser.set_defaults(func=cmd_stop)
+
+    # Stats command
+    stats_parser = subparsers.add_parser(
+        'stats',
+        help='Show session statistics (default: most recent)'
+    )
+    stats_parser.add_argument(
+        'session_id',
+        type=int,
+        nargs='?',
+        help='Session ID to display (default: most recent)'
+    )
+    stats_parser.set_defaults(func=cmd_stats)
+
+    # History command
+    history_parser = subparsers.add_parser(
+        'history',
+        help='Show session history'
+    )
+    history_parser.add_argument(
+        '--limit',
+        type=int,
+        default=10,
+        help='Number of recent sessions to show (default: 10)'
+    )
+    history_parser.set_defaults(func=cmd_history)
+
+    # Summary command
+    summary_parser = subparsers.add_parser(
+        'summary',
+        help='Show lifetime statistics'
+    )
+    summary_parser.set_defaults(func=cmd_summary)
 
     # Parse args
     args = parser.parse_args()
