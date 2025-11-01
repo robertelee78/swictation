@@ -184,8 +184,12 @@ class TextInjector:
         """
         Inject special key sequences using wtype.
 
+        Supports:
+        - Simple keys: ['Return', 'Tab', 'BackSpace']
+        - Ctrl combinations: ['ctrl-u', 'ctrl-c', 'ctrl-s']
+
         Args:
-            keys: List of key names (e.g., ['Return', 'Tab', 'Backspace'])
+            keys: List of key names (e.g., ['Return', 'Tab', 'Backspace', 'ctrl-u'])
 
         Returns:
             True if successful, False otherwise
@@ -197,12 +201,27 @@ class TextInjector:
         try:
             # wtype uses -k flag for special keys
             for key in keys:
-                subprocess.run(
-                    ['wtype', '-k', key],
-                    capture_output=True,
-                    check=True,
-                    timeout=2
-                )
+                # Check if this is a Ctrl combination (e.g., 'ctrl-u')
+                if key.startswith('ctrl-'):
+                    # Extract the letter (e.g., 'ctrl-u' -> 'u')
+                    letter = key.split('-', 1)[1]
+
+                    # Press Ctrl, type letter, release Ctrl
+                    # wtype -M ctrl -k u -m ctrl
+                    subprocess.run(
+                        ['wtype', '-M', 'ctrl', '-k', letter, '-m', 'ctrl'],
+                        capture_output=True,
+                        check=True,
+                        timeout=2
+                    )
+                else:
+                    # Regular key (e.g., 'Return', 'BackSpace')
+                    subprocess.run(
+                        ['wtype', '-k', key],
+                        capture_output=True,
+                        check=True,
+                        timeout=2
+                    )
 
             return True
 
