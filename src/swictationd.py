@@ -566,7 +566,7 @@ class SwictationDaemon:
                     batch_size=1,
                     source_lang='en',
                     target_lang='en',
-                    pnc='yes'
+                    pnc='no'  # Disable auto-punctuation - let transformer handle it
                 )[0]
 
                 # Reset error count on success
@@ -590,7 +590,7 @@ class SwictationDaemon:
                         batch_size=1,
                         source_lang='en',
                         target_lang='en',
-                        pnc='yes'
+                        pnc='no'  # Disable auto-punctuation - let transformer handle it
                     )[0]
                 else:
                     raise
@@ -685,7 +685,7 @@ class SwictationDaemon:
                     audio=str(temp_path),
                     source_lang='en',
                     target_lang='en',
-                    pnc='yes',
+                    pnc='no',  # Disable auto-punctuation - let transformer handle it
                     batch_size=1
                 )[0]
 
@@ -707,7 +707,7 @@ class SwictationDaemon:
                     batch_size=1,
                     source_lang='en',
                     target_lang='en',
-                    pnc='yes'
+                    pnc='no'  # Disable auto-punctuation - let transformer handle it
                 )[0]
 
                 text = hypothesis.text if hasattr(hypothesis, 'text') else str(hypothesis)
@@ -924,7 +924,7 @@ class SwictationDaemon:
                         audio=str(temp_chunk_path),
                         source_lang='en',
                         target_lang='en',
-                        pnc='yes',
+                        pnc='no',  # Disable auto-punctuation - let transformer handle it
                         batch_size=1
                     )[0]
 
@@ -956,7 +956,7 @@ class SwictationDaemon:
                     audio=str(temp_audio_path),
                     source_lang='en',
                     target_lang='en',
-                    pnc='yes',
+                    pnc='no',  # Disable auto-punctuation - let transformer handle it
                     batch_size=1
                 )[0]
 
