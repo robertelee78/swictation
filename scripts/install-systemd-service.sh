@@ -52,6 +52,17 @@ systemctl --user daemon-reload
 echo "✅ Enabling swictation.service for auto-start..."
 systemctl --user enable swictation.service
 
+# Create default configuration
+echo ""
+echo "⚙️  Creating default configuration..."
+mkdir -p ~/.config/swictation
+if [ ! -f ~/.config/swictation/config.toml ]; then
+    cp "$PROJECT_DIR/config/config.example.toml" ~/.config/swictation/config.toml
+    echo "✓ Created ~/.config/swictation/config.toml"
+else
+    echo "✓ Config already exists: ~/.config/swictation/config.toml"
+fi
+
 # Check if we're in a Sway session
 if [ -n "$SWAYSOCK" ]; then
     echo ""
@@ -94,6 +105,11 @@ echo "   Stop:    systemctl --user stop swictation.service"
 echo "   Status:  systemctl --user status swictation.service"
 echo "   Logs:    journalctl --user -u swictation.service -f"
 echo "   Disable: systemctl --user disable swictation.service"
+echo ""
+echo "⚙️  Configuration:"
+echo "   Edit:    ~/.config/swictation/config.toml"
+echo "   Example: $PROJECT_DIR/config/config.example.toml"
+echo "   After editing, restart: systemctl --user restart swictation.service"
 echo ""
 echo "🎯 To test the keybinding:"
 echo "   Mod1+Shift+d (Alt+Shift+d) to toggle recording"

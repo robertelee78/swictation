@@ -212,6 +212,10 @@ systemctl --user status swictation.service
    Active: active (running) since ...
 ```
 
+**Configuration file created:**
+
+The install script creates `~/.config/swictation/config.toml` with default settings for Voice Activity Detection (VAD). You can edit this file to tune sensitivity and response speed for your speaking style and environment (see Configuration section below).
+
 ---
 
 ### Step 8: Configure Sway Keybinding
@@ -450,39 +454,78 @@ python3 swictationd.py
 
 ---
 
-## Configuration (Optional)
+## Configuration
 
-Default configuration works for most users, but you can customize:
+Swictation uses `~/.config/swictation/config.toml` for configuration (created automatically by the install script).
 
-**Config location:** `~/.config/swictation/config.toml` (created by install script)
+### Available Settings
 
-**Example customizations:**
+Currently, only VAD (Voice Activity Detection) settings are configurable:
+
+**Config location:** `~/.config/swictation/config.toml`
+
+**Available settings:**
 ```toml
-[model]
-name = "nvidia/canary-1b-flash"
-sample_rate = 16000
-
-[audio]
-buffer_duration = 30.0  # seconds
-device = "default"      # or specific device name
-
 [vad]
-enabled = true
-threshold = 0.5         # 0-1, lower = more sensitive
-chunk_duration = 10.0   # seconds
-chunk_overlap = 1.0     # seconds
+# Speech detection threshold (0.0-1.0)
+# Controls sensitivity for detecting speech vs noise
+# - 0.0 = most sensitive (everything is speech, many false positives)
+# - 0.5 = balanced (recommended default)
+# - 1.0 = most conservative (only confident speech, may miss quiet speech)
+threshold = 0.5
 
-[injection]
-method = "wtype"        # wtype | clipboard
-
-[keybinding]
-toggle = "$mod+Shift+d"  # Sway keybinding
+# Silence duration in seconds before processing text
+# How long to wait after speech ends before transcribing
+# - Lower = faster response, may cut off sentences
+# - Higher = more complete sentences, slower response
+# - Common range: 0.5-3.0 seconds
+silence_duration = 2.0
 ```
 
 **After changing config:**
 ```bash
 systemctl --user restart swictation.service
 ```
+
+### Tuning for Your Environment
+
+**Problem: Missing quiet speech or soft words**
+```toml
+[vad]
+threshold = 0.3  # Lower threshold = more sensitive
+silence_duration = 2.0
+```
+
+**Problem: Too many false triggers from background noise**
+```toml
+[vad]
+threshold = 0.7  # Higher threshold = less sensitive
+silence_duration = 2.0
+```
+
+**Problem: Sentences getting cut off mid-thought**
+```toml
+[vad]
+threshold = 0.5
+silence_duration = 3.0  # Wait longer for complete thoughts
+```
+
+**Problem: Text takes too long to appear (slow response)**
+```toml
+[vad]
+threshold = 0.5
+silence_duration = 1.0  # Faster response, shorter pauses
+```
+
+### What is NOT Configurable
+
+The following are hardcoded for optimal operation:
+- **Keybinding** - Managed via Sway config (`~/.config/sway/config`), not Swictation
+- **Model selection** - nvidia/canary-1b-flash is the only supported model
+- **Audio device** - Auto-detected by the system
+- **Injection method** - Auto-selects wtype with clipboard fallback
+- **Sample rate, chunk settings** - Model-specific, optimized for Canary
+- **Min segment duration** - 1.0s minimum (hardcoded for quality)
 
 ---
 

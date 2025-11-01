@@ -25,6 +25,7 @@ apply_all_patches()
 from audio_capture import AudioCapture
 from text_injection import TextInjector, InjectionMethod
 from memory_manager import MemoryManager, MemoryPressureLevel
+from config_loader import ConfigLoader
 
 # Text transformation (PyO3 native module)
 try:
@@ -68,6 +69,7 @@ class SwictationDaemon:
         chunk_duration: float = 10.0,
         chunk_overlap: float = 1.0,
         vad_threshold: float = 0.5,
+        silence_duration: float = 2.0,  # Configurable silence threshold
         streaming_mode: bool = True,  # VAD-triggered segmentation (auto-transcribe on silence)
         streaming_chunk_size: float = 0.4,
         enable_performance_monitoring: bool = True
@@ -82,6 +84,7 @@ class SwictationDaemon:
             chunk_duration: Duration of each audio chunk in seconds (for memory optimization)
             chunk_overlap: Overlap between chunks in seconds (for context continuity)
             vad_threshold: Voice Activity Detection threshold (0-1)
+            silence_duration: Silence duration in seconds before processing text (configurable)
             streaming_mode: Enable real-time streaming transcription (default: True)
             streaming_chunk_size: Chunk size for streaming in seconds (default: 0.4s = 400ms)
             enable_performance_monitoring: Enable performance monitoring (default: True)
@@ -92,6 +95,7 @@ class SwictationDaemon:
         self.chunk_duration = chunk_duration
         self.chunk_overlap = chunk_overlap
         self.vad_threshold = vad_threshold
+        self.silence_duration = silence_duration
         self.streaming_mode = streaming_mode
         self.streaming_chunk_size = streaming_chunk_size
         self.enable_performance_monitoring = enable_performance_monitoring
@@ -591,12 +595,12 @@ class SwictationDaemon:
             else:
                 self._silence_duration += frames / self.sample_rate
 
-            # 6. Trigger transcription on 2s silence AFTER speech was detected
-            min_segment_duration = 1.0  # Don't transcribe segments < 1s
-            silence_threshold = 2.0      # 2 seconds of silence triggers transcription
+            # 6. Trigger transcription on silence AFTER speech was detected
+            min_segment_duration = 1.0  # Don't transcribe segments < 1s (hardcoded for quality)
+            # silence_duration is now configurable via config.toml
 
             if (self._speech_detected and
-                self._silence_duration >= silence_threshold and
+                self._silence_duration >= self.silence_duration and
                 len(self._streaming_buffer) >= int(min_segment_duration * self.sample_rate)):
 
                 # 7. Transcribe accumulated segment (full context = perfect accuracy)
@@ -1359,8 +1363,21 @@ class SwictationDaemon:
 
 def main():
     """Main entry point"""
+    # Load configuration
+    config_loader = ConfigLoader()
+    config = config_loader.load()
+
+    print(f"⚙️  Configuration loaded:", flush=True)
+    print(f"   VAD threshold: {config.vad.threshold}", flush=True)
+    print(f"   Silence duration: {config.vad.silence_duration}s", flush=True)
+    print(f"   Config file: {config_loader.config_path}", flush=True)
+    print(flush=True)
+
     # Setup signal handlers
-    daemon = SwictationDaemon()
+    daemon = SwictationDaemon(
+        vad_threshold=config.vad.threshold,
+        silence_duration=config.vad.silence_duration
+    )
 
     def signal_handler(signum, frame):
         print(f"\nReceived signal {signum}")
