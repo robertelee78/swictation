@@ -16,6 +16,11 @@ from typing import Optional
 from enum import Enum
 import tempfile
 
+# Apply NeMo patches BEFORE importing NeMo
+# This fixes known bugs in the NeMo library
+from nemo_patches import apply_all_patches
+apply_all_patches()
+
 # Import our modules
 from audio_capture import AudioCapture
 from text_injection import TextInjector, InjectionMethod
