@@ -145,6 +145,20 @@ class SwictationDaemon:
                 print("⚠️  Performance monitoring not available (psutil not installed)")
                 self.performance_monitor = None
 
+        # Metrics collection
+        self.metrics_collector = None
+        if enable_performance_monitoring:
+            try:
+                from metrics.collector import MetricsCollector
+                self.metrics_collector = MetricsCollector(
+                    db_path="~/.local/share/swictation/metrics.db",
+                    typing_baseline_wpm=40.0,
+                    store_transcription_text=False  # Privacy-first by default
+                )
+            except ImportError as e:
+                print(f"⚠️  Metrics collection not available: {e}")
+                self.metrics_collector = None
+
         # Memory pressure management
         self.memory_manager = None
         if torch.cuda.is_available():
@@ -536,6 +550,13 @@ class SwictationDaemon:
             print(f"\n🎤 Starting recording ({mode_str} mode)...")
             self.set_state(DaemonState.RECORDING)
 
+            # Start metrics session
+            if self.metrics_collector:
+                try:
+                    self.metrics_collector.start_session()
+                except Exception as e:
+                    print(f"⚠️  Metrics start error: {e}", flush=True)
+
             if self.streaming_mode:
                 # Set up callback for streaming chunks
                 # This callback is invoked every 64ms with new audio data
@@ -625,15 +646,24 @@ class SwictationDaemon:
         Transcribe VAD-detected speech segment with full context.
         Each segment is independent (speaker paused), providing perfect accuracy.
         """
+        # Timing for metrics
+        segment_start = time.time()
+        stt_latency_ms = 0.0
+        transform_latency_us = 0.0
+        injection_latency_ms = 0.0
+
         try:
             duration = len(segment) / self.sample_rate
             print(f"  🎤 VAD segment: {duration:.2f}s", flush=True)
 
             # Save segment to temp file
+            audio_save_start = time.time()
             temp_path = Path(tempfile.mktemp(suffix='.wav'))
             sf.write(temp_path, segment, self.sample_rate)
+            audio_save_ms = (time.time() - audio_save_start) * 1000
 
             # Transcribe with CUDA error recovery
+            stt_start = time.time()
             try:
                 # Transcribe with FULL segment context (not chunks!)
                 hypothesis = self.stt_model.transcribe(
@@ -670,17 +700,21 @@ class SwictationDaemon:
                 else:
                     raise
 
+            stt_latency_ms = (time.time() - stt_start) * 1000
             text = hypothesis.text if hasattr(hypothesis, 'text') else str(hypothesis)
             temp_path.unlink(missing_ok=True)
 
-            # Transform voice commands to symbols
+            # Transform voice commands to symbols (already tracked in _safe_transform)
+            transform_start = time.perf_counter()
             transformed = self._safe_transform(text)
+            transform_latency_us = (time.perf_counter() - transform_start) * 1_000_000
 
             # Log if transformation changed text
             if transformed != text and self.transformer_available:
                 print(f"  ⚡ {text} → {transformed}", flush=True)
 
             # Inject transformed text (handles both text and special keys)
+            injection_start = time.time()
             if transformed.strip():
                 if not self.transformer_available:
                     print(f"  📝 {transformed}", flush=True)
@@ -694,6 +728,31 @@ class SwictationDaemon:
                 else:
                     # Regular text or mixed - add space between segments
                     self._inject_text_with_keys(transformed + ' ')
+            injection_latency_ms = (time.time() - injection_start) * 1000
+
+            # Record segment metrics
+            if self.metrics_collector:
+                try:
+                    # Get current GPU/CPU usage
+                    gpu_memory_mb = 0.0
+                    cpu_percent = 0.0
+                    if self.performance_monitor:
+                        gpu_stats = self.performance_monitor.get_gpu_memory_stats()
+                        gpu_memory_mb = gpu_stats.get('current_mb', 0.0)
+                        cpu_stats = self.performance_monitor.get_cpu_stats(window_seconds=1.0)
+                        cpu_percent = cpu_stats.get('mean', 0.0)
+
+                    self.metrics_collector.record_segment(
+                        audio_duration_s=duration,
+                        transcription=transformed,
+                        stt_latency_ms=stt_latency_ms,
+                        transform_latency_us=transform_latency_us,
+                        injection_latency_ms=injection_latency_ms,
+                        gpu_memory_mb=gpu_memory_mb,
+                        cpu_percent=cpu_percent
+                    )
+                except Exception as e:
+                    print(f"⚠️  Metrics recording error: {e}", flush=True)
 
         except Exception as e:
             print(f"  ⚠ VAD segment error: {e}", flush=True)
@@ -841,6 +900,13 @@ class SwictationDaemon:
         try:
             print("\n🛑 Stopping recording...")
             self.set_state(DaemonState.PROCESSING)
+
+            # End metrics session
+            if self.metrics_collector:
+                try:
+                    self.metrics_collector.end_session()
+                except Exception as e:
+                    print(f"⚠️  Metrics end error: {e}", flush=True)
 
             # Clear audio callback if streaming
             if self.streaming_mode:
