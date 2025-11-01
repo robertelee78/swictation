@@ -72,7 +72,8 @@ class SwictationDaemon:
         silence_duration: float = 2.0,  # Configurable silence threshold
         streaming_mode: bool = True,  # VAD-triggered segmentation (auto-transcribe on silence)
         streaming_chunk_size: float = 0.4,
-        enable_performance_monitoring: bool = True
+        enable_performance_monitoring: bool = True,
+        metrics_config = None  # MetricsConfig object from config_loader
     ):
         """
         Initialize Swictation daemon.
@@ -147,13 +148,18 @@ class SwictationDaemon:
 
         # Metrics collection
         self.metrics_collector = None
-        if enable_performance_monitoring:
+        if enable_performance_monitoring and metrics_config and metrics_config.enabled:
             try:
                 from metrics.collector import MetricsCollector
                 self.metrics_collector = MetricsCollector(
-                    db_path="~/.local/share/swictation/metrics.db",
-                    typing_baseline_wpm=40.0,
-                    store_transcription_text=False  # Privacy-first by default
+                    db_path=metrics_config.database_path,
+                    typing_baseline_wpm=metrics_config.typing_baseline_wpm,
+                    store_transcription_text=metrics_config.store_transcription_text,
+                    warnings_enabled=metrics_config.warnings.enabled,
+                    high_latency_threshold_ms=metrics_config.warnings.high_latency_threshold_ms,
+                    gpu_memory_threshold_percent=metrics_config.warnings.gpu_memory_threshold_percent,
+                    degradation_multiplier=metrics_config.warnings.degradation_multiplier,
+                    accuracy_spike_multiplier=metrics_config.warnings.accuracy_spike_multiplier
                 )
             except ImportError as e:
                 print(f"⚠️  Metrics collection not available: {e}")
@@ -1436,13 +1442,18 @@ def main():
     print(f"⚙️  Configuration loaded:", flush=True)
     print(f"   VAD threshold: {config.vad.threshold}", flush=True)
     print(f"   Silence duration: {config.vad.silence_duration}s", flush=True)
+    if config.metrics.enabled:
+        print(f"   Metrics: enabled (db: {config.metrics.database_path})", flush=True)
+    else:
+        print(f"   Metrics: disabled", flush=True)
     print(f"   Config file: {config_loader.config_path}", flush=True)
     print(flush=True)
 
     # Setup signal handlers
     daemon = SwictationDaemon(
         vad_threshold=config.vad.threshold,
-        silence_duration=config.vad.silence_duration
+        silence_duration=config.vad.silence_duration,
+        metrics_config=config.metrics
     )
 
     def signal_handler(signum, frame):

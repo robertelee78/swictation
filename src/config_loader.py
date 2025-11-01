@@ -19,9 +19,50 @@ class VADConfig:
 
 
 @dataclass
+class MetricsWarningsConfig:
+    """Metrics warning thresholds"""
+    enabled: bool = True
+    high_latency_threshold_ms: float = 1000.0
+    gpu_memory_threshold_percent: float = 80.0
+    degradation_multiplier: float = 1.5
+    accuracy_spike_multiplier: float = 3.0
+
+
+@dataclass
+class MetricsCleanupConfig:
+    """Metrics database cleanup settings"""
+    auto_cleanup_enabled: bool = True
+    max_segment_age_days: int = 90
+    warn_db_size_mb: int = 100
+
+
+@dataclass
+class MetricsConfig:
+    """Performance metrics configuration"""
+    enabled: bool = True
+    database_path: str = "~/.local/share/swictation/metrics.db"
+    show_realtime_feedback: bool = True
+    typing_baseline_wpm: float = 40.0
+    store_transcription_text: bool = False
+    warnings: MetricsWarningsConfig = None
+    cleanup: MetricsCleanupConfig = None
+
+    def __post_init__(self):
+        if self.warnings is None:
+            self.warnings = MetricsWarningsConfig()
+        if self.cleanup is None:
+            self.cleanup = MetricsCleanupConfig()
+
+
+@dataclass
 class SwictationConfig:
     """Complete Swictation configuration"""
     vad: VADConfig
+    metrics: MetricsConfig = None
+
+    def __post_init__(self):
+        if self.metrics is None:
+            self.metrics = MetricsConfig()
 
 
 class ConfigLoader:
@@ -120,11 +161,15 @@ class ConfigLoader:
         self._validate_threshold(threshold)
         self._validate_silence_duration(silence_duration)
 
+        # Load metrics config (optional, will use defaults if not present)
+        metrics_config = self._load_metrics_config(config_data)
+
         return SwictationConfig(
             vad=VADConfig(
                 threshold=threshold,
                 silence_duration=silence_duration
-            )
+            ),
+            metrics=metrics_config
         )
 
     def _validate_threshold(self, threshold: float):
@@ -178,6 +223,56 @@ silence_duration = 2.0
 
         with open(self.config_path, 'w') as f:
             f.write(default_content)
+
+    def _load_metrics_config(self, config_data: dict) -> MetricsConfig:
+        """
+        Load metrics configuration from config data.
+        All metrics settings are optional - uses defaults if not present.
+        """
+        # If no [metrics] section, return defaults
+        if 'metrics' not in config_data:
+            return MetricsConfig()
+
+        metrics_section = config_data['metrics']
+
+        # Load main metrics settings (all optional)
+        enabled = metrics_section.get('enabled', True)
+        database_path = metrics_section.get('database_path', '~/.local/share/swictation/metrics.db')
+        show_realtime_feedback = metrics_section.get('show_realtime_feedback', True)
+        typing_baseline_wpm = float(metrics_section.get('typing_baseline_wpm', 40.0))
+        store_transcription_text = metrics_section.get('store_transcription_text', False)
+
+        # Load warnings config (optional subsection)
+        warnings_config = MetricsWarningsConfig()
+        if 'warnings' in metrics_section:
+            warnings_section = metrics_section['warnings']
+            warnings_config = MetricsWarningsConfig(
+                enabled=warnings_section.get('enabled', True),
+                high_latency_threshold_ms=float(warnings_section.get('high_latency_threshold_ms', 1000.0)),
+                gpu_memory_threshold_percent=float(warnings_section.get('gpu_memory_threshold_percent', 80.0)),
+                degradation_multiplier=float(warnings_section.get('degradation_multiplier', 1.5)),
+                accuracy_spike_multiplier=float(warnings_section.get('accuracy_spike_multiplier', 3.0))
+            )
+
+        # Load cleanup config (optional subsection)
+        cleanup_config = MetricsCleanupConfig()
+        if 'cleanup' in metrics_section:
+            cleanup_section = metrics_section['cleanup']
+            cleanup_config = MetricsCleanupConfig(
+                auto_cleanup_enabled=cleanup_section.get('auto_cleanup_enabled', True),
+                max_segment_age_days=int(cleanup_section.get('max_segment_age_days', 90)),
+                warn_db_size_mb=int(cleanup_section.get('warn_db_size_mb', 100))
+            )
+
+        return MetricsConfig(
+            enabled=enabled,
+            database_path=database_path,
+            show_realtime_feedback=show_realtime_feedback,
+            typing_baseline_wpm=typing_baseline_wpm,
+            store_transcription_text=store_transcription_text,
+            warnings=warnings_config,
+            cleanup=cleanup_config
+        )
 
     def _error(self, message: str):
         """Print error message and exit"""
