@@ -34,3 +34,25 @@ threshold = 0.5
 # - For rapid-fire dictation: Try 0.5-1.0
 #
 silence_duration = 2.0
+
+[metrics]
+# Performance metrics tracking
+enabled = true
+database_path = "~/.local/share/swictation/metrics.db"
+show_realtime_feedback = true
+typing_baseline_wpm = 40
+store_transcription_text = false  # Privacy-first: don't store full text
+
+[metrics.warnings]
+# Performance warning thresholds
+enabled = true
+high_latency_threshold_ms = 1000  # Warn if segment latency > 1000ms
+gpu_memory_threshold_percent = 80  # Warn if GPU memory > 80%
+degradation_multiplier = 1.5  # Warn if latency increases by 50%
+accuracy_spike_multiplier = 3.0  # Warn if corrections spike 3x
+
+[metrics.cleanup]
+# Automatic database maintenance
+auto_cleanup_enabled = true
+max_segment_age_days = 90  # Delete segments older than 90 days
+warn_db_size_mb = 100  # Warn if database exceeds 100MB
