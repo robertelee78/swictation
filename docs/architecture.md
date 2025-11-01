@@ -208,7 +208,46 @@ def detect_speech(audio_chunk):
 
 ---
 
-### 5. Text Injection Module (`text_injection.py`)
+### 5. Text Transformation (MidStream PyO3)
+
+**Purpose:** Transform voice commands to symbols with native Rust performance
+
+**Architecture:**
+```python
+# Direct PyO3 FFI bindings (296,677x faster than subprocess!)
+import midstreamer_transform as mt
+
+# Transform voice commands
+text = mt.transform("def hello underscore world open parentheses close parentheses colon")
+# Output: "def hello_world():"
+```
+
+**Performance:**
+- **Latency:** ~0.29μs per transformation
+- **Rules:** 266 transformation mappings
+- **Integration:** Native Rust → Python via PyO3
+
+**Key Transformations:**
+```python
+"comma" → ","
+"period" → "."
+"open parentheses" → "("  # Both singular and plural supported
+"close parentheses" → ")"
+"equals" → "="
+"underscore" → "_"
+```
+
+**Why PyO3?**
+- ✅ Native FFI (no subprocess overhead)
+- ✅ 296,677x faster than Node.js subprocess
+- ✅ Simple integration (just `import`)
+- ✅ Comprehensive test coverage
+
+See [pyo3-integration.md](pyo3-integration.md) and [voice-commands.md](voice-commands.md) for details.
+
+---
+
+### 6. Text Injection Module (`text_injection.py`)
 
 **Purpose:** Inject transcribed text into focused Wayland application
 
@@ -266,7 +305,7 @@ def inject_text(self, text: str):
 
 ---
 
-### 6. IPC Protocol (Unix Socket)
+### 7. IPC Protocol (Unix Socket)
 
 **Socket Location:** `/tmp/swictation.sock`
 
@@ -341,6 +380,7 @@ def inject_text(self, text: str):
    │  When 2s silence detected after speech:        │
    │    • Extract full segment from buffer          │
    │    • Transcribe with full context              │
+   │    • Transform text (PyO3, ~0.29μs)            │
    │    • Inject text immediately                   │
    │    • Clear buffer, start new segment           │
    │    • Continue recording...                     │
@@ -381,6 +421,7 @@ def inject_text(self, text: str):
 | Audio Accumulation | Continuous | Zero overhead (real-time streaming) |
 | VAD Check (512ms window) | ~2ms | Per audio callback |
 | STT Processing | 500-1000ms | Depends on segment length |
+| Text Transformation | ~0.3μs | PyO3 native (negligible!) |
 | Text Injection | ~20ms | wtype latency |
 | **Total (from pause to text)** | **<2s** | Dominated by silence threshold |
 
@@ -524,4 +565,4 @@ WantedBy=default.target
 
 ---
 
-**Last Updated:** 2025-10-30
+**Last Updated:** 2025-11-01 (added PyO3 text transformation)
