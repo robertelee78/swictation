@@ -256,44 +256,23 @@ text = mt.transform("def hello underscore world open parentheses close parenthes
 
 ### 6. NeMo Patches (`nemo_patches.py`)
 
-**Purpose:** Fix bugs in NVIDIA NeMo library for Canary multilingual model support
+**Purpose:** Monkey-patch to fix AggregateTokenizer lang_id bug in NVIDIA NeMo library.
 
-**Critical Bug Fixed:**
-```python
-# Problem: NeMo's AggregateTokenizer.tokens_to_text() requires lang_id parameter
-# But chunking_utils.py calls decode_tokens_to_str() WITHOUT lang parameter
-# Result: TypeError crash
+**The Issue:** NeMo's internal chunking code calls `decode_tokens_to_str()` without passing the `lang` parameter, causing a crash with AggregateTokenizer (used by Canary-1B-Flash). This is a confirmed upstream bug that still exists in NeMo 2.5.2.
 
-# Solution (src/nemo_patches.py:31-46):
-def patched_decode_tokens_to_str(self, tokens: List[str], lang: str = None) -> str:
-    tokenizer_class_name = self.tokenizer.__class__.__name__
+**Our Solution:** Apply a surgical monkey-patch that defaults `lang='en'` when the parameter is missing. The patch:
+- Only affects one method in one class
+- Has zero side effects
+- Is non-invasive (no file modifications)
+- Works around a confirmed NeMo bug
 
-    if tokenizer_class_name == 'AggregateTokenizer':
-        if lang is None:
-            lang = 'en'  # Default to English
-        return self.tokenizer.tokens_to_text(tokens, lang)
-    else:
-        return original_decode_tokens_to_str(self, tokens, lang=lang)
-```
+**See:** `docs/nemo-lang-bug-analysis.md` for complete technical analysis, verification tests, and removal criteria.
 
 **Integration:**
 ```python
-# src/swictationd.py:19-22 (BEFORE importing NeMo!)
+# src/swictationd.py:19-22 (applied BEFORE importing NeMo)
 from nemo_patches import apply_all_patches
 apply_all_patches()
-
-# THEN import NeMo
-from nemo.collections.asr.models import EncDecMultiTaskModel
-```
-
-**Applied Patches:**
-1. ✅ `patch_aggregate_tokenizer_lang_id()` - Fixes missing lang_id parameter
-
-**Output on startup:**
-```
-🔧 Applying NeMo compatibility patches...
-✅ Applied NeMo patch: AggregateTokenizer lang_id fix
-✓ Applied 1 NeMo patch(es)
 ```
 
 ---
