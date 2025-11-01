@@ -185,11 +185,13 @@ class TextInjector:
         Inject special key sequences using wtype.
 
         Supports:
-        - Simple keys: ['Return', 'Tab', 'BackSpace']
+        - Simple keys: ['Return', 'Tab', 'BackSpace', 'Left', 'Right', 'Up', 'Down']
         - Ctrl combinations: ['ctrl-u', 'ctrl-c', 'ctrl-s']
+        - Super combinations: ['super-Left', 'super-1', 'super-f']
+        - Multi-modifier: ['super-shift-Left', 'super-shift-1']
 
         Args:
-            keys: List of key names (e.g., ['Return', 'Tab', 'Backspace', 'ctrl-u'])
+            keys: List of key names (e.g., ['Return', 'ctrl-u', 'super-Left', 'super-shift-1'])
 
         Returns:
             True if successful, False otherwise
@@ -201,27 +203,40 @@ class TextInjector:
         try:
             # wtype uses -k flag for special keys
             for key in keys:
-                # Check if this is a Ctrl combination (e.g., 'ctrl-u')
-                if key.startswith('ctrl-'):
-                    # Extract the letter (e.g., 'ctrl-u' -> 'u')
-                    letter = key.split('-', 1)[1]
+                # Parse modifiers and key from pattern like 'super-shift-Left' or 'ctrl-u'
+                parts = key.split('-')
 
-                    # Press Ctrl, type letter, release Ctrl
-                    # wtype -M ctrl -k u -m ctrl
-                    subprocess.run(
-                        ['wtype', '-M', 'ctrl', '-k', letter, '-m', 'ctrl'],
-                        capture_output=True,
-                        check=True,
-                        timeout=2
-                    )
-                else:
-                    # Regular key (e.g., 'Return', 'BackSpace')
+                if len(parts) == 1:
+                    # Simple key (e.g., 'Return', 'BackSpace', 'Left')
                     subprocess.run(
                         ['wtype', '-k', key],
                         capture_output=True,
                         check=True,
                         timeout=2
                     )
+                elif len(parts) == 2:
+                    # Single modifier (e.g., 'ctrl-u', 'super-Left', 'super-1')
+                    modifier, keyname = parts
+                    # wtype -M <modifier> -k <key> -m <modifier>
+                    subprocess.run(
+                        ['wtype', '-M', modifier, '-k', keyname, '-m', modifier],
+                        capture_output=True,
+                        check=True,
+                        timeout=2
+                    )
+                elif len(parts) == 3:
+                    # Two modifiers (e.g., 'super-shift-Left', 'super-shift-1')
+                    mod1, mod2, keyname = parts
+                    # wtype -M <mod1> -M <mod2> -k <key> -m <mod2> -m <mod1>
+                    subprocess.run(
+                        ['wtype', '-M', mod1, '-M', mod2, '-k', keyname, '-m', mod2, '-m', mod1],
+                        capture_output=True,
+                        check=True,
+                        timeout=2
+                    )
+                else:
+                    print(f"⚠ Unsupported key format: {key}")
+                    continue
 
             return True
 
