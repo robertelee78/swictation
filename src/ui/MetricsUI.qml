@@ -581,6 +581,30 @@ Window {
                                         }
 
                                         Item { Layout.fillWidth: true }
+
+                                        // Copy button
+                                        Button {
+                                            text: "📋"
+                                            Layout.preferredWidth: 30
+                                            Layout.preferredHeight: 24
+                                            onClicked: {
+                                                backend.copyToClipboard(model.text)
+                                            }
+
+                                            contentItem: Text {
+                                                text: parent.text
+                                                font.pixelSize: 12
+                                                horizontalAlignment: Text.AlignHCenter
+                                                verticalAlignment: Text.AlignVCenter
+                                            }
+
+                                            background: Rectangle {
+                                                color: parent.hovered ? "#414868" : "transparent"
+                                                radius: 3
+                                                border.color: parent.hovered ? "#7aa2f7" : "#565f89"
+                                                border.width: 1
+                                            }
+                                        }
                                     }
 
                                     Text {

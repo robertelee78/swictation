@@ -243,6 +243,13 @@ class MetricsBackend(QObject):
         stats = self.db.get_lifetime_stats()
         return dict(stats)
 
+    @Slot(str)
+    def copyToClipboard(self, text):
+        """Copy text to system clipboard."""
+        from PySide6.QtGui import QGuiApplication
+        clipboard = QGuiApplication.clipboard()
+        clipboard.setText(text)
+
 
 class SwictationTrayApp(QApplication):
     """Main system tray application."""
