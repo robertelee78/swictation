@@ -26,6 +26,7 @@ from audio_capture import AudioCapture
 from text_injection import TextInjector, InjectionMethod
 from memory_manager import MemoryManager, MemoryPressureLevel
 from config_loader import ConfigLoader
+from daemon.metrics_broadcaster import MetricsBroadcaster
 
 # Text transformation (PyO3 native module)
 try:
@@ -164,6 +165,9 @@ class SwictationDaemon:
             except ImportError as e:
                 print(f"⚠️  Metrics collection not available: {e}")
                 self.metrics_collector = None
+
+        # Metrics broadcaster (real-time UI updates)
+        self.metrics_broadcaster = MetricsBroadcaster()
 
         # Memory pressure management
         self.memory_manager = None
@@ -414,6 +418,10 @@ class SwictationDaemon:
             self.state = new_state
             print(f"State: {old_state.value} → {new_state.value}")
 
+            # Broadcast state change to UI clients
+            if hasattr(self, 'metrics_broadcaster'):
+                self.metrics_broadcaster.broadcast_state_change(new_state.value)
+
     def get_state(self) -> DaemonState:
         """Thread-safe state read"""
         with self.state_lock:
@@ -560,6 +568,10 @@ class SwictationDaemon:
             if self.metrics_collector:
                 try:
                     self.metrics_collector.start_session()
+                    session_id = self.metrics_collector.current_session.session_id
+
+                    # Broadcast session start to UI clients
+                    self.metrics_broadcaster.start_session(session_id)
                 except Exception as e:
                     print(f"⚠️  Metrics start error: {e}", flush=True)
 
@@ -748,7 +760,7 @@ class SwictationDaemon:
                         cpu_stats = self.performance_monitor.get_cpu_stats(window_seconds=1.0)
                         cpu_percent = cpu_stats.get('mean', 0.0)
 
-                    self.metrics_collector.record_segment(
+                    segment = self.metrics_collector.record_segment(
                         audio_duration_s=duration,
                         transcription=transformed,
                         stt_latency_ms=stt_latency_ms,
@@ -757,6 +769,19 @@ class SwictationDaemon:
                         gpu_memory_mb=gpu_memory_mb,
                         cpu_percent=cpu_percent
                     )
+
+                    # Broadcast transcription and metrics to UI clients
+                    self.metrics_broadcaster.add_transcription(
+                        text=transformed,
+                        wpm=segment.calculate_wpm(),
+                        latency_ms=segment.total_latency_ms,
+                        words=segment.words
+                    )
+
+                    # Broadcast updated metrics
+                    realtime = self.metrics_collector.get_realtime_metrics()
+                    self.metrics_broadcaster.update_metrics(realtime)
+
                 except Exception as e:
                     print(f"⚠️  Metrics recording error: {e}", flush=True)
 
@@ -910,7 +935,11 @@ class SwictationDaemon:
             # End metrics session
             if self.metrics_collector:
                 try:
+                    session_id = self.metrics_collector.current_session.session_id
                     self.metrics_collector.end_session()
+
+                    # Broadcast session end to UI clients
+                    self.metrics_broadcaster.end_session(session_id)
                 except Exception as e:
                     print(f"⚠️  Metrics end error: {e}", flush=True)
 
@@ -1278,6 +1307,10 @@ class SwictationDaemon:
                 self.memory_manager.start_monitoring()
                 print("  ✓ Memory pressure monitoring active", flush=True)
 
+            # Start metrics broadcaster
+            print("  Starting metrics broadcaster...", flush=True)
+            self.metrics_broadcaster.start()
+
             self.set_state(DaemonState.IDLE)
 
             print("\n✓ Swictation daemon started", flush=True)
@@ -1359,6 +1392,11 @@ class SwictationDaemon:
         if self.memory_manager:
             print("  Stopping memory monitoring...")
             self.memory_manager.stop_monitoring()
+
+        # Stop metrics broadcaster
+        if self.metrics_broadcaster:
+            print("  Stopping metrics broadcaster...")
+            self.metrics_broadcaster.stop()
 
         # Stop performance monitoring
         if self.performance_monitor:
