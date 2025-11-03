@@ -413,9 +413,10 @@ install_python_deps() {
     echo ""
     echo "Installing PyTorch system-wide..."
     if [[ -n "$TORCH_INDEX" ]]; then
-        $PYTHON_CMD -m pip install --break-system-packages torch==2.8.0+cu129 torchvision==0.23.0+cu129 torchaudio==2.8.0+cu129 --index-url "$TORCH_INDEX" || {
-            echo -e "${YELLOW}⚠ CUDA version failed, trying CPU version${NC}"
-            $PYTHON_CMD -m pip install --break-system-packages torch torchvision torchaudio
+        # Try latest stable CUDA version first
+        $PYTHON_CMD -m pip install --break-system-packages torch torchvision torchaudio || {
+            echo -e "${YELLOW}⚠ Latest version failed, trying CUDA 12.9 specific${NC}"
+            $PYTHON_CMD -m pip install --break-system-packages torch==2.8.0+cu129 torchvision==0.23.0+cu129 torchaudio==2.8.0+cu129 --index-url "$TORCH_INDEX"
         }
     else
         $PYTHON_CMD -m pip install --break-system-packages torch torchvision torchaudio
