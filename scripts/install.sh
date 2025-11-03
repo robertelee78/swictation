@@ -106,7 +106,7 @@ if [[ "$PYTHON_MAJOR" -eq 3 ]] && [[ "$PYTHON_MINOR" -ge 13 ]]; then
     echo -e "${YELLOW}⚠ Python $PYTHON_VERSION detected${NC}"
     echo ""
     echo "Python 3.13+ requires numpy>=2.1.0, but nemo-toolkit requires numpy<2.0.0"
-    echo "This script will automatically set up a Python 3.12 virtual environment."
+    echo "Installing Python 3.12 system-wide (no venv - faster, better for large packages like PyTorch)"
     echo ""
 
     # Check if Python 3.12 is available
@@ -148,24 +148,11 @@ if [[ "$PYTHON_MAJOR" -eq 3 ]] && [[ "$PYTHON_MINOR" -ge 13 ]]; then
         fi
     fi
 
-    # Create virtual environment
-    VENV_DIR="$INSTALL_DIR/venv"
-    if [ ! -d "$VENV_DIR" ]; then
-        echo ""
-        echo -e "${BLUE}Creating Python 3.12 virtual environment...${NC}"
-        python3.12 -m venv "$VENV_DIR" || {
-            echo -e "${RED}✗ Failed to create virtual environment${NC}"
-            exit 1
-        }
-        echo -e "${GREEN}✓ Virtual environment created: $VENV_DIR${NC}"
-    fi
-
-    # Activate the venv for this script
-    source "$VENV_DIR/bin/activate"
-
-    # Update Python version info
-    PYTHON_VERSION=$(python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-    echo -e "${GREEN}✓ Using Python $PYTHON_VERSION from virtual environment${NC}"
+    # Switch default python to python3.12
+    echo -e "${GREEN}✓ Python 3.12 installed, using it for installation${NC}"
+    # Use python3.12 directly for the rest of the script
+    alias python3=python3.12
+    export PYTHON_CMD=python3.12
     echo ""
 
 elif [[ "$PYTHON_MAJOR" -eq 3 ]] && [[ "$PYTHON_MINOR" -lt 12 ]]; then
@@ -173,6 +160,9 @@ elif [[ "$PYTHON_MAJOR" -eq 3 ]] && [[ "$PYTHON_MINOR" -lt 12 ]]; then
     echo "  Recommended: Python 3.12"
     echo ""
 fi
+
+# Set python command to use
+PYTHON_CMD=${PYTHON_CMD:-python3}
 
 # Function: Install system dependencies
 install_system_deps() {
@@ -336,11 +326,7 @@ build_transformer() {
     # Check if maturin is installed
     if ! command -v maturin &> /dev/null; then
         echo "Installing maturin (Rust-to-Python build tool)..."
-        python3 -m pip install --user maturin || {
-            echo ""
-            echo -e "${YELLOW}⚠ Failed with --user, trying --break-system-packages${NC}"
-            python3 -m pip install --break-system-packages maturin
-        }
+        $PYTHON_CMD -m pip install --break-system-packages maturin
     else
         echo -e "${GREEN}✓ maturin already installed${NC}"
     fi
@@ -375,7 +361,7 @@ build_transformer() {
     echo ""
 
     # Install the built wheel
-    python3 -m pip install --break-system-packages --force-reinstall ../../target/wheels/midstreamer_transform-*.whl || {
+    $PYTHON_CMD -m pip install --break-system-packages --force-reinstall ../../target/wheels/midstreamer_transform-*.whl || {
         echo -e "${RED}✗ Transformer installation failed${NC}"
         echo "  Check wheel exists: ls ../../target/wheels/"
         exit 1
@@ -383,7 +369,7 @@ build_transformer() {
 
     echo ""
     echo "Verifying transformer installation..."
-    python3 -c "import midstreamer_transform; count, msg = midstreamer_transform.get_stats(); print(f'✅ {msg}')" || {
+    $PYTHON_CMD -c "import midstreamer_transform; count, msg = midstreamer_transform.get_stats(); print(f'✅ {msg}')" || {
         echo -e "${RED}✗ Transformer verification failed${NC}"
         echo "  Import test failed - transformer may not be properly installed"
         exit 1
@@ -413,60 +399,35 @@ install_python_deps() {
     echo "This may take 5-10 minutes (large packages)..."
     echo ""
 
-    # Check if we're in a virtual environment
-    if [[ -n "$VIRTUAL_ENV" ]]; then
-        echo -e "${GREEN}✓ Using virtual environment: $VIRTUAL_ENV${NC}"
+    # Check if NVIDIA GPU is available to decide which PyTorch to install
+    echo "Checking for NVIDIA GPU..."
+    if command -v nvidia-smi &> /dev/null && nvidia-smi &> /dev/null; then
+        echo -e "${GREEN}✓ NVIDIA GPU detected - installing PyTorch with CUDA 12.9${NC}"
+        TORCH_INDEX="https://download.pytorch.org/whl/cu129"
+    else
+        echo -e "${YELLOW}⚠ No NVIDIA GPU detected - installing CPU-only PyTorch${NC}"
+        TORCH_INDEX=""
+    fi
 
-        # Check if NVIDIA GPU is available to decide which PyTorch to install
-        echo "Checking for NVIDIA GPU..."
-        if command -v nvidia-smi &> /dev/null && nvidia-smi &> /dev/null; then
-            echo -e "${GREEN}✓ NVIDIA GPU detected - installing PyTorch with CUDA 12.9${NC}"
-            TORCH_INDEX="https://download.pytorch.org/whl/cu129"
-        else
-            echo -e "${YELLOW}⚠ No NVIDIA GPU detected - installing CPU-only PyTorch${NC}"
-            TORCH_INDEX=""
-        fi
-
-        # Install PyTorch first (separate from requirements.txt)
-        echo ""
-        echo "Installing PyTorch..."
-        if [[ -n "$TORCH_INDEX" ]]; then
-            pip install torch==2.8.0+cu129 torchvision==0.23.0+cu129 torchaudio==2.8.0+cu129 --index-url "$TORCH_INDEX" || {
-                echo -e "${YELLOW}⚠ CUDA version failed, trying CPU version${NC}"
-                pip install torch torchvision torchaudio
-            }
-        else
-            pip install torch torchvision torchaudio
-        fi
-
-        echo ""
-        echo "Installing remaining packages..."
-        # Install rest of requirements (excluding torch lines)
-        grep -v "^torch==" "$INSTALL_DIR/requirements.txt" | grep -v "^torchaudio" | pip install -r /dev/stdin || {
-            echo -e "${RED}✗ Failed to install Python packages${NC}"
-            exit 1
+    # Install PyTorch first (separate from requirements.txt)
+    echo ""
+    echo "Installing PyTorch system-wide..."
+    if [[ -n "$TORCH_INDEX" ]]; then
+        $PYTHON_CMD -m pip install --break-system-packages torch==2.8.0+cu129 torchvision==0.23.0+cu129 torchaudio==2.8.0+cu129 --index-url "$TORCH_INDEX" || {
+            echo -e "${YELLOW}⚠ CUDA version failed, trying CPU version${NC}"
+            $PYTHON_CMD -m pip install --break-system-packages torch torchvision torchaudio
         }
     else
-        echo -e "${YELLOW}⚠ Not in a virtual environment${NC}"
-        echo "  Installing with --break-system-packages (not recommended)"
-        echo ""
-
-        # Install with user site-packages
-        python3 -m pip install --user -r "$INSTALL_DIR/requirements.txt" || {
-            echo ""
-            echo -e "${YELLOW}⚠ Some packages failed, trying with --break-system-packages${NC}"
-            python3 -m pip install --break-system-packages -r "$INSTALL_DIR/requirements.txt" || {
-                echo ""
-                echo -e "${RED}✗ Installation failed${NC}"
-                echo ""
-                echo "Recommended: Create a Python 3.12 virtual environment:"
-                echo "  python3.12 -m venv $INSTALL_DIR/venv"
-                echo "  source $INSTALL_DIR/venv/bin/activate"
-                echo "  python3 -m pip install -r $INSTALL_DIR/requirements.txt"
-                exit 1
-            }
-        }
+        $PYTHON_CMD -m pip install --break-system-packages torch torchvision torchaudio
     fi
+
+    echo ""
+    echo "Installing remaining packages system-wide..."
+    # Install rest of requirements (excluding torch lines)
+    grep -v "^torch==" "$INSTALL_DIR/requirements.txt" | grep -v "^torchaudio" | $PYTHON_CMD -m pip install --break-system-packages -r /dev/stdin || {
+        echo -e "${RED}✗ Failed to install Python packages${NC}"
+        exit 1
+    }
 
     echo ""
     echo -e "${GREEN}✓ Python packages installed${NC}"
@@ -722,15 +683,14 @@ main() {
     echo "======================================================================"
     echo ""
 
-    # Check if venv was created
-    if [[ -n "$VIRTUAL_ENV" ]]; then
-        echo -e "${BLUE}IMPORTANT: Python 3.12 virtual environment created${NC}"
+    # Check if Python 3.12 was installed via pyenv
+    if [[ -d "$HOME/.pyenv" ]]; then
+        echo -e "${BLUE}IMPORTANT: Python 3.12 installed via pyenv${NC}"
         echo ""
-        echo "To activate the virtual environment in new shells:"
-        echo "  source $VIRTUAL_ENV/bin/activate"
-        echo ""
-        echo "To add to your shell profile (~/.bashrc or ~/.zshrc):"
-        echo "  echo 'source $VIRTUAL_ENV/bin/activate' >> ~/.bashrc"
+        echo "Add to your shell profile (~/.bashrc or ~/.zshrc):"
+        echo '  export PYENV_ROOT="$HOME/.pyenv"'
+        echo '  export PATH="$PYENV_ROOT/bin:$PATH"'
+        echo '  eval "$(pyenv init -)"'
         echo ""
     fi
 
