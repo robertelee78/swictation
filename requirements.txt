@@ -90,5 +90,8 @@ rapidfuzz>=3.9.0
 # Text Processing Pipeline (TODO: for future midstream integration)
 # midstream>=0.1.0
 
+# UI (system tray)
+PySide6>=6.8.0
+
 # IPC and system integration (TODO: for daemon implementation)
 # dbus-python>=1.3.2

@@ -547,37 +547,60 @@ setup_systemd() {
 
     mkdir -p "$SYSTEMD_DIR"
 
-    # Copy service file
+    # Copy service files
     if [ -f "$INSTALL_DIR/config/swictation.service" ]; then
         cp "$INSTALL_DIR/config/swictation.service" "$SYSTEMD_DIR/"
-        echo -e "${GREEN}✓ Copied service file${NC}"
+        echo -e "${GREEN}✓ Copied main service file${NC}"
 
         # Update service file to use venv if it was created
         if [[ -n "$VIRTUAL_ENV" ]]; then
             echo -e "${BLUE}Updating service to use Python 3.12 venv${NC}"
         fi
-
-        # Reload systemd
-        systemctl --user daemon-reload
-        echo -e "${GREEN}✓ Reloaded systemd${NC}"
-
-        # Enable service
-        systemctl --user enable swictation.service
-        echo -e "${GREEN}✓ Enabled swictation.service${NC}"
-
-        # Offer to start now
-        echo ""
-        read -p "Start daemon now? (Y/n): " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-            systemctl --user start swictation.service
-            sleep 2
-            systemctl --user status swictation.service --no-pager
-            echo ""
-            echo -e "${GREEN}✓ Daemon started${NC}"
-        fi
     else
-        echo -e "${YELLOW}⚠ Service file not found: $INSTALL_DIR/config/swictation.service${NC}"
+        echo -e "${RED}✗ Main service file not found${NC}"
+        echo "  Expected: $INSTALL_DIR/config/swictation.service"
+        return
+    fi
+
+    # Copy tray service file
+    if [ -f "$INSTALL_DIR/config/swictation-tray.service" ]; then
+        cp "$INSTALL_DIR/config/swictation-tray.service" "$SYSTEMD_DIR/"
+        echo -e "${GREEN}✓ Copied tray service file${NC}"
+    else
+        echo -e "${YELLOW}⚠ Tray service file not found (optional)${NC}"
+        echo "  Expected: $INSTALL_DIR/config/swictation-tray.service"
+    fi
+
+    # Reload systemd
+    systemctl --user daemon-reload
+    echo -e "${GREEN}✓ Reloaded systemd${NC}"
+
+    # Enable services
+    systemctl --user enable swictation.service
+    echo -e "${GREEN}✓ Enabled swictation.service${NC}"
+
+    if [ -f "$SYSTEMD_DIR/swictation-tray.service" ]; then
+        systemctl --user enable swictation-tray.service
+        echo -e "${GREEN}✓ Enabled swictation-tray.service${NC}"
+    fi
+
+    # Offer to start now
+    echo ""
+    read -p "Start services now? (Y/n): " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+        systemctl --user start swictation.service
+        echo -e "${GREEN}✓ Started main daemon${NC}"
+
+        if [ -f "$SYSTEMD_DIR/swictation-tray.service" ]; then
+            systemctl --user start swictation-tray.service
+            echo -e "${GREEN}✓ Started tray app${NC}"
+        fi
+
+        echo ""
+        sleep 2
+        systemctl --user status swictation.service --no-pager
+        echo ""
     fi
 
     echo ""

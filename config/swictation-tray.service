@@ -8,7 +8,7 @@ PartOf=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/env python3 /opt/swictation/src/ui/swictation_tray.py
+ExecStart=/bin/bash -c 'if command -v python3.12 &> /dev/null; then python3.12 /opt/swictation/src/ui/swictation_tray.py; else /usr/bin/env python3 /opt/swictation/src/ui/swictation_tray.py; fi'
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
