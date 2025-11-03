@@ -117,19 +117,23 @@ if [[ "$PYTHON_MAJOR" -eq 3 ]] && [[ "$PYTHON_MINOR" -ge 13 ]]; then
         if [[ "$DISTRO" == "ubuntu" ]] || [[ "$DISTRO" == "debian" ]] || [[ "$DISTRO" == "pop" ]]; then
             # Try deadsnakes PPA first (works for Ubuntu 24.04 and earlier)
             echo "Trying deadsnakes PPA..."
-            sudo apt update
-            sudo apt install -y software-properties-common
+            sudo apt update >/dev/null 2>&1
+            sudo apt install -y software-properties-common >/dev/null 2>&1
 
-            # Add PPA and check if it works
-            if sudo add-apt-repository -y ppa:deadsnakes/ppa 2>/dev/null && sudo apt update 2>/dev/null; then
-                if sudo apt install -y python3.12 python3.12-venv python3.12-dev 2>/dev/null; then
-                    echo -e "${GREEN}✓ Python 3.12 installed from PPA${NC}"
-                else
-                    echo -e "${YELLOW}⚠ PPA doesn't have Python 3.12, using pyenv...${NC}"
-                    install_python312_pyenv
+            # Add PPA and check if it works (suppress errors)
+            PPA_SUCCESS=false
+            if sudo add-apt-repository -y ppa:deadsnakes/ppa >/dev/null 2>&1; then
+                if sudo apt update >/dev/null 2>&1; then
+                    if sudo apt install -y python3.12 python3.12-venv python3.12-dev >/dev/null 2>&1; then
+                        echo -e "${GREEN}✓ Python 3.12 installed from PPA${NC}"
+                        PPA_SUCCESS=true
+                    fi
                 fi
-            else
-                echo -e "${YELLOW}⚠ PPA not available for $DISTRO_VERSION, using pyenv...${NC}"
+            fi
+
+            # If PPA failed, use pyenv
+            if [[ "$PPA_SUCCESS" == "false" ]]; then
+                echo -e "${YELLOW}⚠ PPA not available for Ubuntu $DISTRO_VERSION, using pyenv...${NC}"
                 install_python312_pyenv
             fi
         elif [[ "$DISTRO" == "arch" ]] || [[ "$DISTRO" == "manjaro" ]]; then
