@@ -196,10 +196,19 @@ install_system_deps() {
 
         ubuntu|debian|pop)
             echo "Installing packages via apt..."
-            sudo apt update
+
+            # Clean up any broken PPAs that might exist
+            if [ -f /etc/apt/sources.list.d/deadsnakes-ubuntu-ppa-plucky.list ]; then
+                echo "Removing broken deadsnakes PPA..."
+                sudo rm -f /etc/apt/sources.list.d/deadsnakes-ubuntu-ppa-*.list
+            fi
+
+            sudo apt update || {
+                echo -e "${YELLOW}⚠ apt update had warnings, continuing...${NC}"
+            }
+
             sudo apt install -y \
                 python3 python3-pip python3-venv \
-                python3.12 python3.12-venv python3.12-dev \
                 wtype wl-clipboard \
                 ffmpeg \
                 pipewire pipewire-pulse \
