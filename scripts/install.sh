@@ -348,8 +348,8 @@ build_transformer() {
         rm -rf ../../target/wheels/
     fi
 
-    # Build the wheel
-    maturin build --release --features pyo3 || {
+    # Build the wheel (use explicit python interpreter)
+    maturin build --release --features pyo3 --interpreter $PYTHON_CMD || {
         echo -e "${RED}✗ Transformer build failed${NC}"
         echo "  Check Rust installation: rustc --version"
         echo "  Check cargo works: cargo --version"
