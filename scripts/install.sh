@@ -39,6 +39,79 @@ if [[ $EUID -eq 0 ]]; then
    exit 1
 fi
 
+# Check Python version (CRITICAL: Python 3.13+ breaks numpy dependencies)
+PYTHON_VERSION=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+PYTHON_MAJOR=$(python3 -c 'import sys; print(sys.version_info.major)')
+PYTHON_MINOR=$(python3 -c 'import sys; print(sys.version_info.minor)')
+
+echo -e "${BLUE}Detected Python: $PYTHON_VERSION${NC}"
+
+if [[ "$PYTHON_MAJOR" -eq 3 ]] && [[ "$PYTHON_MINOR" -ge 13 ]]; then
+    echo ""
+    echo -e "${YELLOW}⚠ Python $PYTHON_VERSION detected${NC}"
+    echo ""
+    echo "Python 3.13+ requires numpy>=2.1.0, but nemo-toolkit requires numpy<2.0.0"
+    echo "This script will automatically set up a Python 3.12 virtual environment."
+    echo ""
+
+    # Check if Python 3.12 is available
+    if ! command -v python3.12 &> /dev/null; then
+        echo -e "${BLUE}Installing Python 3.12...${NC}"
+        case $DISTRO in
+            ubuntu|debian|pop)
+                sudo apt update
+                sudo apt install -y python3.12 python3.12-venv python3.12-dev || {
+                    echo -e "${RED}✗ Failed to install Python 3.12${NC}"
+                    exit 1
+                }
+                ;;
+            arch|manjaro)
+                sudo pacman -S --needed --noconfirm python312 || {
+                    echo -e "${RED}✗ Failed to install Python 3.12${NC}"
+                    exit 1
+                }
+                ;;
+            fedora)
+                sudo dnf install -y python3.12 || {
+                    echo -e "${RED}✗ Failed to install Python 3.12${NC}"
+                    exit 1
+                }
+                ;;
+            *)
+                echo -e "${RED}✗ Cannot auto-install Python 3.12 on $DISTRO${NC}"
+                echo "Please install Python 3.12 manually, then rerun this script"
+                exit 1
+                ;;
+        esac
+        echo -e "${GREEN}✓ Python 3.12 installed${NC}"
+    fi
+
+    # Create virtual environment
+    VENV_DIR="$INSTALL_DIR/venv"
+    if [ ! -d "$VENV_DIR" ]; then
+        echo ""
+        echo -e "${BLUE}Creating Python 3.12 virtual environment...${NC}"
+        python3.12 -m venv "$VENV_DIR" || {
+            echo -e "${RED}✗ Failed to create virtual environment${NC}"
+            exit 1
+        }
+        echo -e "${GREEN}✓ Virtual environment created: $VENV_DIR${NC}"
+    fi
+
+    # Activate the venv for this script
+    source "$VENV_DIR/bin/activate"
+
+    # Update Python version info
+    PYTHON_VERSION=$(python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+    echo -e "${GREEN}✓ Using Python $PYTHON_VERSION from virtual environment${NC}"
+    echo ""
+
+elif [[ "$PYTHON_MAJOR" -eq 3 ]] && [[ "$PYTHON_MINOR" -lt 12 ]]; then
+    echo -e "${YELLOW}⚠ Python $PYTHON_VERSION detected - may have compatibility issues${NC}"
+    echo "  Recommended: Python 3.12"
+    echo ""
+fi
+
 # Detect distribution
 if [ -f /etc/os-release ]; then
     . /etc/os-release
@@ -75,10 +148,12 @@ install_system_deps() {
             echo "Installing packages via apt..."
             sudo apt update
             sudo apt install -y \
-                python3 python3-pip \
+                python3 python3-pip python3-venv \
+                python3.12 python3.12-venv python3.12-dev \
                 wtype wl-clipboard \
                 ffmpeg \
-                pipewire pipewire-pulse || {
+                pipewire pipewire-pulse \
+                build-essential pkg-config libssl-dev || {
                     echo -e "${YELLOW}⚠ Some packages failed, continuing...${NC}"
                 }
             ;;
@@ -279,12 +354,34 @@ install_python_deps() {
     echo "This may take 5-10 minutes (large packages)..."
     echo ""
 
-    # Install with user site-packages
-    python3 -m pip install --user -r "$INSTALL_DIR/requirements.txt" || {
+    # Check if we're in a virtual environment
+    if [[ -n "$VIRTUAL_ENV" ]]; then
+        echo -e "${GREEN}✓ Using virtual environment: $VIRTUAL_ENV${NC}"
+        pip install -r "$INSTALL_DIR/requirements.txt" || {
+            echo -e "${RED}✗ Failed to install Python packages${NC}"
+            exit 1
+        }
+    else
+        echo -e "${YELLOW}⚠ Not in a virtual environment${NC}"
+        echo "  Installing with --break-system-packages (not recommended)"
         echo ""
-        echo -e "${YELLOW}⚠ Some packages failed, trying with --break-system-packages${NC}"
-        python3 -m pip install --break-system-packages -r "$INSTALL_DIR/requirements.txt"
-    }
+
+        # Install with user site-packages
+        python3 -m pip install --user -r "$INSTALL_DIR/requirements.txt" || {
+            echo ""
+            echo -e "${YELLOW}⚠ Some packages failed, trying with --break-system-packages${NC}"
+            python3 -m pip install --break-system-packages -r "$INSTALL_DIR/requirements.txt" || {
+                echo ""
+                echo -e "${RED}✗ Installation failed${NC}"
+                echo ""
+                echo "Recommended: Create a Python 3.12 virtual environment:"
+                echo "  python3.12 -m venv $INSTALL_DIR/venv"
+                echo "  source $INSTALL_DIR/venv/bin/activate"
+                echo "  python3 -m pip install -r $INSTALL_DIR/requirements.txt"
+                exit 1
+            }
+        }
+    fi
 
     echo ""
     echo -e "${GREEN}✓ Python packages installed${NC}"
@@ -397,6 +494,11 @@ setup_systemd() {
     if [ -f "$INSTALL_DIR/config/swictation.service" ]; then
         cp "$INSTALL_DIR/config/swictation.service" "$SYSTEMD_DIR/"
         echo -e "${GREEN}✓ Copied service file${NC}"
+
+        # Update service file to use venv if it was created
+        if [[ -n "$VIRTUAL_ENV" ]]; then
+            echo -e "${BLUE}Updating service to use Python 3.12 venv${NC}"
+        fi
 
         # Reload systemd
         systemctl --user daemon-reload
@@ -524,6 +626,19 @@ main() {
     echo -e "${GREEN}✓ Installation Complete!${NC}"
     echo "======================================================================"
     echo ""
+
+    # Check if venv was created
+    if [[ -n "$VIRTUAL_ENV" ]]; then
+        echo -e "${BLUE}IMPORTANT: Python 3.12 virtual environment created${NC}"
+        echo ""
+        echo "To activate the virtual environment in new shells:"
+        echo "  source $VIRTUAL_ENV/bin/activate"
+        echo ""
+        echo "To add to your shell profile (~/.bashrc or ~/.zshrc):"
+        echo "  echo 'source $VIRTUAL_ENV/bin/activate' >> ~/.bashrc"
+        echo ""
+    fi
+
     echo "Next steps:"
     echo "  1. Start daemon (if not auto-started):"
     echo "       systemctl --user start swictation.service"

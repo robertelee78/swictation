@@ -7,8 +7,8 @@ Wants=swictation-tray.service
 
 [Service]
 Type=simple
-# Use system Python 3 - will find user-installed packages automatically
-ExecStart=/usr/bin/env python3 /opt/swictation/src/swictationd.py
+# Use Python from venv if available, otherwise system Python 3
+ExecStart=/bin/bash -c 'if [ -f /opt/swictation/venv/bin/python ]; then /opt/swictation/venv/bin/python /opt/swictation/src/swictationd.py; else /usr/bin/env python3 /opt/swictation/src/swictationd.py; fi'
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
