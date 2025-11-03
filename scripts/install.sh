@@ -17,6 +17,50 @@ CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/swictation"
 SYSTEMD_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 SWAY_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/sway/config"
 
+# Function: Install Python 3.12 via pyenv
+install_python312_pyenv() {
+    echo ""
+    echo -e "${BLUE}Installing Python 3.12 via pyenv...${NC}"
+
+    # Install pyenv dependencies
+    sudo apt install -y build-essential libssl-dev zlib1g-dev \
+        libbz2-dev libreadline-dev libsqlite3-dev curl \
+        libncursesw5-dev xz-utils tk-dev libxml2-dev libxmlsec1-dev \
+        libffi-dev liblzma-dev
+
+    # Install pyenv if not present
+    if [ ! -d "$HOME/.pyenv" ]; then
+        echo "Installing pyenv..."
+        curl https://pyenv.run | bash
+
+        # Add to current shell
+        export PYENV_ROOT="$HOME/.pyenv"
+        export PATH="$PYENV_ROOT/bin:$PATH"
+        eval "$(pyenv init -)"
+    else
+        export PYENV_ROOT="$HOME/.pyenv"
+        export PATH="$PYENV_ROOT/bin:$PATH"
+        eval "$(pyenv init -)"
+    fi
+
+    # Install Python 3.12.7
+    echo "Installing Python 3.12.7 via pyenv (this takes a few minutes)..."
+    pyenv install -s 3.12.7
+
+    # Make it available as python3.12
+    ln -sf "$HOME/.pyenv/versions/3.12.7/bin/python3.12" "$HOME/.local/bin/python3.12" || {
+        mkdir -p "$HOME/.local/bin"
+        ln -sf "$HOME/.pyenv/versions/3.12.7/bin/python3.12" "$HOME/.local/bin/python3.12"
+    }
+
+    echo -e "${GREEN}✓ Python 3.12 installed via pyenv${NC}"
+    echo -e "${YELLOW}⚠ Add to your shell profile (~/.bashrc):${NC}"
+    echo '  export PYENV_ROOT="$HOME/.pyenv"'
+    echo '  export PATH="$PYENV_ROOT/bin:$PATH"'
+    echo '  eval "$(pyenv init -)"'
+    echo ""
+}
+
 echo "======================================================================"
 echo -e "${BLUE}Swictation Installation${NC}"
 echo "======================================================================"
@@ -68,39 +112,40 @@ if [[ "$PYTHON_MAJOR" -eq 3 ]] && [[ "$PYTHON_MINOR" -ge 13 ]]; then
     # Check if Python 3.12 is available
     if ! command -v python3.12 &> /dev/null; then
         echo -e "${BLUE}Installing Python 3.12...${NC}"
-        case $DISTRO in
-            ubuntu|debian|pop)
-                # Ubuntu 25.04+ doesn't have Python 3.12 in main repos
-                # Need to use deadsnakes PPA
-                echo "Adding deadsnakes PPA for Python 3.12..."
-                sudo apt update
-                sudo apt install -y software-properties-common
-                sudo add-apt-repository -y ppa:deadsnakes/ppa
-                sudo apt update
-                sudo apt install -y python3.12 python3.12-venv python3.12-dev || {
-                    echo -e "${RED}✗ Failed to install Python 3.12${NC}"
-                    exit 1
-                }
-                ;;
-            arch|manjaro)
-                sudo pacman -S --needed --noconfirm python312 || {
-                    echo -e "${RED}✗ Failed to install Python 3.12${NC}"
-                    exit 1
-                }
-                ;;
-            fedora)
-                sudo dnf install -y python3.12 || {
-                    echo -e "${RED}✗ Failed to install Python 3.12${NC}"
-                    exit 1
-                }
-                ;;
-            *)
-                echo -e "${RED}✗ Cannot auto-install Python 3.12 on $DISTRO${NC}"
-                echo "Please install Python 3.12 manually, then rerun this script"
+
+        # For Ubuntu/Debian, check if we can use apt or need pyenv
+        if [[ "$DISTRO" == "ubuntu" ]] || [[ "$DISTRO" == "debian" ]] || [[ "$DISTRO" == "pop" ]]; then
+            # Try deadsnakes PPA first (works for Ubuntu 24.04 and earlier)
+            echo "Trying deadsnakes PPA..."
+            sudo apt update
+            sudo apt install -y software-properties-common
+
+            # Add PPA and check if it works
+            if sudo add-apt-repository -y ppa:deadsnakes/ppa 2>/dev/null && sudo apt update 2>/dev/null; then
+                if sudo apt install -y python3.12 python3.12-venv python3.12-dev 2>/dev/null; then
+                    echo -e "${GREEN}✓ Python 3.12 installed from PPA${NC}"
+                else
+                    echo -e "${YELLOW}⚠ PPA doesn't have Python 3.12, using pyenv...${NC}"
+                    install_python312_pyenv
+                fi
+            else
+                echo -e "${YELLOW}⚠ PPA not available for $DISTRO_VERSION, using pyenv...${NC}"
+                install_python312_pyenv
+            fi
+        elif [[ "$DISTRO" == "arch" ]] || [[ "$DISTRO" == "manjaro" ]]; then
+            sudo pacman -S --needed --noconfirm python312 || {
+                echo -e "${RED}✗ Failed to install Python 3.12${NC}"
                 exit 1
-                ;;
-        esac
-        echo -e "${GREEN}✓ Python 3.12 installed${NC}"
+            }
+        elif [[ "$DISTRO" == "fedora" ]]; then
+            sudo dnf install -y python3.12 || {
+                echo -e "${RED}✗ Failed to install Python 3.12${NC}"
+                exit 1
+            }
+        else
+            echo -e "${YELLOW}⚠ Unknown distro $DISTRO, trying pyenv...${NC}"
+            install_python312_pyenv
+        fi
     fi
 
     # Create virtual environment
