@@ -158,10 +158,14 @@ class MetricsBackend(QObject):
 
     def _socket_listener(self):
         """Background thread: connect to metrics socket and process events."""
+        import time
+        import traceback
+
         while True:
             try:
                 # Connect to metrics socket
                 self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                self.socket.settimeout(30.0)  # 30 second timeout to detect stuck connections
                 self.socket.connect('/tmp/swictation_metrics.sock')
                 print("✓ Connected to metrics socket")
                 self.connected = True
@@ -169,27 +173,44 @@ class MetricsBackend(QObject):
                 # Read events line by line
                 buffer = ""
                 while True:
-                    data = self.socket.recv(4096).decode('utf-8')
-                    if not data:
-                        break
+                    try:
+                        data = self.socket.recv(4096).decode('utf-8')
+                        if not data:
+                            print("⚠️  Socket connection closed by daemon")
+                            break
 
-                    buffer += data
-                    while '\n' in buffer:
-                        line, buffer = buffer.split('\n', 1)
-                        if line.strip():
-                            self._handle_event(json.loads(line))
+                        buffer += data
+                        while '\n' in buffer:
+                            line, buffer = buffer.split('\n', 1)
+                            if line.strip():
+                                try:
+                                    self._handle_event(json.loads(line))
+                                except (json.JSONDecodeError, KeyError) as e:
+                                    print(f"⚠️  Failed to parse event: {e}")
+                                    continue
+                    except socket.timeout:
+                        # Keep-alive check - connection is still alive
+                        continue
+                    except Exception as e:
+                        print(f"⚠️  Socket read error: {e}")
+                        traceback.print_exc()
+                        break
 
             except Exception as e:
                 print(f"⚠️  Metrics socket error: {e}")
+                traceback.print_exc()
                 self.connected = False
             finally:
                 if self.socket:
-                    self.socket.close()
+                    try:
+                        self.socket.close()
+                    except:
+                        pass
                     self.socket = None
                 self.connected = False
 
             # Reconnect after 5 seconds
-            import time
+            print("⚠️  Reconnecting in 5 seconds...")
             time.sleep(5)
 
     def _handle_event(self, event: dict):
@@ -275,6 +296,10 @@ class SwictationTrayApp(QApplication):
     def __init__(self, argv):
         super().__init__(argv)
 
+        # CRITICAL: Prevent app from quitting when last window closes
+        # We're a system tray app - we should keep running even when window is hidden
+        self.setQuitOnLastWindowClosed(False)
+
         # Setup paths
         self.icon_path = Path(__file__).parent.parent.parent / "docs" / "swictation_logo.png"
 
@@ -283,7 +308,28 @@ class SwictationTrayApp(QApplication):
         self.click_timer.setSingleShot(True)
         self.click_timer.timeout.connect(self.toggle_recording)
 
-        # Create system tray icon
+        # Create metrics backend FIRST (before QML)
+        # This ensures the backend object exists before QML tries to bind to it
+        self.backend = MetricsBackend()
+
+        # Keep a strong reference to prevent garbage collection
+        self.backend.setParent(self)  # Make app the parent to keep backend alive
+
+        # Load QML window (hidden by default)
+        self.engine = QQmlApplicationEngine(self)  # Set parent to prevent early cleanup
+        self.engine.rootContext().setContextProperty("backend", self.backend)
+
+        qml_file = Path(__file__).parent / "MetricsUI.qml"
+        self.engine.load(QUrl.fromLocalFile(str(qml_file)))
+
+        if not self.engine.rootObjects():
+            print("✗ Failed to load QML")
+            sys.exit(1)
+
+        self.window = self.engine.rootObjects()[0]
+        self.window.hide()
+
+        # Create system tray icon AFTER QML loads
         self.tray_icon = QSystemTrayIcon(self)
         self.tray_icon.setIcon(self._load_icon("idle"))
         self.tray_icon.activated.connect(self.on_tray_activated)
@@ -299,23 +345,8 @@ class SwictationTrayApp(QApplication):
         # Show tray icon (always visible)
         self.tray_icon.show()
 
-        # Create metrics backend
-        self.backend = MetricsBackend()
+        # Connect backend signals AFTER everything is set up
         self.backend.stateChanged.connect(self.on_state_changed)
-
-        # Load QML window (hidden by default)
-        self.engine = QQmlApplicationEngine()
-        self.engine.rootContext().setContextProperty("backend", self.backend)
-
-        qml_file = Path(__file__).parent / "MetricsUI.qml"
-        self.engine.load(QUrl.fromLocalFile(str(qml_file)))
-
-        if not self.engine.rootObjects():
-            print("✗ Failed to load QML")
-            sys.exit(1)
-
-        self.window = self.engine.rootObjects()[0]
-        self.window.hide()
 
         print("✓ Swictation tray app started")
 

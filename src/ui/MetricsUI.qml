@@ -13,6 +13,13 @@ Window {
     // Tokyo Night Dark theme colors
     color: "#1a1b26"
 
+    // CRITICAL: Prevent window close from exiting the app
+    // When user clicks X, just hide the window instead of closing it
+    onClosing: function(close) {
+        close.accepted = false  // Don't actually close
+        root.hide()             // Just hide the window
+    }
+
     // Connection status indicator (top-right)
     Rectangle {
         anchors.top: parent.top
