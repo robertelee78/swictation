@@ -247,7 +247,9 @@ class MetricsBackend(QObject):
     def copyToClipboard(self, text):
         """Copy text to system clipboard."""
         clipboard = QGuiApplication.clipboard()
-        clipboard.setText(text)
+        # Set text in both Selection (middle-click) and Clipboard (Ctrl+V) modes
+        clipboard.setText(text, QClipboard.Clipboard)
+        clipboard.setText(text, QClipboard.Selection)
         print(f"✓ Copied to clipboard: {text[:50]}...")
 
 
