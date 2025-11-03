@@ -44,6 +44,7 @@ class MetricsBroadcaster:
         self.server_socket: Optional[socket.socket] = None
         self.running = False
         self.accept_thread: Optional[threading.Thread] = None
+        self._last_state = 'idle'  # Track current daemon state
 
     def start(self):
         """Start broadcaster server thread."""
@@ -150,6 +151,7 @@ class MetricsBroadcaster:
         Args:
             state: New daemon state (idle/recording/processing/error)
         """
+        self._last_state = state  # Remember current state for new clients
         self.broadcast('state_change', {
             'state': state,
             'timestamp': time.time()
@@ -194,6 +196,17 @@ class MetricsBroadcaster:
                 with self.clients_lock:
                     self.clients.append(client)
                 print(f"  ✓ Metrics client connected (total: {len(self.clients)})", flush=True)
+
+                # Send current state to new client (so UI shows correct state on startup)
+                try:
+                    # We'll need to add a method to get current state from daemon
+                    # For now, send a state sync event
+                    if hasattr(self, '_last_state'):
+                        state_event = {'type': 'state_change', 'state': self._last_state, 'timestamp': time.time()}
+                        message = json.dumps(state_event) + '\n'
+                        client.sendall(message.encode('utf-8'))
+                except:
+                    pass
 
                 # Send current transcription buffer to new client
                 if self.transcription_buffer:
