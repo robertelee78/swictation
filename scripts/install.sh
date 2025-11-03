@@ -461,12 +461,22 @@ from nemo.collections.asr.models import EncDecMultiTaskModel
 import torch
 
 print('Downloading model from HuggingFace...')
-print(f'GPU available: {torch.cuda.is_available()}')
 
-if torch.cuda.is_available():
-    print(f'GPU: {torch.cuda.get_device_name(0)}')
-else:
-    print('⚠ No GPU detected - STT will be slower on CPU')
+# Check CUDA availability without triggering errors
+try:
+    cuda_available = torch.cuda.is_available()
+    print(f'GPU available: {cuda_available}')
+    if cuda_available:
+        try:
+            print(f'GPU: {torch.cuda.get_device_name(0)}')
+        except:
+            print('⚠ GPU detected but CUDA error - will use CPU')
+            cuda_available = False
+    else:
+        print('⚠ No GPU detected - STT will be slower on CPU')
+except Exception as e:
+    print(f'⚠ CUDA check failed: {e}')
+    print('  Model will run on CPU (slower but works)')
 
 model = EncDecMultiTaskModel.from_pretrained('nvidia/canary-1b-flash')
 print('✓ Model downloaded successfully')
