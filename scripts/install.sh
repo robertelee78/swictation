@@ -23,6 +23,9 @@ echo "======================================================================"
 echo ""
 echo "This script will:"
 echo "  ✓ Install system dependencies (wtype, wl-clipboard, ffmpeg)"
+echo "  ✓ Initialize git submodule (external/midstream)"
+echo "  ✓ Install Rust toolchain (if needed)"
+echo "  ✓ Build and install MidStream text transformer"
 echo "  ✓ Install Python packages (NeMo, PyTorch, etc.)"
 echo "  ✓ Download NVIDIA Canary-1B-Flash model"
 echo "  ✓ Set up systemd service"
@@ -112,10 +115,158 @@ install_system_deps() {
     echo ""
 }
 
+# Function: Initialize git submodule
+init_submodule() {
+    echo "======================================================================"
+    echo "2️⃣ Initializing Git Submodule (MidStream)"
+    echo "======================================================================"
+    echo ""
+
+    cd "$INSTALL_DIR" || exit 1
+
+    # Check if submodule is already initialized
+    if [ -f "$INSTALL_DIR/external/midstream/Cargo.toml" ]; then
+        echo -e "${GREEN}✓ Submodule already initialized${NC}"
+    else
+        echo "Initializing git submodule (external/midstream)..."
+        git submodule update --init --recursive || {
+            echo -e "${RED}✗ Failed to initialize submodule${NC}"
+            echo "  Try manually: cd $INSTALL_DIR && git submodule update --init --recursive"
+            exit 1
+        }
+        echo -e "${GREEN}✓ Git submodule initialized${NC}"
+    fi
+
+    # Verify submodule has files
+    if [ ! -d "$INSTALL_DIR/external/midstream/crates" ]; then
+        echo -e "${RED}✗ Submodule appears empty${NC}"
+        echo "  Expected: $INSTALL_DIR/external/midstream/crates/"
+        exit 1
+    fi
+
+    echo ""
+}
+
+# Function: Install Rust toolchain
+install_rust() {
+    echo "======================================================================"
+    echo "3️⃣ Installing Rust Toolchain"
+    echo "======================================================================"
+    echo ""
+
+    # Check if Rust is already installed
+    if command -v rustc &> /dev/null && command -v cargo &> /dev/null; then
+        RUST_VERSION=$(rustc --version)
+        echo -e "${GREEN}✓ Rust already installed: $RUST_VERSION${NC}"
+        echo ""
+        return
+    fi
+
+    echo "Rust not found, installing via rustup..."
+    echo ""
+
+    # Install rustup (official Rust installer)
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y || {
+        echo -e "${RED}✗ Rust installation failed${NC}"
+        echo "  Install manually: https://rustup.rs/"
+        exit 1
+    }
+
+    # Activate Rust environment
+    source "$HOME/.cargo/env"
+
+    # Verify installation
+    if command -v rustc &> /dev/null; then
+        RUST_VERSION=$(rustc --version)
+        echo -e "${GREEN}✓ Rust installed: $RUST_VERSION${NC}"
+    else
+        echo -e "${RED}✗ Rust installation verification failed${NC}"
+        exit 1
+    fi
+
+    echo ""
+}
+
+# Function: Build and install MidStream text transformer
+build_transformer() {
+    echo "======================================================================"
+    echo "4️⃣ Building MidStream Text Transformer"
+    echo "======================================================================"
+    echo ""
+
+    # Ensure Rust is in PATH
+    if [ -f "$HOME/.cargo/env" ]; then
+        source "$HOME/.cargo/env"
+    fi
+
+    # Check if maturin is installed
+    if ! command -v maturin &> /dev/null; then
+        echo "Installing maturin (Rust-to-Python build tool)..."
+        python3 -m pip install --user maturin || {
+            echo ""
+            echo -e "${YELLOW}⚠ Failed with --user, trying --break-system-packages${NC}"
+            python3 -m pip install --break-system-packages maturin
+        }
+    else
+        echo -e "${GREEN}✓ maturin already installed${NC}"
+    fi
+
+    # Navigate to transformer crate
+    cd "$INSTALL_DIR/external/midstream/crates/text-transform" || {
+        echo -e "${RED}✗ Text transformer crate not found${NC}"
+        echo "  Expected: $INSTALL_DIR/external/midstream/crates/text-transform"
+        exit 1
+    }
+
+    echo ""
+    echo "Building transformer (this takes 2-3 minutes)..."
+    echo ""
+
+    # Clean previous builds
+    if [ -d "../../target" ]; then
+        echo "Cleaning previous builds..."
+        rm -rf ../../target/wheels/
+    fi
+
+    # Build the wheel
+    maturin build --release --features pyo3 || {
+        echo -e "${RED}✗ Transformer build failed${NC}"
+        echo "  Check Rust installation: rustc --version"
+        echo "  Check cargo works: cargo --version"
+        exit 1
+    }
+
+    echo ""
+    echo "Installing transformer wheel..."
+    echo ""
+
+    # Install the built wheel
+    python3 -m pip install --break-system-packages --force-reinstall ../../target/wheels/midstreamer_transform-*.whl || {
+        echo -e "${RED}✗ Transformer installation failed${NC}"
+        echo "  Check wheel exists: ls ../../target/wheels/"
+        exit 1
+    }
+
+    echo ""
+    echo "Verifying transformer installation..."
+    python3 -c "import midstreamer_transform; count, msg = midstreamer_transform.get_stats(); print(f'✅ {msg}')" || {
+        echo -e "${RED}✗ Transformer verification failed${NC}"
+        echo "  Import test failed - transformer may not be properly installed"
+        exit 1
+    }
+
+    echo ""
+    echo -e "${GREEN}✓ MidStream text transformer built and installed${NC}"
+    echo ""
+
+    # Return to install directory
+    cd "$INSTALL_DIR" || exit 1
+}
+
 # Function: Install Python packages
 install_python_deps() {
     echo "======================================================================"
-    echo "2️⃣ Installing Python Packages"
+    echo "5️⃣ Installing Python Packages"
     echo "======================================================================"
     echo ""
 
@@ -143,7 +294,7 @@ install_python_deps() {
 # Function: Download STT model
 download_model() {
     echo "======================================================================"
-    echo "3️⃣ Downloading NVIDIA Canary-1B-Flash Model"
+    echo "6️⃣ Downloading NVIDIA Canary-1B-Flash Model"
     echo "======================================================================"
     echo ""
     echo "This will download ~1.1 GB model..."
@@ -184,7 +335,7 @@ print('✓ Model downloaded successfully')
 # Function: Create config directory
 create_config() {
     echo "======================================================================"
-    echo "4️⃣ Creating Configuration Directory"
+    echo "7️⃣ Creating Configuration Directory"
     echo "======================================================================"
     echo ""
 
@@ -228,7 +379,7 @@ EOF
 # Function: Setup systemd service
 setup_systemd() {
     echo "======================================================================"
-    echo "5️⃣ Setting Up systemd Service"
+    echo "8️⃣ Setting Up systemd Service"
     echo "======================================================================"
     echo ""
 
@@ -276,7 +427,7 @@ setup_systemd() {
 # Function: Setup Sway keybinding
 setup_sway() {
     echo "======================================================================"
-    echo "6️⃣ Setting Up Sway Keybinding"
+    echo "9️⃣ Setting Up Sway Keybinding"
     echo "======================================================================"
     echo ""
 
@@ -317,7 +468,7 @@ setup_sway() {
 # Function: Test installation
 test_installation() {
     echo "======================================================================"
-    echo "7️⃣ Testing Installation"
+    echo "🔟 Testing Installation"
     echo "======================================================================"
     echo ""
 
@@ -345,6 +496,10 @@ from nemo.collections.asr.models import EncDecMultiTaskModel
     echo -n "  CUDA... "
     python3 -c "import torch; assert torch.cuda.is_available()" 2>/dev/null && echo -e "${GREEN}✓${NC}" || echo -e "${YELLOW}⚠ (CPU only)${NC}"
 
+    # Test transformer
+    echo -n "  Text transformer... "
+    python3 -c "import midstreamer_transform; count, msg = midstreamer_transform.get_stats(); assert count > 0" 2>/dev/null && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
+
     # Test daemon startup (if not already running)
     echo -n "  Daemon connection... "
     python3 "$INSTALL_DIR/src/swictation_cli.py" status >/dev/null 2>&1 && echo -e "${GREEN}✓${NC}" || echo -e "${YELLOW}⚠ (not running)${NC}"
@@ -355,6 +510,9 @@ from nemo.collections.asr.models import EncDecMultiTaskModel
 # Main installation flow
 main() {
     install_system_deps
+    init_submodule
+    install_rust
+    build_transformer
     install_python_deps
     download_model
     create_config
