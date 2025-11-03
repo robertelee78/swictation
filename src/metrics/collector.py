@@ -504,15 +504,17 @@ class MetricsCollector:
         # Calculate 7-day trends
         recent_sessions = self.db.get_sessions_last_n_days(days=7)
         if len(recent_sessions) >= 2:
-            timestamps = [s['start_time'] for s in recent_sessions]
-            wpms = [s['wpm'] for s in recent_sessions if s['wpm']]
-            latencies = [s['avg_latency_ms'] for s in recent_sessions if s['avg_latency_ms']]
-
-            if len(wpms) >= 2:
+            # Filter sessions WITH wpm for trend calculation
+            sessions_with_wpm = [(s['start_time'], s['wpm']) for s in recent_sessions if s['wpm']]
+            if len(sessions_with_wpm) >= 2:
+                timestamps, wpms = zip(*sessions_with_wpm)
                 wpm_slope, _ = np.polyfit(timestamps, wpms, 1)
                 lifetime['wpm_trend_7day'] = wpm_slope * (7 * 24 * 60 * 60)  # Convert to per-week
 
-            if len(latencies) >= 2:
+            # Filter sessions WITH latency for trend calculation
+            sessions_with_latency = [(s['start_time'], s['avg_latency_ms']) for s in recent_sessions if s['avg_latency_ms']]
+            if len(sessions_with_latency) >= 2:
+                timestamps, latencies = zip(*sessions_with_latency)
                 latency_slope, _ = np.polyfit(timestamps, latencies, 1)
                 lifetime['latency_trend_7day'] = latency_slope * (7 * 24 * 60 * 60)
 
