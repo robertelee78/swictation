@@ -303,11 +303,11 @@ class MetricsCollector:
                 self.realtime.last_transcription = transcription
 
             # Print real-time feedback
-            self._print_segment_feedback(segment)
+            self._print_segment_feedback(segment, gpu_memory_mb)
 
             return segment
 
-    def _print_segment_feedback(self, segment: SegmentMetrics):
+    def _print_segment_feedback(self, segment: SegmentMetrics, gpu_memory_mb: float = 0.0):
         """Print real-time segment feedback to stderr."""
         segment_num = self.current_session.segments_processed
         wpm = segment.calculate_wpm()

@@ -102,6 +102,7 @@ class MetricsBroadcaster:
             latency_ms: Total latency in milliseconds
             words: Word count
         """
+        print(f"[MetricsBroadcaster] add_transcription called: {text[:50]}...", flush=True)
         timestamp = datetime.now().strftime('%H:%M:%S')
 
         segment = {
@@ -117,6 +118,7 @@ class MetricsBroadcaster:
 
         # Broadcast to all clients
         self.broadcast('transcription', segment)
+        print(f"[MetricsBroadcaster] Broadcasted transcription to {len(self.clients)} clients", flush=True)
 
     def update_metrics(self, realtime):
         """
@@ -125,7 +127,8 @@ class MetricsBroadcaster:
         Args:
             realtime: RealtimeMetrics object
         """
-        self.broadcast('metrics_update', {
+        print(f"[MetricsBroadcaster] update_metrics called", flush=True)
+        data = {
             'state': realtime.current_state.value if hasattr(realtime.current_state, 'value') else str(realtime.current_state),
             'session_id': realtime.current_session_id,
             'segments': realtime.segments_this_session,
@@ -136,7 +139,9 @@ class MetricsBroadcaster:
             'gpu_memory_mb': realtime.gpu_memory_current_mb,
             'gpu_memory_percent': realtime.gpu_memory_percent,
             'cpu_percent': realtime.cpu_percent_current
-        })
+        }
+        print(f"[MetricsBroadcaster] GPU: {data['gpu_memory_mb']:.1f}MB, CPU: {data['cpu_percent']:.1f}%", flush=True)
+        self.broadcast('metrics_update', data)
 
     def broadcast_state_change(self, state: str):
         """

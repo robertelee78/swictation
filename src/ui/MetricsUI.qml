@@ -577,9 +577,9 @@ Window {
 
                                     Text {
                                         text: model.text
-                                        color: "#a9b1d6"
+                                        color: "#c0caf5"  // Brighter text color for better readability
                                         font.family: "Monospace"
-                                        font.pixelSize: 13
+                                        font.pixelSize: 14  // Slightly larger
                                         wrapMode: Text.WordWrap
                                         Layout.fillWidth: true
                                     }

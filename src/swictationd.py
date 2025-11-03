@@ -778,12 +778,24 @@ class SwictationDaemon:
                         words=segment.words
                     )
 
+                    # Update GPU/CPU metrics in realtime object
+                    if self.performance_monitor:
+                        gpu_stats = self.performance_monitor.get_gpu_memory_stats()
+                        self.metrics_collector.update_gpu_metrics(
+                            gpu_stats.get('current_mb', 0.0),
+                            gpu_stats.get('total_mb', 0.0)
+                        )
+                        cpu_stats = self.performance_monitor.get_cpu_stats(window_seconds=1.0)
+                        self.metrics_collector.update_cpu_metrics(cpu_stats.get('mean', 0.0))
+
                     # Broadcast updated metrics
                     realtime = self.metrics_collector.get_realtime_metrics()
                     self.metrics_broadcaster.update_metrics(realtime)
 
                 except Exception as e:
+                    import traceback
                     print(f"⚠️  Metrics recording error: {e}", flush=True)
+                    traceback.print_exc()
 
         except Exception as e:
             print(f"  ⚠ VAD segment error: {e}", flush=True)

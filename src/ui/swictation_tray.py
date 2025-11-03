@@ -194,6 +194,7 @@ class MetricsBackend(QObject):
     def _handle_event(self, event: dict):
         """Handle incoming socket event."""
         event_type = event.get('type')
+        print(f"[MetricsBackend] Received event: {event_type}")
 
         if event_type == 'session_start':
             self.sessionCleared.emit()
