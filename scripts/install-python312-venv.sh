@@ -38,6 +38,11 @@ if ! command -v python3.12 &> /dev/null; then
         . /etc/os-release
         case $ID in
             ubuntu|debian|pop)
+                # Ubuntu 25.04+ needs deadsnakes PPA
+                echo "Adding deadsnakes PPA for Python 3.12..."
+                sudo apt update
+                sudo apt install -y software-properties-common
+                sudo add-apt-repository -y ppa:deadsnakes/ppa
                 sudo apt update
                 sudo apt install -y python3.12 python3.12-venv python3.12-dev
                 ;;

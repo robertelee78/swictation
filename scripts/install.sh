@@ -39,11 +39,22 @@ if [[ $EUID -eq 0 ]]; then
    exit 1
 fi
 
+# Detect distribution FIRST (needed for Python 3.12 installation)
+if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    DISTRO=$ID
+    DISTRO_VERSION=$VERSION_ID
+else
+    echo -e "${RED}✗ Cannot detect Linux distribution${NC}"
+    exit 1
+fi
+
 # Check Python version (CRITICAL: Python 3.13+ breaks numpy dependencies)
 PYTHON_VERSION=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
 PYTHON_MAJOR=$(python3 -c 'import sys; print(sys.version_info.major)')
 PYTHON_MINOR=$(python3 -c 'import sys; print(sys.version_info.minor)')
 
+echo -e "${BLUE}Detected: $DISTRO $DISTRO_VERSION${NC}"
 echo -e "${BLUE}Detected Python: $PYTHON_VERSION${NC}"
 
 if [[ "$PYTHON_MAJOR" -eq 3 ]] && [[ "$PYTHON_MINOR" -ge 13 ]]; then
@@ -59,6 +70,12 @@ if [[ "$PYTHON_MAJOR" -eq 3 ]] && [[ "$PYTHON_MINOR" -ge 13 ]]; then
         echo -e "${BLUE}Installing Python 3.12...${NC}"
         case $DISTRO in
             ubuntu|debian|pop)
+                # Ubuntu 25.04+ doesn't have Python 3.12 in main repos
+                # Need to use deadsnakes PPA
+                echo "Adding deadsnakes PPA for Python 3.12..."
+                sudo apt update
+                sudo apt install -y software-properties-common
+                sudo add-apt-repository -y ppa:deadsnakes/ppa
                 sudo apt update
                 sudo apt install -y python3.12 python3.12-venv python3.12-dev || {
                     echo -e "${RED}✗ Failed to install Python 3.12${NC}"
@@ -111,18 +128,6 @@ elif [[ "$PYTHON_MAJOR" -eq 3 ]] && [[ "$PYTHON_MINOR" -lt 12 ]]; then
     echo "  Recommended: Python 3.12"
     echo ""
 fi
-
-# Detect distribution
-if [ -f /etc/os-release ]; then
-    . /etc/os-release
-    DISTRO=$ID
-else
-    echo -e "${RED}✗ Cannot detect Linux distribution${NC}"
-    exit 1
-fi
-
-echo -e "${GREEN}✓ Detected distribution: $DISTRO${NC}"
-echo ""
 
 # Function: Install system dependencies
 install_system_deps() {
