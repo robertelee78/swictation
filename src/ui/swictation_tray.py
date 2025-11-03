@@ -8,7 +8,7 @@ import threading
 from pathlib import Path
 from PySide6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QGuiApplication, QClipboard, QCursor
-from PySide6.QtCore import QObject, Signal, QUrl, Slot, Property, QTimer
+from PySide6.QtCore import QObject, Signal, QUrl, Slot, Property, QTimer, QEvent, Qt
 from PySide6.QtQml import QQmlApplicationEngine
 
 # Add src to path for imports
@@ -290,6 +290,32 @@ class MetricsBackend(QObject):
         print(f"✓ Copied to clipboard: {text[:50]}...")
 
 
+class TrayEventFilter(QObject):
+    """Event filter to intercept tray icon right-clicks before Qt's buggy Wayland handler.
+
+    Based on Telegram Desktop's proven solution for reliable context menus on Wayland.
+    The key insight: catch the right-click MouseButtonPress BEFORE Qt's activation signal
+    fires, then consume the event to prevent Qt's broken Wayland positioning code.
+    """
+
+    context_menu_requested = Signal()
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self._icon_object_name = "QSystemTrayIconSys"
+
+    def eventFilter(self, obj, event):
+        """Catch right-click on tray icon and prevent Qt's default handler."""
+        if event.type() == QEvent.MouseButtonPress:
+            if obj.objectName() == self._icon_object_name:
+                mouse_event = event
+                if mouse_event.button() == Qt.RightButton:
+                    # Fire signal and consume event (prevent Qt's handler)
+                    self.context_menu_requested.emit()
+                    return True  # Event handled, don't propagate to Qt's buggy handler
+        return False  # Let other events through
+
+
 class SwictationTrayApp(QApplication):
     """Main system tray application."""
 
@@ -342,6 +368,12 @@ class SwictationTrayApp(QApplication):
         menu.addAction("Quit", self.quit)
         self.tray_icon.setContextMenu(menu)
 
+        # Install event filter to catch right-clicks reliably on Wayland
+        # This intercepts events BEFORE Qt's buggy Wayland handler processes them
+        self.event_filter = TrayEventFilter(self)
+        self.instance().installEventFilter(self.event_filter)
+        self.event_filter.context_menu_requested.connect(self.show_context_menu)
+
         # Show tray icon (always visible)
         self.tray_icon.show()
 
@@ -377,8 +409,10 @@ class SwictationTrayApp(QApplication):
             self.toggle_window()
 
         elif reason == QSystemTrayIcon.Context:
-            # Right-click: show context menu explicitly (Wayland needs this)
-            self.tray_icon.contextMenu().popup(QCursor.pos())
+            # Right-click: handled by event filter for Wayland reliability
+            # Event filter catches MouseButtonPress BEFORE this signal fires
+            # and shows the menu reliably. If we get here, it's a fallback.
+            pass
 
     @Slot()
     def toggle_recording(self):
@@ -398,6 +432,18 @@ class SwictationTrayApp(QApplication):
                 f"Failed to toggle recording: {e}",
                 QSystemTrayIcon.Warning
             )
+
+    @Slot()
+    def show_context_menu(self):
+        """Show context menu at cursor position (called by event filter).
+
+        This is triggered by the event filter when it detects a right-click,
+        ensuring the menu appears reliably on Wayland by bypassing Qt's
+        broken positioning code.
+        """
+        menu = self.tray_icon.contextMenu()
+        if menu:
+            menu.popup(QCursor.pos())
 
     @Slot()
     def toggle_window(self):
