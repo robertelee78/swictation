@@ -252,6 +252,11 @@ class SwictationTrayApp(QApplication):
         # Setup paths
         self.icon_path = Path(__file__).parent.parent.parent / "docs" / "swictation_logo.png"
 
+        # Click debounce timer (prevent single-click from interfering with double-click)
+        self.click_timer = QTimer(self)
+        self.click_timer.setSingleShot(True)
+        self.click_timer.timeout.connect(self.toggle_recording)
+
         # Create system tray icon
         self.tray_icon = QSystemTrayIcon(self)
         self.tray_icon.setIcon(self._load_icon("idle"))
@@ -267,11 +272,6 @@ class SwictationTrayApp(QApplication):
 
         # Show tray icon (always visible)
         self.tray_icon.show()
-
-        # Single-click debounce timer
-        self.click_timer = QTimer()
-        self.click_timer.setSingleShot(True)
-        self.click_timer.timeout.connect(self.on_single_click_confirmed)
 
         # Create metrics backend
         self.backend = MetricsBackend()
@@ -309,19 +309,17 @@ class SwictationTrayApp(QApplication):
 
     @Slot(int)
     def on_tray_activated(self, reason):
-        """Handle tray icon clicks with debounce."""
-        if reason == QSystemTrayIcon.DoubleClick:
-            # Double-click: cancel any pending single-click and show window
-            self.click_timer.stop()
-            self.toggle_window()
-        elif reason == QSystemTrayIcon.Trigger:
-            # Single-click: start timer (will be cancelled if double-click follows)
-            self.click_timer.start(250)  # 250ms delay
+        """Handle tray icon clicks - left=toggle, middle=UI, right=menu."""
+        if reason == QSystemTrayIcon.Trigger:
+            # Left-click: start debounce timer to toggle recording
+            interval = QApplication.doubleClickInterval()
+            self.click_timer.start(interval)
 
-    @Slot()
-    def on_single_click_confirmed(self):
-        """Execute single-click action after debounce delay."""
-        self.toggle_recording()
+        elif reason == QSystemTrayIcon.MiddleClick:
+            # Middle-click: show/hide metrics window
+            self.toggle_window()
+
+        # Right-click (Context) is handled automatically by Qt to show context menu
 
     @Slot()
     def toggle_recording(self):
@@ -344,12 +342,13 @@ class SwictationTrayApp(QApplication):
 
     @Slot()
     def toggle_window(self):
-        """Show/hide metrics window."""
+        """Show/hide metrics window with proper focus handling."""
         if self.window.isVisible():
             self.window.hide()
         else:
             self.window.show()
             self.window.raise_()
+            self.window.requestActivate()  # Request focus (important for Wayland)
 
     @Slot()
     def show_window(self):
