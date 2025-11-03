@@ -313,6 +313,9 @@ Window {
             // TAB 2: HISTORY
             // ============================================================
             Item {
+                // Store lifetime stats (must be defined BEFORE use)
+                property var lifetimeStats: ({})
+
                 ColumnLayout {
                     anchors.fill: parent
                     anchors.margins: 20
@@ -471,9 +474,6 @@ Window {
                         }
                     }
                 }
-
-                // Store lifetime stats
-                property var lifetimeStats: ({})
 
                 // Load data when tab is activated
                 Component.onCompleted: {
