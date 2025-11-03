@@ -678,40 +678,19 @@ class SwictationDaemon:
             duration = len(segment) / self.sample_rate
             print(f"  🎤 VAD segment: {duration:.2f}s", flush=True)
 
-            # Save segment to temp file
+            # Save segment to temp file (SECURITY: use NamedTemporaryFile to prevent race conditions)
             audio_save_start = time.time()
-            temp_path = Path(tempfile.mktemp(suffix='.wav'))
-            sf.write(temp_path, segment, self.sample_rate)
+            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp:
+                temp_path = Path(tmp.name)
+                sf.write(temp_path, segment, self.sample_rate)
             audio_save_ms = (time.time() - audio_save_start) * 1000
 
-            # Transcribe with CUDA error recovery
-            stt_start = time.time()
+            # Ensure temp file cleanup even if transcription fails
             try:
-                # Transcribe with FULL segment context (not chunks!)
-                hypothesis = self.stt_model.transcribe(
-                    [str(temp_path)],
-                    batch_size=1,
-                    source_lang='en',
-                    target_lang='en',
-                    pnc='no'  # Disable auto-punctuation - let transformer handle it
-                )[0]
-
-                # Reset error count on success
-                if self.memory_manager:
-                    self.memory_manager.reset_error_count()
-
-            except RuntimeError as e:
-                # Handle CUDA errors
-                if "CUDA" in str(e) or "out of memory" in str(e).lower():
-                    print(f"  ⚠️  CUDA error during transcription: {e}", flush=True)
-
-                    # Try recovery with memory manager
-                    if self.memory_manager and not self.memory_manager.handle_cuda_error(e):
-                        # Fallback to CPU
-                        print(f"  → Falling back to CPU transcription", flush=True)
-                        self.stt_model = self.stt_model.cpu()
-
-                    # Retry transcription (will use CPU if offloaded)
+                # Transcribe with CUDA error recovery
+                stt_start = time.time()
+                try:
+                    # Transcribe with FULL segment context (not chunks!)
                     hypothesis = self.stt_model.transcribe(
                         [str(temp_path)],
                         batch_size=1,
@@ -719,12 +698,38 @@ class SwictationDaemon:
                         target_lang='en',
                         pnc='no'  # Disable auto-punctuation - let transformer handle it
                     )[0]
-                else:
-                    raise
 
-            stt_latency_ms = (time.time() - stt_start) * 1000
-            text = hypothesis.text if hasattr(hypothesis, 'text') else str(hypothesis)
-            temp_path.unlink(missing_ok=True)
+                    # Reset error count on success
+                    if self.memory_manager:
+                        self.memory_manager.reset_error_count()
+
+                except RuntimeError as e:
+                    # Handle CUDA errors
+                    if "CUDA" in str(e) or "out of memory" in str(e).lower():
+                        print(f"  ⚠️  CUDA error during transcription: {e}", flush=True)
+
+                        # Try recovery with memory manager
+                        if self.memory_manager and not self.memory_manager.handle_cuda_error(e):
+                            # Fallback to CPU
+                            print(f"  → Falling back to CPU transcription", flush=True)
+                            self.stt_model = self.stt_model.cpu()
+
+                        # Retry transcription (will use CPU if offloaded)
+                        hypothesis = self.stt_model.transcribe(
+                            [str(temp_path)],
+                            batch_size=1,
+                            source_lang='en',
+                            target_lang='en',
+                            pnc='no'  # Disable auto-punctuation - let transformer handle it
+                        )[0]
+                    else:
+                        raise
+
+                stt_latency_ms = (time.time() - stt_start) * 1000
+                text = hypothesis.text if hasattr(hypothesis, 'text') else str(hypothesis)
+            finally:
+                # SECURITY: Ensure temp file cleanup even on failure
+                temp_path.unlink(missing_ok=True)
 
             # Transform voice commands to symbols (already tracked in _safe_transform)
             transform_start = time.perf_counter()
@@ -1220,8 +1225,8 @@ class SwictationDaemon:
             self.server_socket.bind(self.socket_path)
             self.server_socket.listen(5)
 
-            # Make socket accessible
-            os.chmod(self.socket_path, 0o666)
+            # SECURITY: Owner-only access prevents unauthorized local user connections
+            os.chmod(self.socket_path, 0o600)
 
             print(f"✓ IPC socket listening on {self.socket_path}")
 

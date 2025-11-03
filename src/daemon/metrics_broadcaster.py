@@ -56,7 +56,8 @@ class MetricsBroadcaster:
         self.server_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.server_socket.bind(self.socket_path)
         self.server_socket.listen(5)
-        os.chmod(self.socket_path, 0o666)
+        # SECURITY: Owner-only access prevents unauthorized local user connections
+        os.chmod(self.socket_path, 0o600)
 
         self.running = True
         self.accept_thread = threading.Thread(target=self._accept_clients, daemon=True)
