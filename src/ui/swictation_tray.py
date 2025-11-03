@@ -7,7 +7,7 @@ import json
 import threading
 from pathlib import Path
 from PySide6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
-from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor
+from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QGuiApplication, QClipboard
 from PySide6.QtCore import QObject, Signal, QUrl, Slot, Property, QTimer
 from PySide6.QtQml import QQmlApplicationEngine
 
@@ -246,9 +246,9 @@ class MetricsBackend(QObject):
     @Slot(str)
     def copyToClipboard(self, text):
         """Copy text to system clipboard."""
-        from PySide6.QtGui import QGuiApplication
         clipboard = QGuiApplication.clipboard()
         clipboard.setText(text)
+        print(f"✓ Copied to clipboard: {text[:50]}...")
 
 
 class SwictationTrayApp(QApplication):
