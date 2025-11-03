@@ -371,7 +371,10 @@ Window {
                         id: historyList
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        model: ListModel { id: historyListModel }
+                        model: ListModel {
+                            id: historyListModel
+                            dynamicRoles: true  // Suppress undefined field warnings
+                        }
                         spacing: 10
                         clip: true
 
@@ -450,32 +453,32 @@ Window {
                                 RowLayout {
                                     spacing: 10
                                     Text { text: "Total Words:"; color: "#565f89"; font.pixelSize: 13; Layout.minimumWidth: 140 }
-                                    Text { text: lifetimeStats.total_words || 0; color: "#a9b1d6"; font.bold: true; font.pixelSize: 13 }
+                                    Text { text: (typeof lifetimeStats !== 'undefined' ? lifetimeStats.total_words : 0) || 0; color: "#a9b1d6"; font.bold: true; font.pixelSize: 13 }
                                 }
                                 RowLayout {
                                     spacing: 10
                                     Text { text: "Total Sessions:"; color: "#565f89"; font.pixelSize: 13; Layout.minimumWidth: 140 }
-                                    Text { text: lifetimeStats.total_sessions || 0; color: "#a9b1d6"; font.bold: true; font.pixelSize: 13 }
+                                    Text { text: (typeof lifetimeStats !== 'undefined' ? lifetimeStats.total_sessions : 0) || 0; color: "#a9b1d6"; font.bold: true; font.pixelSize: 13 }
                                 }
                                 RowLayout {
                                     spacing: 10
                                     Text { text: "Avg WPM:"; color: "#565f89"; font.pixelSize: 13; Layout.minimumWidth: 140 }
-                                    Text { text: Math.round(lifetimeStats.avg_wpm || 0); color: "#a9b1d6"; font.bold: true; font.pixelSize: 13 }
+                                    Text { text: Math.round((typeof lifetimeStats !== 'undefined' ? lifetimeStats.avg_wpm : 0) || 0); color: "#a9b1d6"; font.bold: true; font.pixelSize: 13 }
                                 }
                                 RowLayout {
                                     spacing: 10
                                     Text { text: "Time Saved:"; color: "#565f89"; font.pixelSize: 13; Layout.minimumWidth: 140 }
-                                    Text { text: ((lifetimeStats.time_saved_minutes || 0) / 60).toFixed(1) + "h"; color: "#a9b1d6"; font.bold: true; font.pixelSize: 13 }
+                                    Text { text: (((typeof lifetimeStats !== 'undefined' ? lifetimeStats.time_saved_minutes : 0) || 0) / 60).toFixed(1) + "h"; color: "#a9b1d6"; font.bold: true; font.pixelSize: 13 }
                                 }
                                 RowLayout {
                                     spacing: 10
                                     Text { text: "Best WPM:"; color: "#565f89"; font.pixelSize: 13; Layout.minimumWidth: 140 }
-                                    Text { text: Math.round(lifetimeStats.best_wpm_value || 0); color: "#a9b1d6"; font.bold: true; font.pixelSize: 13 }
+                                    Text { text: Math.round((typeof lifetimeStats !== 'undefined' ? lifetimeStats.best_wpm_value : 0) || 0); color: "#a9b1d6"; font.bold: true; font.pixelSize: 13 }
                                 }
                                 RowLayout {
                                     spacing: 10
                                     Text { text: "Lowest Latency:"; color: "#565f89"; font.pixelSize: 13; Layout.minimumWidth: 140 }
-                                    Text { text: (lifetimeStats.lowest_latency_ms || 0).toFixed(0) + "ms"; color: "#a9b1d6"; font.bold: true; font.pixelSize: 13 }
+                                    Text { text: ((typeof lifetimeStats !== 'undefined' ? lifetimeStats.lowest_latency_ms : 0) || 0).toFixed(0) + "ms"; color: "#a9b1d6"; font.bold: true; font.pixelSize: 13 }
                                 }
                             }
                         }
