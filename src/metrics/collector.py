@@ -292,6 +292,7 @@ class MetricsCollector:
             # Update realtime metrics
             self.realtime.segments_this_session = self.current_session.segments_processed
             self.realtime.words_this_session = self.current_session.words_dictated
+            self.realtime.recording_duration_s = time.time() - self.session_start_time
             if self.active_time_accumulator > 0:
                 self.realtime.wpm_this_session = (
                     self.current_session.words_dictated / self.active_time_accumulator
