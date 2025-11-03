@@ -522,17 +522,20 @@ Window {
                             color: "#565f89"
                         }
 
-                        ListView {
-                            id: transcriptionList
+                        ScrollView {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
-                            model: ListModel { id: transcriptionModel }
-                            spacing: 10
                             clip: true
 
-                            delegate: Rectangle {
+                            ListView {
+                                id: transcriptionList
+                                width: parent.width
+                                model: ListModel { id: transcriptionModel }
+                                spacing: 10
+
+                                delegate: Rectangle {
                                 width: ListView.view.width
-                                height: contentColumn.height + 20
+                                height: contentColumn.implicitHeight + 20
                                 color: "#1a1b26"
                                 radius: 4
                                 border.color: "#7aa2f7"
@@ -540,7 +543,9 @@ Window {
 
                                 ColumnLayout {
                                     id: contentColumn
-                                    anchors.fill: parent
+                                    width: parent.width - 20
+                                    anchors.left: parent.left
+                                    anchors.top: parent.top
                                     anchors.margins: 10
                                     spacing: 5
 
@@ -586,9 +591,10 @@ Window {
                                 }
                             }
 
-                            // Auto-scroll to bottom when new items added
-                            onCountChanged: {
-                                positionViewAtEnd()
+                                // Auto-scroll to bottom when new items added
+                                onCountChanged: {
+                                    positionViewAtEnd()
+                                }
                             }
                         }
 
