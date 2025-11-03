@@ -242,17 +242,12 @@ class MetricsBackend(QObject):
     def loadLifetimeStats(self):
         """Load lifetime statistics from database."""
         stats = self.db.get_lifetime_stats()
-        print(f"[DEBUG] loadLifetimeStats called", flush=True)
-        print(f"[DEBUG] Raw stats from DB: {stats}", flush=True)
-        print(f"[DEBUG] Stats type: {type(stats)}", flush=True)
 
         if stats:
             result = dict(stats)
-            print(f"[DEBUG] Returning dict: {result}", flush=True)
             self.lifetimeStatsLoaded.emit(result)
             return result
         else:
-            print(f"[DEBUG] No stats, returning defaults", flush=True)
             defaults = {
                 'total_words': 0,
                 'total_sessions': 0,

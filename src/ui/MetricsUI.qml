@@ -329,8 +329,7 @@ Window {
                 Connections {
                     target: backend
                     function onLifetimeStatsLoaded(stats) {
-                        console.log("[QML] lifetimeStatsLoaded signal received:", JSON.stringify(stats))
-                        historyTab.lifetimeStats = stats  // Use explicit parent reference
+                        historyTab.lifetimeStats = stats
                     }
                 }
 
@@ -358,10 +357,7 @@ Window {
                                 for (let i = 0; i < sessions.length; i++) {
                                     historyListModel.append(sessions[i])
                                 }
-                                let stats = backend.loadLifetimeStats()
-                                console.log("[QML] Refresh clicked - loaded stats:", JSON.stringify(stats))
-                                lifetimeStats = stats
-                                console.log("[QML] Refresh clicked - lifetimeStats now:", JSON.stringify(lifetimeStats))
+                                historyTab.lifetimeStats = backend.loadLifetimeStats()
                             }
 
                             contentItem: Text {
@@ -458,14 +454,6 @@ Window {
                                 font.bold: true
                             }
 
-                            // DEBUG: Show raw lifetimeStats
-                            Text {
-                                text: "DEBUG: " + JSON.stringify(historyTab.lifetimeStats)
-                                color: "#ff0000"
-                                font.pixelSize: 10
-                                Layout.columnSpan: 2
-                            }
-
                             GridLayout {
                                 Layout.fillWidth: true
                                 columns: 2
@@ -544,10 +532,7 @@ Window {
                     for (let i = 0; i < sessions.length; i++) {
                         historyListModel.append(sessions[i])
                     }
-                    let stats = backend.loadLifetimeStats()
-                    console.log("[QML] Component.onCompleted - loaded stats:", JSON.stringify(stats))
-                    lifetimeStats = stats
-                    console.log("[QML] Component.onCompleted - lifetimeStats now:", JSON.stringify(lifetimeStats))
+                    historyTab.lifetimeStats = backend.loadLifetimeStats()
                 }
             }
 
