@@ -443,7 +443,7 @@ download_model() {
     echo "This will download ~1.1 GB model..."
     echo ""
 
-    python3 -c "
+    $PYTHON_CMD -c "
 from nemo.collections.asr.models import EncDecMultiTaskModel
 import torch
 
