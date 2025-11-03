@@ -8,7 +8,7 @@ import threading
 from pathlib import Path
 from PySide6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor
-from PySide6.QtCore import QObject, Signal, QUrl, Slot, Property
+from PySide6.QtCore import QObject, Signal, QUrl, Slot, Property, QTimer
 from PySide6.QtQml import QQmlApplicationEngine
 
 # Add src to path for imports
@@ -268,6 +268,11 @@ class SwictationTrayApp(QApplication):
         # Show tray icon (always visible)
         self.tray_icon.show()
 
+        # Single-click debounce timer
+        self.click_timer = QTimer()
+        self.click_timer.setSingleShot(True)
+        self.click_timer.timeout.connect(self.on_single_click_confirmed)
+
         # Create metrics backend
         self.backend = MetricsBackend()
         self.backend.stateChanged.connect(self.on_state_changed)
@@ -304,12 +309,19 @@ class SwictationTrayApp(QApplication):
 
     @Slot(int)
     def on_tray_activated(self, reason):
-        """Handle tray icon clicks."""
-        # Double-click has priority over single-click
-        if reason == QSystemTrayIcon.DoubleClick:  # Double click
+        """Handle tray icon clicks with debounce."""
+        if reason == QSystemTrayIcon.DoubleClick:
+            # Double-click: cancel any pending single-click and show window
+            self.click_timer.stop()
             self.toggle_window()
-        elif reason == QSystemTrayIcon.Trigger:  # Single click
-            self.toggle_recording()
+        elif reason == QSystemTrayIcon.Trigger:
+            # Single-click: start timer (will be cancelled if double-click follows)
+            self.click_timer.start(250)  # 250ms delay
+
+    @Slot()
+    def on_single_click_confirmed(self):
+        """Execute single-click action after debounce delay."""
+        self.toggle_recording()
 
     @Slot()
     def toggle_recording(self):
