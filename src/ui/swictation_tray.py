@@ -7,7 +7,7 @@ import json
 import threading
 from pathlib import Path
 from PySide6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
-from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QGuiApplication, QClipboard
+from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QGuiApplication, QClipboard, QCursor
 from PySide6.QtCore import QObject, Signal, QUrl, Slot, Property, QTimer
 from PySide6.QtQml import QQmlApplicationEngine
 
@@ -241,7 +241,15 @@ class MetricsBackend(QObject):
     def loadLifetimeStats(self):
         """Load lifetime statistics from database."""
         stats = self.db.get_lifetime_stats()
-        return dict(stats)
+        print(f"[DEBUG] loadLifetimeStats: {stats}")
+        return dict(stats) if stats else {
+            'total_words': 0,
+            'total_sessions': 0,
+            'avg_wpm': 0,
+            'time_saved_minutes': 0,
+            'best_wpm_value': 0,
+            'lowest_latency_ms': 0
+        }
 
     @Slot(str)
     def copyToClipboard(self, text):
@@ -329,7 +337,9 @@ class SwictationTrayApp(QApplication):
             # Middle-click: show/hide metrics window
             self.toggle_window()
 
-        # Right-click (Context) is handled automatically by Qt to show context menu
+        elif reason == QSystemTrayIcon.Context:
+            # Right-click: show context menu explicitly (Wayland needs this)
+            self.tray_icon.contextMenu().popup(QCursor.pos())
 
     @Slot()
     def toggle_recording(self):
