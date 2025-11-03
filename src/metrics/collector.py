@@ -99,6 +99,7 @@ class MetricsCollector:
             self.current_session.session_id = session_id
 
             # Update realtime metrics
+            self.realtime.current_state = DaemonState.RECORDING
             self.realtime.current_session_id = session_id
             self.realtime.segments_this_session = 0
             self.realtime.words_this_session = 0
@@ -179,6 +180,14 @@ class MetricsCollector:
             print(f"   ├─ Speed: {self.current_session.words_per_minute:.0f} wpm ({self.current_session.words_per_minute/self.typing_baseline_wpm:.1f}x faster than typing)", flush=True)
             print(f"   ├─ Latency: {self.current_session.average_latency_ms:.0f}ms avg ({self.current_session.median_latency_ms:.0f}-{self.current_session.p95_latency_ms:.0f}ms range)", flush=True)
             print(f"   └─ Status: ✓ Saved to database\n", flush=True)
+
+            # Reset realtime state to IDLE
+            self.realtime.current_state = DaemonState.IDLE
+            self.realtime.current_session_id = None
+            self.realtime.segments_this_session = 0
+            self.realtime.words_this_session = 0
+            self.realtime.wpm_this_session = 0.0
+            self.realtime.recording_duration_s = 0.0
 
             session = self.current_session
             self.current_session = None

@@ -785,8 +785,9 @@ class SwictationDaemon:
                             gpu_stats.get('current_mb', 0.0),
                             gpu_stats.get('total_mb', 0.0)
                         )
-                        cpu_stats = self.performance_monitor.get_cpu_stats(window_seconds=1.0)
-                        self.metrics_collector.update_cpu_metrics(cpu_stats.get('mean', 0.0))
+                        # Capture current metrics to get real-time CPU
+                        current_metrics = self.performance_monitor.capture_metrics()
+                        self.metrics_collector.update_cpu_metrics(current_metrics.cpu_percent)
 
                     # Broadcast updated metrics
                     realtime = self.metrics_collector.get_realtime_metrics()
