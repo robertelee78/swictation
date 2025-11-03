@@ -113,28 +113,24 @@ if [[ "$PYTHON_MAJOR" -eq 3 ]] && [[ "$PYTHON_MINOR" -ge 13 ]]; then
     if ! command -v python3.12 &> /dev/null; then
         echo -e "${BLUE}Installing Python 3.12...${NC}"
 
-        # For Ubuntu/Debian, check if we can use apt or need pyenv
+        # For Ubuntu/Debian, check version
         if [[ "$DISTRO" == "ubuntu" ]] || [[ "$DISTRO" == "debian" ]] || [[ "$DISTRO" == "pop" ]]; then
-            # Try deadsnakes PPA first (works for Ubuntu 24.04 and earlier)
-            echo "Trying deadsnakes PPA..."
-            sudo apt update >/dev/null 2>&1
-            sudo apt install -y software-properties-common >/dev/null 2>&1
-
-            # Add PPA and check if it works (suppress errors)
-            PPA_SUCCESS=false
-            if sudo add-apt-repository -y ppa:deadsnakes/ppa >/dev/null 2>&1; then
-                if sudo apt update >/dev/null 2>&1; then
-                    if sudo apt install -y python3.12 python3.12-venv python3.12-dev >/dev/null 2>&1; then
-                        echo -e "${GREEN}✓ Python 3.12 installed from PPA${NC}"
-                        PPA_SUCCESS=true
-                    fi
-                fi
-            fi
-
-            # If PPA failed, use pyenv
-            if [[ "$PPA_SUCCESS" == "false" ]]; then
-                echo -e "${YELLOW}⚠ PPA not available for Ubuntu $DISTRO_VERSION, using pyenv...${NC}"
+            # Ubuntu 25.04+ doesn't have deadsnakes support, go straight to pyenv
+            if [[ "$DISTRO" == "ubuntu" ]] && [[ "${DISTRO_VERSION%%.*}" -ge 25 ]]; then
+                echo "Ubuntu $DISTRO_VERSION detected - using pyenv for Python 3.12..."
                 install_python312_pyenv
+            else
+                # Try deadsnakes PPA for older Ubuntu versions
+                echo "Trying deadsnakes PPA..."
+                if sudo apt install -y software-properties-common && \
+                   sudo add-apt-repository -y ppa:deadsnakes/ppa && \
+                   sudo apt update && \
+                   sudo apt install -y python3.12 python3.12-venv python3.12-dev; then
+                    echo -e "${GREEN}✓ Python 3.12 installed from PPA${NC}"
+                else
+                    echo -e "${YELLOW}⚠ PPA failed, using pyenv...${NC}"
+                    install_python312_pyenv
+                fi
             fi
         elif [[ "$DISTRO" == "arch" ]] || [[ "$DISTRO" == "manjaro" ]]; then
             sudo pacman -S --needed --noconfirm python312 || {
