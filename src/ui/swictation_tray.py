@@ -305,10 +305,11 @@ class SwictationTrayApp(QApplication):
     @Slot(int)
     def on_tray_activated(self, reason):
         """Handle tray icon clicks."""
-        if reason == QSystemTrayIcon.Trigger:  # Single click
-            self.toggle_recording()
-        elif reason == QSystemTrayIcon.DoubleClick:  # Double click
+        # Double-click has priority over single-click
+        if reason == QSystemTrayIcon.DoubleClick:  # Double click
             self.toggle_window()
+        elif reason == QSystemTrayIcon.Trigger:  # Single click
+            self.toggle_recording()
 
     @Slot()
     def toggle_recording(self):

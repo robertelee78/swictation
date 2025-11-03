@@ -313,8 +313,15 @@ Window {
             // TAB 2: HISTORY
             // ============================================================
             Item {
-                // Store lifetime stats (must be defined BEFORE use)
-                property var lifetimeStats: ({})
+                // Store lifetime stats (must be defined BEFORE use with default values)
+                property var lifetimeStats: ({
+                    total_words: 0,
+                    total_sessions: 0,
+                    avg_wpm: 0,
+                    time_saved_minutes: 0,
+                    best_wpm_value: 0,
+                    lowest_latency_ms: 0
+                })
 
                 ColumnLayout {
                     anchors.fill: parent
