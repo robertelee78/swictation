@@ -418,6 +418,10 @@ class SwictationDaemon:
             self.state = new_state
             print(f"State: {old_state.value} → {new_state.value}")
 
+            # Update realtime metrics state
+            if hasattr(self, 'metrics_collector') and self.metrics_collector:
+                self.metrics_collector.realtime.current_state = new_state
+
             # Broadcast state change to UI clients
             if hasattr(self, 'metrics_broadcaster'):
                 self.metrics_broadcaster.broadcast_state_change(new_state.value)
