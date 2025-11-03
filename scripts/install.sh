@@ -416,7 +416,33 @@ install_python_deps() {
     # Check if we're in a virtual environment
     if [[ -n "$VIRTUAL_ENV" ]]; then
         echo -e "${GREEN}✓ Using virtual environment: $VIRTUAL_ENV${NC}"
-        pip install -r "$INSTALL_DIR/requirements.txt" || {
+
+        # Check if CUDA is available to decide which PyTorch to install
+        echo "Checking for CUDA support..."
+        if python3 -c "import torch; exit(0 if torch.cuda.is_available() else 1)" 2>/dev/null; then
+            echo -e "${GREEN}✓ CUDA available - installing PyTorch with CUDA 12.9${NC}"
+            TORCH_INDEX="https://download.pytorch.org/whl/cu129"
+        else
+            echo -e "${YELLOW}⚠ No CUDA detected - installing CPU-only PyTorch${NC}"
+            TORCH_INDEX=""
+        fi
+
+        # Install PyTorch first (separate from requirements.txt)
+        echo ""
+        echo "Installing PyTorch..."
+        if [[ -n "$TORCH_INDEX" ]]; then
+            pip install torch==2.8.0+cu129 torchvision==0.23.0+cu129 torchaudio==2.8.0+cu129 --index-url "$TORCH_INDEX" || {
+                echo -e "${YELLOW}⚠ CUDA version failed, trying CPU version${NC}"
+                pip install torch torchvision torchaudio
+            }
+        else
+            pip install torch torchvision torchaudio
+        fi
+
+        echo ""
+        echo "Installing remaining packages..."
+        # Install rest of requirements (excluding torch lines)
+        grep -v "^torch==" "$INSTALL_DIR/requirements.txt" | grep -v "^torchaudio" | pip install -r /dev/stdin || {
             echo -e "${RED}✗ Failed to install Python packages${NC}"
             exit 1
         }
