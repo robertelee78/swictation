@@ -313,6 +313,8 @@ Window {
             // TAB 2: HISTORY
             // ============================================================
             Item {
+                id: historyTab
+
                 // Store lifetime stats (must be defined BEFORE use with default values)
                 property var lifetimeStats: ({
                     total_words: 0,
@@ -322,6 +324,15 @@ Window {
                     best_wpm_value: 0,
                     lowest_latency_ms: 0
                 })
+
+                // Connect to backend signal
+                Connections {
+                    target: backend
+                    function onLifetimeStatsLoaded(stats) {
+                        console.log("[QML] lifetimeStatsLoaded signal received:", JSON.stringify(stats))
+                        historyTab.lifetimeStats = stats  // Use explicit parent reference
+                    }
+                }
 
                 ColumnLayout {
                     anchors.fill: parent
@@ -347,7 +358,10 @@ Window {
                                 for (let i = 0; i < sessions.length; i++) {
                                     historyListModel.append(sessions[i])
                                 }
-                                lifetimeStats = backend.loadLifetimeStats()
+                                let stats = backend.loadLifetimeStats()
+                                console.log("[QML] Refresh clicked - loaded stats:", JSON.stringify(stats))
+                                lifetimeStats = stats
+                                console.log("[QML] Refresh clicked - lifetimeStats now:", JSON.stringify(lifetimeStats))
                             }
 
                             contentItem: Text {
@@ -492,7 +506,10 @@ Window {
                     for (let i = 0; i < sessions.length; i++) {
                         historyListModel.append(sessions[i])
                     }
-                    lifetimeStats = backend.loadLifetimeStats()
+                    let stats = backend.loadLifetimeStats()
+                    console.log("[QML] Component.onCompleted - loaded stats:", JSON.stringify(stats))
+                    lifetimeStats = stats
+                    console.log("[QML] Component.onCompleted - lifetimeStats now:", JSON.stringify(lifetimeStats))
                 }
             }
 

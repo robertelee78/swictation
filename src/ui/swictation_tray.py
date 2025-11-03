@@ -41,6 +41,7 @@ class MetricsBackend(QObject):
     # Session list signals
     recentSessionsChanged = Signal()
     lifetimeStatsChanged = Signal()
+    lifetimeStatsLoaded = Signal('QVariantMap')  # Emit when stats are loaded
 
     def __init__(self):
         super().__init__()
@@ -241,15 +242,27 @@ class MetricsBackend(QObject):
     def loadLifetimeStats(self):
         """Load lifetime statistics from database."""
         stats = self.db.get_lifetime_stats()
-        print(f"[DEBUG] loadLifetimeStats: {stats}")
-        return dict(stats) if stats else {
-            'total_words': 0,
-            'total_sessions': 0,
-            'avg_wpm': 0,
-            'time_saved_minutes': 0,
-            'best_wpm_value': 0,
-            'lowest_latency_ms': 0
-        }
+        print(f"[DEBUG] loadLifetimeStats called", flush=True)
+        print(f"[DEBUG] Raw stats from DB: {stats}", flush=True)
+        print(f"[DEBUG] Stats type: {type(stats)}", flush=True)
+
+        if stats:
+            result = dict(stats)
+            print(f"[DEBUG] Returning dict: {result}", flush=True)
+            self.lifetimeStatsLoaded.emit(result)
+            return result
+        else:
+            print(f"[DEBUG] No stats, returning defaults", flush=True)
+            defaults = {
+                'total_words': 0,
+                'total_sessions': 0,
+                'avg_wpm': 0,
+                'time_saved_minutes': 0,
+                'best_wpm_value': 0,
+                'lowest_latency_ms': 0
+            }
+            self.lifetimeStatsLoaded.emit(defaults)
+            return defaults
 
     @Slot(str)
     def copyToClipboard(self, text):
