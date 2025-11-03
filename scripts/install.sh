@@ -417,13 +417,13 @@ install_python_deps() {
     if [[ -n "$VIRTUAL_ENV" ]]; then
         echo -e "${GREEN}✓ Using virtual environment: $VIRTUAL_ENV${NC}"
 
-        # Check if CUDA is available to decide which PyTorch to install
-        echo "Checking for CUDA support..."
-        if python3 -c "import torch; exit(0 if torch.cuda.is_available() else 1)" 2>/dev/null; then
-            echo -e "${GREEN}✓ CUDA available - installing PyTorch with CUDA 12.9${NC}"
+        # Check if NVIDIA GPU is available to decide which PyTorch to install
+        echo "Checking for NVIDIA GPU..."
+        if command -v nvidia-smi &> /dev/null && nvidia-smi &> /dev/null; then
+            echo -e "${GREEN}✓ NVIDIA GPU detected - installing PyTorch with CUDA 12.9${NC}"
             TORCH_INDEX="https://download.pytorch.org/whl/cu129"
         else
-            echo -e "${YELLOW}⚠ No CUDA detected - installing CPU-only PyTorch${NC}"
+            echo -e "${YELLOW}⚠ No NVIDIA GPU detected - installing CPU-only PyTorch${NC}"
             TORCH_INDEX=""
         fi
 
