@@ -3,6 +3,7 @@ Description=Swictation voice dictation daemon
 Documentation=https://github.com/yourusername/swictation
 After=graphical-session.target
 PartOf=graphical-session.target
+Wants=swictation-tray.service
 
 [Service]
 Type=simple
@@ -31,3 +32,5 @@ NoNewPrivileges=true
 WantedBy=sway-session.target
 # Fallback to default.target if sway-session.target doesn't exist
 Also=default.target
+# Ensure tray service is also enabled/started
+Also=swictation-tray.service

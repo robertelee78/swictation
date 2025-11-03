@@ -52,6 +52,62 @@ systemctl --user daemon-reload
 echo "✅ Enabling swictation.service for auto-start..."
 systemctl --user enable swictation.service
 
+echo ""
+echo "=========================================="
+echo "Installing Tray UI Service"
+echo "=========================================="
+
+# Check PySide6 dependency
+if ! python3 -c "import PySide6" 2>/dev/null; then
+    echo "📦 Installing PySide6 (Qt6 Python bindings)..."
+    pip install --user PySide6
+    if [ $? -eq 0 ]; then
+        echo "✅ PySide6 installed successfully"
+    else
+        echo "❌ Failed to install PySide6. Tray UI will not work."
+        echo "   Try manually: pip install --user PySide6"
+        exit 1
+    fi
+else
+    echo "✅ PySide6 already installed"
+fi
+
+# Install tray service
+TRAY_SERVICE_FILE="$PROJECT_DIR/config/swictation-tray.service"
+INSTALLED_TRAY_SERVICE="$USER_SERVICE_DIR/swictation-tray.service"
+
+if [ -f "$TRAY_SERVICE_FILE" ]; then
+    # Stop existing tray service if running
+    if systemctl --user is-active --quiet swictation-tray.service 2>/dev/null; then
+        echo "⏹️  Stopping existing swictation-tray.service..."
+        systemctl --user stop swictation-tray.service
+    fi
+
+    # Backup existing
+    if [ -f "$INSTALLED_TRAY_SERVICE" ]; then
+        BACKUP_FILE="$INSTALLED_TRAY_SERVICE.backup.$(date +%Y%m%d-%H%M%S)"
+        echo "💾 Backing up existing tray service to: $BACKUP_FILE"
+        cp "$INSTALLED_TRAY_SERVICE" "$BACKUP_FILE"
+    fi
+
+    echo "📋 Installing tray service file..."
+    cp "$TRAY_SERVICE_FILE" "$INSTALLED_TRAY_SERVICE"
+
+    # Reload daemon
+    echo "🔄 Reloading systemd daemon..."
+    systemctl --user daemon-reload
+
+    echo "✅ Enabling swictation-tray.service..."
+    systemctl --user enable swictation-tray.service
+
+    echo "✓ Tray service will start automatically with daemon"
+else
+    echo "⚠️  Tray service file not found: $TRAY_SERVICE_FILE"
+    echo "   Skipping tray service installation"
+fi
+
+echo ""
+
 # Create default configuration
 echo ""
 echo "⚙️  Creating default configuration..."
@@ -100,11 +156,23 @@ echo "Installation Complete!"
 echo "=========================================="
 echo ""
 echo "📝 Useful commands:"
-echo "   Start:   systemctl --user start swictation.service"
-echo "   Stop:    systemctl --user stop swictation.service"
-echo "   Status:  systemctl --user status swictation.service"
-echo "   Logs:    journalctl --user -u swictation.service -f"
-echo "   Disable: systemctl --user disable swictation.service"
+echo "   Daemon:"
+echo "     Start:   systemctl --user start swictation.service"
+echo "     Stop:    systemctl --user stop swictation.service"
+echo "     Status:  systemctl --user status swictation.service"
+echo "     Logs:    journalctl --user -u swictation.service -f"
+echo ""
+echo "   Tray UI:"
+echo "     Status:  systemctl --user status swictation-tray.service"
+echo "     Logs:    journalctl --user -u swictation-tray.service -f"
+echo "     Restart: systemctl --user restart swictation-tray.service"
+echo ""
+echo "   🔗 Both services are linked - stopping daemon stops tray automatically"
+echo ""
+echo "   💡 Tray UI features:"
+echo "      - Left-click: Toggle recording"
+echo "      - Middle-click: Show/hide metrics window"
+echo "      - Right-click: Context menu"
 echo ""
 echo "⚙️  Configuration:"
 echo "   Edit:    ~/.config/swictation/config.toml"

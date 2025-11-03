@@ -1,0 +1,25 @@
+[Unit]
+Description=Swictation system tray UI
+Documentation=https://github.com/yourusername/swictation
+After=swictation.service
+Requires=swictation.service
+BindsTo=swictation.service
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/env python3 /opt/swictation/src/ui/swictation_tray.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Environment (systemd user already has WAYLAND_DISPLAY and DISPLAY)
+Environment="PYTHONUNBUFFERED=1"
+Environment="PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin"
+
+# Security (ProtectHome=read-only allows /opt access - verified)
+ProtectHome=read-only
+
+[Install]
+WantedBy=default.target
