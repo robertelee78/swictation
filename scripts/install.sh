@@ -524,16 +524,44 @@ except:
             DRIVER_MAJOR="${DRIVER_VERSION%%.*}"
             COMPUTE_MAJOR="${COMPUTE_CAP%%.*}"
 
-            # CUDA 13.0 requires compute capability 6.0+ (Pascal or newer)
-            # CUDA 12.x requires compute capability 5.0+ (Maxwell or newer)
-            # Older cards need CUDA 11.8
+            # GPU Architecture Reference:
+            # - Compute 9.0: Blackwell (RTX 50-series)
+            # - Compute 8.x: Ampere/Ada/Hopper (RTX 30/40-series, A/H-series)
+            # - Compute 7.x: Turing/Volta (RTX 20-series, GTX 16-series)
+            # - Compute 6.x: Pascal (GTX 10-series, P-series)
+            # - Compute 5.x: Maxwell (GTX 9/7-series, M-series) - LAST GENERATION WE SUPPORT
+            # - Compute 3.x/4.x: Kepler and older - NOT RECOMMENDED
 
-            if [[ "$DRIVER_MAJOR" -ge 555 ]] && [[ "$COMPUTE_MAJOR" -ge 6 ]] 2>/dev/null; then
-                # Modern GPU + modern driver = CUDA 13.0
+            # Check for unsupported GPUs first
+            if [[ "$COMPUTE_MAJOR" -lt 5 ]] 2>/dev/null && [[ "$COMPUTE_MAJOR" != "0" ]]; then
+                echo -e "${RED}✗ GPU compute capability ${COMPUTE_CAP} is too old${NC}"
+                echo "  PyTorch requires compute capability 5.0+ (Maxwell or newer)"
+                echo "  Your GPU: ${GPU_NAME}"
+                echo ""
+                echo "  Consider upgrading to a newer GPU for PyTorch support"
+                echo "  Minimum: GTX 750 Ti (Maxwell, 5.0) or newer"
+                echo ""
+                read -p "Continue anyway? (y/N): " -n 1 -r
+                echo
+                if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                    exit 1
+                fi
+                # If they continue, fall through to legacy CUDA
+            fi
+
+            # Recommend CUDA version based on compute capability AND driver
+            if [[ "$COMPUTE_MAJOR" == "5" ]] 2>/dev/null; then
+                # Maxwell (5.x) - use CUDA 12.8 (last version with good Maxwell support)
+                echo -e "${YELLOW}⚠ Maxwell GPU detected (compute ${COMPUTE_CAP})${NC}"
+                echo "  Recommending CUDA 12.8 for best Maxwell compatibility"
+                RECOMMENDED_CUDA="12.8 (Maxwell-optimized)"
+                TORCH_INSTALL_CMD="$PYTHON_CMD -m pip install --break-system-packages torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128"
+            elif [[ "$DRIVER_MAJOR" -ge 555 ]] && [[ "$COMPUTE_MAJOR" -ge 6 ]] 2>/dev/null; then
+                # Modern GPU (Pascal+) + modern driver = CUDA 13.0
                 RECOMMENDED_CUDA="13.0 (latest)"
                 TORCH_INSTALL_CMD="$PYTHON_CMD -m pip install --break-system-packages torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130"
             elif [[ "$DRIVER_MAJOR" -ge 520 ]]; then
-                # CUDA 12.9 works for most GPUs with driver 520+
+                # CUDA 12.9 works for most modern GPUs with driver 520+
                 RECOMMENDED_CUDA="12.9 (stable)"
                 TORCH_INSTALL_CMD="$PYTHON_CMD -m pip install --break-system-packages torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu129"
             else
@@ -542,23 +570,19 @@ except:
                 TORCH_INSTALL_CMD="$PYTHON_CMD -m pip install --break-system-packages torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118"
             fi
 
-            # Add warning for very old GPUs
-            if [[ "$COMPUTE_MAJOR" -lt 5 ]] 2>/dev/null; then
-                echo -e "${YELLOW}⚠ GPU compute capability ${COMPUTE_CAP} is very old${NC}"
-                echo "  PyTorch may have limited support - recommend upgrading GPU"
-                echo ""
-            fi
-
             echo "Recommended: PyTorch with CUDA ${RECOMMENDED_CUDA}"
             echo ""
             echo "Installation options:"
-            echo "  1. CUDA 13.0 (latest, requires driver 555+):"
+            echo "  1. CUDA 13.0 (latest, requires compute 6.0+ and driver 555+):"
             echo "     pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130"
             echo ""
-            echo "  2. CUDA 12.9 (stable, requires driver 520+):"
+            echo "  2. CUDA 12.9 (stable, requires compute 6.0+ and driver 520+):"
             echo "     pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu129"
             echo ""
-            echo "  3. CUDA 11.8 (legacy, older GPUs/drivers):"
+            echo "  3. CUDA 12.8 (Maxwell-optimized, compute 5.x):"
+            echo "     pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128"
+            echo ""
+            echo "  4. CUDA 11.8 (legacy, older drivers):"
             echo "     pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118"
             echo ""
             echo "Visit https://pytorch.org/get-started/locally/ for more options"
