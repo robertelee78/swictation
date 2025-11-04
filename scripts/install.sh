@@ -551,11 +551,12 @@ except:
 
             # Recommend CUDA version based on compute capability AND driver
             if [[ "$COMPUTE_MAJOR" == "5" ]] 2>/dev/null; then
-                # Maxwell (5.x) - use CUDA 12.8 (last version with good Maxwell support)
+                # Maxwell (5.x) - use PyTorch 2.4.1 + CUDA 12.4 (tested working on Quadro M2200)
                 echo -e "${YELLOW}⚠ Maxwell GPU detected (compute ${COMPUTE_CAP})${NC}"
-                echo "  Recommending CUDA 12.8 for best Maxwell compatibility"
-                RECOMMENDED_CUDA="12.8 (Maxwell-optimized)"
-                TORCH_INSTALL_CMD="$PYTHON_CMD -m pip install --break-system-packages torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128"
+                echo "  Recommending PyTorch 2.4.1 + CUDA 12.4 for Maxwell compatibility"
+                echo "  (Tested working: Quadro M2200, sm_52 with NeMo 2.5.2)"
+                RECOMMENDED_CUDA="12.4 (Maxwell-compatible)"
+                TORCH_INSTALL_CMD="$PYTHON_CMD -m pip install --break-system-packages torch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1 --index-url https://download.pytorch.org/whl/cu124"
             elif [[ "$DRIVER_MAJOR" -ge 555 ]] && [[ "$COMPUTE_MAJOR" -ge 6 ]] 2>/dev/null; then
                 # Modern GPU (Pascal+) + modern driver = CUDA 13.0
                 RECOMMENDED_CUDA="13.0 (latest)"
@@ -579,8 +580,8 @@ except:
             echo "  2. CUDA 12.9 (stable, requires compute 6.0+ and driver 520+):"
             echo "     pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu129"
             echo ""
-            echo "  3. CUDA 12.8 (Maxwell-optimized, compute 5.x):"
-            echo "     pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128"
+            echo "  3. CUDA 12.4 (Maxwell-compatible, compute 5.x - RECOMMENDED FOR MAXWELL):"
+            echo "     pip3 install torch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1 --index-url https://download.pytorch.org/whl/cu124"
             echo ""
             echo "  4. CUDA 11.8 (legacy, older drivers):"
             echo "     pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118"
