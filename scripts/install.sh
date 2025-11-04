@@ -581,33 +581,15 @@ create_config() {
     mkdir -p "$CONFIG_DIR"
     echo -e "${GREEN}✓ Created $CONFIG_DIR${NC}"
 
-    # Create default config file (for future use)
+    # Copy example config if user doesn't have one
     if [ ! -f "$CONFIG_DIR/config.toml" ]; then
-        cat > "$CONFIG_DIR/config.toml" << 'EOF'
-# Swictation Configuration
-# Edit this file to customize behavior
-
-[model]
-name = "nvidia/canary-1b-flash"
-sample_rate = 16000
-
-[audio]
-buffer_duration = 30.0  # seconds
-device = "default"      # or specific device name
-
-[vad]
-enabled = true
-threshold = 0.5         # 0-1, lower = more sensitive
-chunk_duration = 10.0   # seconds
-chunk_overlap = 1.0     # seconds
-
-[injection]
-method = "wtype"        # wtype | clipboard
-
-[keybinding]
-toggle = "$mod+Shift+d"  # Uses Sway's $mod variable (Mod4=Super/Windows or Mod1=Alt)
-EOF
-        echo -e "${GREEN}✓ Created default config: $CONFIG_DIR/config.toml${NC}"
+        if [ -f "$INSTALL_DIR/config/config.example.toml" ]; then
+            cp "$INSTALL_DIR/config/config.example.toml" "$CONFIG_DIR/config.toml"
+            echo -e "${GREEN}✓ Created config from example: $CONFIG_DIR/config.toml${NC}"
+        else
+            echo -e "${RED}✗ Example config not found: $INSTALL_DIR/config/config.example.toml${NC}"
+            exit 1
+        fi
     else
         echo -e "${YELLOW}⚠ Config exists: $CONFIG_DIR/config.toml (not overwriting)${NC}"
     fi
