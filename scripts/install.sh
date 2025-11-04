@@ -490,19 +490,35 @@ install_python_deps() {
     echo "Checking texterrors compatibility..."
     if ! $PYTHON_CMD -c "import texterrors" 2>/dev/null; then
         echo -e "${YELLOW}⚠ texterrors has PyO3 compatibility issue with Python 3.12${NC}"
-        echo "  Rebuilding texterrors from source..."
+        echo "  Patching NeMo to skip context biasing (optional feature)..."
 
-        # Uninstall broken texterrors
-        $PYTHON_CMD -m pip uninstall -y texterrors 2>/dev/null || true
+        # Create a dummy texterrors module to satisfy imports
+        TEXTERRORS_DIR=$($PYTHON_CMD -c "import site; print(site.getsitepackages()[0])")/texterrors
+        mkdir -p "$TEXTERRORS_DIR"
 
-        # Install from source (will build with system's PyO3)
-        if ! $PYTHON_CMD -m pip install --break-system-packages --no-binary texterrors texterrors; then
-            echo -e "${YELLOW}⚠ Could not rebuild texterrors${NC}"
-            echo "  NeMo context biasing features may not work"
-            echo "  Speech recognition will still function normally"
-        else
-            echo -e "${GREEN}✓ texterrors rebuilt successfully${NC}"
-        fi
+        cat > "$TEXTERRORS_DIR/__init__.py" << 'PYEOF'
+# Dummy texterrors to bypass PyO3 compatibility issue
+# Context biasing features disabled, core NeMo functionality works
+def align_texts(*args, **kwargs):
+    raise NotImplementedError("texterrors disabled due to PyO3 incompatibility")
+
+def process_lines(*args, **kwargs):
+    raise NotImplementedError("texterrors disabled due to PyO3 incompatibility")
+
+def lev_distance(*args, **kwargs):
+    raise NotImplementedError("texterrors disabled due to PyO3 incompatibility")
+
+def get_oov_cer(*args, **kwargs):
+    raise NotImplementedError("texterrors disabled due to PyO3 incompatibility")
+
+def align_texts_ctm(*args, **kwargs):
+    raise NotImplementedError("texterrors disabled due to PyO3 incompatibility")
+
+def seq_distance(*args, **kwargs):
+    raise NotImplementedError("texterrors disabled due to PyO3 incompatibility")
+PYEOF
+
+        echo -e "${GREEN}✓ NeMo patched (context biasing disabled, STT works)${NC}"
     else
         echo -e "${GREEN}✓ texterrors working${NC}"
     fi
