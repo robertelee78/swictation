@@ -423,35 +423,195 @@ install_python_deps() {
     echo "This may take 5-10 minutes (large packages)..."
     echo ""
 
-    # Check if NVIDIA GPU is available to decide which PyTorch to install
-    echo "Checking for NVIDIA GPU..."
-    if command -v nvidia-smi &> /dev/null && nvidia-smi &> /dev/null; then
-        echo -e "${GREEN}✓ NVIDIA GPU detected - installing PyTorch with CUDA 12.9${NC}"
-        TORCH_INDEX="https://download.pytorch.org/whl/cu129"
+    # Phase 1: Test existing PyTorch installation
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "Testing PyTorch Installation"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+
+    PYTORCH_WORKING=false
+    PYTORCH_EXISTS=false
+
+    # Check if PyTorch is installed
+    if $PYTHON_CMD -c "import torch" 2>/dev/null; then
+        PYTORCH_EXISTS=true
+        TORCH_VERSION=$($PYTHON_CMD -c "import torch; print(torch.__version__)" 2>/dev/null)
+        echo -e "${GREEN}✓ PyTorch ${TORCH_VERSION} installed${NC}"
+
+        # Check if CUDA is available
+        if $PYTHON_CMD -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then
+            CUDA_VERSION=$($PYTHON_CMD -c "import torch; print(torch.version.cuda)" 2>/dev/null)
+            echo -e "${GREEN}✓ CUDA ${CUDA_VERSION} support detected${NC}"
+
+            # Phase 2: Verify with actual GPU computation
+            echo "  Testing GPU computation..."
+            if $PYTHON_CMD -c "
+import torch
+try:
+    x = torch.randn(100, 100).cuda()
+    y = x @ x.T
+    result = y.cpu().numpy()
+    print('✓ GPU computation verified')
+except Exception as e:
+    print(f'✗ GPU test failed: {e}')
+    exit(1)
+" 2>/dev/null; then
+                PYTORCH_WORKING=true
+                echo -e "${GREEN}✓ PyTorch is working correctly - skipping installation${NC}"
+                echo ""
+            else
+                echo -e "${YELLOW}⚠ PyTorch imports but GPU computation failed${NC}"
+            fi
+        else
+            # CPU-only PyTorch detected
+            if command -v nvidia-smi &> /dev/null && nvidia-smi &> /dev/null 2>&1; then
+                echo -e "${YELLOW}⚠ NVIDIA GPU detected but PyTorch CUDA unavailable${NC}"
+                echo "  Will install CUDA-enabled PyTorch"
+            else
+                # CPU-only system with CPU-only PyTorch - that's correct
+                echo -e "${GREEN}✓ CPU-only PyTorch (no GPU detected)${NC}"
+                PYTORCH_WORKING=true
+            fi
+        fi
     else
-        echo -e "${YELLOW}⚠ No NVIDIA GPU detected - installing CPU-only PyTorch${NC}"
-        TORCH_INDEX=""
+        echo -e "${YELLOW}⚠ PyTorch not installed${NC}"
     fi
 
-    # Install PyTorch first (separate from requirements.txt)
-    echo ""
-    echo "Installing PyTorch system-wide..."
-    if [[ -n "$TORCH_INDEX" ]]; then
-        # Try latest stable CUDA version first
-        $PYTHON_CMD -m pip install --break-system-packages torch torchvision torchaudio || {
-            echo -e "${YELLOW}⚠ Latest version failed, trying CUDA 12.9 specific${NC}"
-            $PYTHON_CMD -m pip install --break-system-packages torch==2.8.0+cu129 torchvision==0.23.0+cu129 torchaudio==2.8.0+cu129 --index-url "$TORCH_INDEX"
-        }
-    else
-        $PYTHON_CMD -m pip install --break-system-packages torch torchvision torchaudio
+    # Phase 3: Install/reinstall PyTorch if needed
+    if [[ "$PYTORCH_WORKING" != "true" ]]; then
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "PyTorch Installation Required"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+
+        # Detect GPU capabilities
+        if command -v nvidia-smi &> /dev/null && nvidia-smi &> /dev/null 2>&1; then
+            GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)
+            DRIVER_VERSION=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1)
+
+            # Get compute capability using deviceQuery if available, otherwise parse from GPU name
+            COMPUTE_CAP=$($PYTHON_CMD -c "
+import torch
+try:
+    if torch.cuda.is_available():
+        cap = torch.cuda.get_device_capability(0)
+        print(f'{cap[0]}.{cap[1]}')
+    else:
+        print('0.0')
+except:
+    print('0.0')
+" 2>/dev/null)
+
+            # If PyTorch not available or failed, estimate from GPU name
+            if [[ "$COMPUTE_CAP" == "0.0" ]]; then
+                # Rough estimate based on GPU architecture in name
+                if echo "$GPU_NAME" | grep -qi "RTX\|A[0-9]\+\|H[0-9]\+\|L[0-9]\+\|Blackwell\|Hopper"; then
+                    COMPUTE_CAP="8.0+"  # Modern cards
+                elif echo "$GPU_NAME" | grep -qi "GTX\|Tesla"; then
+                    COMPUTE_CAP="5.0+"  # Older cards
+                else
+                    COMPUTE_CAP="unknown"
+                fi
+            fi
+
+            echo "Detected GPU: ${GPU_NAME}"
+            echo "Driver version: ${DRIVER_VERSION}"
+            echo "Compute capability: ${COMPUTE_CAP}"
+            echo ""
+
+            # Determine recommended CUDA version based on driver AND compute capability
+            DRIVER_MAJOR="${DRIVER_VERSION%%.*}"
+            COMPUTE_MAJOR="${COMPUTE_CAP%%.*}"
+
+            # CUDA 13.0 requires compute capability 6.0+ (Pascal or newer)
+            # CUDA 12.x requires compute capability 5.0+ (Maxwell or newer)
+            # Older cards need CUDA 11.8
+
+            if [[ "$DRIVER_MAJOR" -ge 555 ]] && [[ "$COMPUTE_MAJOR" -ge 6 ]] 2>/dev/null; then
+                # Modern GPU + modern driver = CUDA 13.0
+                RECOMMENDED_CUDA="13.0 (latest)"
+                TORCH_INSTALL_CMD="$PYTHON_CMD -m pip install --break-system-packages torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130"
+            elif [[ "$DRIVER_MAJOR" -ge 520 ]]; then
+                # CUDA 12.9 works for most GPUs with driver 520+
+                RECOMMENDED_CUDA="12.9 (stable)"
+                TORCH_INSTALL_CMD="$PYTHON_CMD -m pip install --break-system-packages torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu129"
+            else
+                # Legacy CUDA 11.8 for older drivers
+                RECOMMENDED_CUDA="11.8 (legacy)"
+                TORCH_INSTALL_CMD="$PYTHON_CMD -m pip install --break-system-packages torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118"
+            fi
+
+            # Add warning for very old GPUs
+            if [[ "$COMPUTE_MAJOR" -lt 5 ]] 2>/dev/null; then
+                echo -e "${YELLOW}⚠ GPU compute capability ${COMPUTE_CAP} is very old${NC}"
+                echo "  PyTorch may have limited support - recommend upgrading GPU"
+                echo ""
+            fi
+
+            echo "Recommended: PyTorch with CUDA ${RECOMMENDED_CUDA}"
+            echo ""
+            echo "Installation options:"
+            echo "  1. CUDA 13.0 (latest, requires driver 555+):"
+            echo "     pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130"
+            echo ""
+            echo "  2. CUDA 12.9 (stable, requires driver 520+):"
+            echo "     pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu129"
+            echo ""
+            echo "  3. CUDA 11.8 (legacy, older GPUs/drivers):"
+            echo "     pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118"
+            echo ""
+            echo "Visit https://pytorch.org/get-started/locally/ for more options"
+            echo ""
+
+            # Offer automatic installation
+            read -p "Install recommended PyTorch for your system? (Y/n): " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+                echo "Installing PyTorch..."
+                if $TORCH_INSTALL_CMD; then
+                    echo -e "${GREEN}✓ PyTorch installed successfully${NC}"
+
+                    # Verify installation
+                    if $PYTHON_CMD -c "import torch; print(f'PyTorch {torch.__version__} CUDA available: {torch.cuda.is_available()}')"; then
+                        echo -e "${GREEN}✓ Installation verified${NC}"
+                    else
+                        echo -e "${YELLOW}⚠ Installation completed but verification failed${NC}"
+                    fi
+                else
+                    echo -e "${RED}✗ PyTorch installation failed${NC}"
+                    echo "Please install manually and re-run this script"
+                    exit 1
+                fi
+            else
+                echo -e "${RED}✗ PyTorch installation skipped${NC}"
+                echo "Please install PyTorch manually before continuing"
+                exit 1
+            fi
+        else
+            # No NVIDIA GPU - install CPU-only PyTorch
+            echo "No NVIDIA GPU detected - installing CPU-only PyTorch"
+            echo ""
+
+            if $PYTHON_CMD -m pip install --break-system-packages torch torchvision torchaudio; then
+                echo -e "${GREEN}✓ CPU-only PyTorch installed${NC}"
+            else
+                echo -e "${RED}✗ PyTorch installation failed${NC}"
+                exit 1
+            fi
+        fi
+        echo ""
     fi
 
+    # Install remaining packages
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "Installing Remaining Packages"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
-    echo "Installing remaining packages system-wide..."
 
-    # Create temporary requirements file without torch (since we installed it separately)
+    # Create temporary requirements file without torch lines (they're commented out now)
     TEMP_REQUIREMENTS=$(mktemp)
-    grep -v "^torch==" "$INSTALL_DIR/requirements.txt" | grep -v "^torchaudio" > "$TEMP_REQUIREMENTS"
+    grep -v "^#.*torch" "$INSTALL_DIR/requirements.txt" | grep -v "^torch" > "$TEMP_REQUIREMENTS"
 
     # Install packages with better error visibility
     if ! $PYTHON_CMD -m pip install --break-system-packages -r "$TEMP_REQUIREMENTS"; then

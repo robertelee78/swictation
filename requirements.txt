@@ -3,9 +3,11 @@
 # IMPORTANT: Use the Python version where you have installed the packages
 # Installation: pip3 install --break-system-packages -r requirements.txt
 
-# Core ML Framework (pre-installed by user)
-torch==2.8.0+cu129
-torchaudio>=2.1.0
+# Core ML Framework
+# PyTorch installation is handled by install.sh based on your GPU
+# For manual installation, visit: https://pytorch.org/get-started/locally/
+# torch>=2.1.0
+# torchaudio>=2.1.0
 
 # NVIDIA NeMo for Canary-1B-Flash STT
 nemo_toolkit[asr]==2.5.2
