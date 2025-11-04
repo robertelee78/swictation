@@ -771,7 +771,7 @@ class SwictationDaemon:
 
                     segment = self.metrics_collector.record_segment(
                         audio_duration_s=duration,
-                        transcription=transformed,
+                        transcription=text,  # Record original STT output, not transformed
                         stt_latency_ms=stt_latency_ms,
                         transform_latency_us=transform_latency_us,
                         injection_latency_ms=injection_latency_ms,

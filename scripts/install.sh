@@ -348,8 +348,9 @@ build_transformer() {
         rm -rf ../../target/wheels/
     fi
 
-    # Build the wheel (use explicit python interpreter)
-    maturin build --release --features pyo3 --interpreter $PYTHON_CMD || {
+    # Build the wheel (use explicit python interpreter and ABI3 for stability)
+    echo "Building with maturin (Python $($PYTHON_CMD --version))..."
+    maturin build --release --features pyo3 --interpreter $PYTHON_CMD --compatibility linux || {
         echo -e "${RED}✗ Transformer build failed${NC}"
         echo "  Check Rust installation: rustc --version"
         echo "  Check cargo works: cargo --version"
@@ -357,23 +358,41 @@ build_transformer() {
     }
 
     echo ""
+    echo "Verifying wheel was built..."
+    WHEEL_PATH=$(ls -t ../../target/wheels/midstreamer_transform-*.whl 2>/dev/null | head -1)
+    if [ -z "$WHEEL_PATH" ]; then
+        echo -e "${RED}✗ No wheel file found${NC}"
+        echo "  Expected wheel in: ../../target/wheels/"
+        exit 1
+    fi
+    echo -e "${GREEN}✓ Wheel built: $(basename $WHEEL_PATH)${NC}"
+
+    echo ""
     echo "Installing transformer wheel..."
     echo ""
 
     # Install the built wheel
-    $PYTHON_CMD -m pip install --break-system-packages --force-reinstall ../../target/wheels/midstreamer_transform-*.whl || {
+    $PYTHON_CMD -m pip install --break-system-packages --force-reinstall "$WHEEL_PATH" || {
         echo -e "${RED}✗ Transformer installation failed${NC}"
-        echo "  Check wheel exists: ls ../../target/wheels/"
+        echo "  Wheel path: $WHEEL_PATH"
         exit 1
     }
 
     echo ""
     echo "Verifying transformer installation..."
-    $PYTHON_CMD -c "import midstreamer_transform; count, msg = midstreamer_transform.get_stats(); print(f'✅ {msg}')" || {
+    if ! $PYTHON_CMD -c "import midstreamer_transform; count, msg = midstreamer_transform.get_stats(); print(f'✅ {msg}')"; then
         echo -e "${RED}✗ Transformer verification failed${NC}"
-        echo "  Import test failed - transformer may not be properly installed"
+        echo ""
+        echo "This may be a PyO3 ABI compatibility issue."
+        echo "Your Python: $($PYTHON_CMD --version)"
+        echo "Wheel file: $WHEEL_PATH"
+        echo ""
+        echo "Try rebuilding with updated PyO3:"
+        echo "  cd $INSTALL_DIR/external/midstream/crates/text-transform"
+        echo "  cargo clean"
+        echo "  maturin build --release --features pyo3 --interpreter $PYTHON_CMD"
         exit 1
-    }
+    fi
 
     echo ""
     echo -e "${GREEN}✓ MidStream text transformer built and installed${NC}"
