@@ -485,6 +485,29 @@ install_python_deps() {
         fi
     fi
 
+    # Check for texterrors PyO3 compatibility issue (affects Python 3.12)
+    echo ""
+    echo "Checking texterrors compatibility..."
+    if ! $PYTHON_CMD -c "import texterrors" 2>/dev/null; then
+        echo -e "${YELLOW}⚠ texterrors has PyO3 compatibility issue with Python 3.12${NC}"
+        echo "  Rebuilding texterrors from source..."
+
+        # Uninstall broken texterrors
+        $PYTHON_CMD -m pip uninstall -y texterrors 2>/dev/null || true
+
+        # Install from source (will build with system's PyO3)
+        if ! $PYTHON_CMD -m pip install --break-system-packages --no-binary texterrors texterrors; then
+            echo -e "${YELLOW}⚠ Could not rebuild texterrors${NC}"
+            echo "  NeMo context biasing features may not work"
+            echo "  Speech recognition will still function normally"
+        else
+            echo -e "${GREEN}✓ texterrors rebuilt successfully${NC}"
+        fi
+    else
+        echo -e "${GREEN}✓ texterrors working${NC}"
+    fi
+
+    echo ""
     echo -e "${GREEN}✓ NeMo toolkit verified${NC}"
     echo ""
     echo -e "${GREEN}✓ Python packages installed${NC}"
