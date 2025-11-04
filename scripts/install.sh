@@ -424,12 +424,44 @@ install_python_deps() {
 
     echo ""
     echo "Installing remaining packages system-wide..."
-    # Install rest of requirements (excluding torch lines)
-    grep -v "^torch==" "$INSTALL_DIR/requirements.txt" | grep -v "^torchaudio" | $PYTHON_CMD -m pip install --break-system-packages -r /dev/stdin || {
-        echo -e "${RED}✗ Failed to install Python packages${NC}"
-        exit 1
-    }
 
+    # Create temporary requirements file without torch (since we installed it separately)
+    TEMP_REQUIREMENTS=$(mktemp)
+    grep -v "^torch==" "$INSTALL_DIR/requirements.txt" | grep -v "^torchaudio" > "$TEMP_REQUIREMENTS"
+
+    # Install packages with better error visibility
+    if ! $PYTHON_CMD -m pip install --break-system-packages -r "$TEMP_REQUIREMENTS"; then
+        echo ""
+        echo -e "${RED}✗ Failed to install Python packages${NC}"
+        echo -e "${YELLOW}Temp requirements at: $TEMP_REQUIREMENTS${NC}"
+        echo ""
+        echo "You can try installing manually with:"
+        echo "  $PYTHON_CMD -m pip install --break-system-packages -r $TEMP_REQUIREMENTS"
+        rm -f "$TEMP_REQUIREMENTS"
+        exit 1
+    fi
+
+    rm -f "$TEMP_REQUIREMENTS"
+
+    # Verify critical packages
+    echo ""
+    echo "Verifying critical packages..."
+
+    # Check NeMo installation specifically
+    if ! $PYTHON_CMD -c "import nemo" 2>/dev/null; then
+        echo -e "${RED}✗ NeMo toolkit not installed properly${NC}"
+        echo ""
+        echo "Attempting to install NeMo manually..."
+        if ! $PYTHON_CMD -m pip install --break-system-packages "nemo_toolkit[asr]==2.5.2"; then
+            echo -e "${RED}✗ NeMo installation failed${NC}"
+            echo ""
+            echo "This is critical for speech recognition. Please install manually:"
+            echo "  $PYTHON_CMD -m pip install --break-system-packages 'nemo_toolkit[asr]==2.5.2'"
+            exit 1
+        fi
+    fi
+
+    echo -e "${GREEN}✓ NeMo toolkit verified${NC}"
     echo ""
     echo -e "${GREEN}✓ Python packages installed${NC}"
     echo ""
@@ -658,13 +690,20 @@ test_installation() {
     echo ""
 
     # Test Python imports
-    echo -n "  Python imports... "
-    python3 -c "
-import torch
-import numpy
-import sounddevice
-from nemo.collections.asr.models import EncDecMultiTaskModel
-" 2>/dev/null && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
+    echo -n "  PyTorch... "
+    $PYTHON_CMD -c "import torch" 2>/dev/null && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
+
+    echo -n "  NumPy... "
+    $PYTHON_CMD -c "import numpy" 2>/dev/null && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
+
+    echo -n "  SoundDevice... "
+    $PYTHON_CMD -c "import sounddevice" 2>/dev/null && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
+
+    echo -n "  NeMo toolkit... "
+    $PYTHON_CMD -c "import nemo" 2>/dev/null && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗ CRITICAL${NC}"
+
+    echo -n "  NeMo ASR models... "
+    $PYTHON_CMD -c "from nemo.collections.asr.models import EncDecMultiTaskModel" 2>/dev/null && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗ CRITICAL${NC}"
 
     # Test wtype
     echo -n "  wtype... "
@@ -676,15 +715,15 @@ from nemo.collections.asr.models import EncDecMultiTaskModel
 
     # Test CUDA
     echo -n "  CUDA... "
-    python3 -c "import torch; assert torch.cuda.is_available()" 2>/dev/null && echo -e "${GREEN}✓${NC}" || echo -e "${YELLOW}⚠ (CPU only)${NC}"
+    $PYTHON_CMD -c "import torch; assert torch.cuda.is_available()" 2>/dev/null && echo -e "${GREEN}✓${NC}" || echo -e "${YELLOW}⚠ (CPU only)${NC}"
 
     # Test transformer
     echo -n "  Text transformer... "
-    python3 -c "import midstreamer_transform; count, msg = midstreamer_transform.get_stats(); assert count > 0" 2>/dev/null && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
+    $PYTHON_CMD -c "import midstreamer_transform; count, msg = midstreamer_transform.get_stats(); assert count > 0" 2>/dev/null && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
 
     # Test daemon startup (if not already running)
     echo -n "  Daemon connection... "
-    python3 "$INSTALL_DIR/src/swictation_cli.py" status >/dev/null 2>&1 && echo -e "${GREEN}✓${NC}" || echo -e "${YELLOW}⚠ (not running)${NC}"
+    $PYTHON_CMD "$INSTALL_DIR/src/swictation_cli.py" status >/dev/null 2>&1 && echo -e "${GREEN}✓${NC}" || echo -e "${YELLOW}⚠ (not running)${NC}"
 
     echo ""
 }
