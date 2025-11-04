@@ -489,38 +489,28 @@ install_python_deps() {
     echo ""
     echo "Checking texterrors compatibility..."
     if ! $PYTHON_CMD -c "import texterrors" 2>/dev/null; then
-        echo -e "${YELLOW}⚠ texterrors has PyO3 compatibility issue with Python 3.12${NC}"
-        echo "  Patching NeMo to skip context biasing (optional feature)..."
+        echo -e "${YELLOW}⚠ texterrors has PyO3 compatibility issue${NC}"
+        echo "  Upgrading to texterrors 1.0.9+ (Python 3.12 compatible)..."
 
-        # Create a dummy texterrors module to satisfy imports
-        TEXTERRORS_DIR=$($PYTHON_CMD -c "import site; print(site.getsitepackages()[0])")/texterrors
-        mkdir -p "$TEXTERRORS_DIR"
-
-        cat > "$TEXTERRORS_DIR/__init__.py" << 'PYEOF'
-# Dummy texterrors to bypass PyO3 compatibility issue
-# Context biasing features disabled, core NeMo functionality works
-def align_texts(*args, **kwargs):
-    raise NotImplementedError("texterrors disabled due to PyO3 incompatibility")
-
-def process_lines(*args, **kwargs):
-    raise NotImplementedError("texterrors disabled due to PyO3 incompatibility")
-
-def lev_distance(*args, **kwargs):
-    raise NotImplementedError("texterrors disabled due to PyO3 incompatibility")
-
-def get_oov_cer(*args, **kwargs):
-    raise NotImplementedError("texterrors disabled due to PyO3 incompatibility")
-
-def align_texts_ctm(*args, **kwargs):
-    raise NotImplementedError("texterrors disabled due to PyO3 incompatibility")
-
-def seq_distance(*args, **kwargs):
-    raise NotImplementedError("texterrors disabled due to PyO3 incompatibility")
-PYEOF
-
-        echo -e "${GREEN}✓ NeMo patched (context biasing disabled, STT works)${NC}"
+        # Upgrade to latest texterrors (1.0.9+ has Python 3.12 compatible PyO3)
+        if $PYTHON_CMD -m pip install --break-system-packages --upgrade texterrors; then
+            echo -e "${GREEN}✓ texterrors upgraded successfully${NC}"
+        else
+            echo -e "${RED}✗ Failed to upgrade texterrors${NC}"
+            echo "  NeMo may not load properly"
+            exit 1
+        fi
     else
-        echo -e "${GREEN}✓ texterrors working${NC}"
+        # Check if we have old version that might cause issues
+        TEXTERRORS_VERSION=$($PYTHON_CMD -c "import texterrors; print(texterrors.__version__ if hasattr(texterrors, '__version__') else '0.0.0')" 2>/dev/null || echo "0.0.0")
+        if [[ "$TEXTERRORS_VERSION" < "1.0.0" ]]; then
+            echo -e "${YELLOW}⚠ Old texterrors version detected: $TEXTERRORS_VERSION${NC}"
+            echo "  Upgrading to 1.0.9+ for Python 3.12 compatibility..."
+            $PYTHON_CMD -m pip install --break-system-packages --upgrade texterrors
+            echo -e "${GREEN}✓ texterrors upgraded${NC}"
+        else
+            echo -e "${GREEN}✓ texterrors $TEXTERRORS_VERSION OK${NC}"
+        fi
     fi
 
     echo ""
