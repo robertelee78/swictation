@@ -248,24 +248,29 @@ init_submodule() {
 
     cd "$INSTALL_DIR" || exit 1
 
-    # Check if submodule is already initialized
-    if [ -f "$INSTALL_DIR/external/midstream/Cargo.toml" ]; then
-        echo -e "${GREEN}✓ Submodule already initialized${NC}"
-    else
-        echo "Initializing git submodule (external/midstream)..."
-        git submodule update --init --recursive || {
-            echo -e "${RED}✗ Failed to initialize submodule${NC}"
-            echo "  Try manually: cd $INSTALL_DIR && git submodule update --init --recursive"
-            exit 1
-        }
-        echo -e "${GREEN}✓ Git submodule initialized${NC}"
-    fi
+    # ALWAYS update submodule to ensure we have latest fixes (like PyO3 0.23)
+    echo "Updating git submodule (external/midstream)..."
+    git submodule update --init --recursive || {
+        echo -e "${RED}✗ Failed to update submodule${NC}"
+        echo "  This is required to get the latest text transformer with PyO3 0.23"
+        exit 1
+    }
+    echo -e "${GREEN}✓ Git submodule updated${NC}"
 
     # Verify submodule has files
     if [ ! -d "$INSTALL_DIR/external/midstream/crates" ]; then
         echo -e "${RED}✗ Submodule appears empty${NC}"
         echo "  Expected: $INSTALL_DIR/external/midstream/crates/"
         exit 1
+    fi
+
+    # Verify we have PyO3 0.23 (Python 3.12 compatible)
+    echo "Verifying PyO3 version..."
+    if grep -q 'pyo3 = { version = "0.23"' "$INSTALL_DIR/external/midstream/crates/text-transform/Cargo.toml"; then
+        echo -e "${GREEN}✓ PyO3 0.23 detected (Python 3.12 compatible)${NC}"
+    else
+        echo -e "${YELLOW}⚠ Warning: Old PyO3 version detected${NC}"
+        echo "  You may experience compatibility issues with Python 3.12"
     fi
 
     echo ""
