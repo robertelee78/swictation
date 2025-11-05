@@ -247,8 +247,19 @@ fi
 if [ "$ML_DEPS_OK" = false ]; then
     if [ -f /opt/swictation/requirements.txt ]; then
         echo ""
-        echo "Core ML dependencies missing - installing from requirements.txt..."
+        echo "Core ML dependencies missing - installing..."
         echo "This may take several minutes (PyTorch, NeMo, etc.)..."
+        echo ""
+
+        # Two-step install to avoid numpy conflict on Python 3.13+
+        # Step 1: Install PyTorch first (brings numpy 2.x on Python 3.13)
+        echo "Step 1/2: Installing PyTorch with CUDA support..."
+        pip3 install --break-system-packages torch torchaudio 2>/dev/null || \
+        pip3 install torch torchaudio
+
+        echo ""
+        echo "Step 2/2: Installing NeMo and other dependencies..."
+        # Step 2: Install rest of requirements (nemo_toolkit without [asr] extra avoids numpy<2.0 constraint)
         pip3 install --break-system-packages -r /opt/swictation/requirements.txt 2>/dev/null || \
         pip3 install -r /opt/swictation/requirements.txt
     else

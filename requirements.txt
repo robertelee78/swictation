@@ -1,17 +1,25 @@
 # Swictation - Voice Dictation System for Sway/Wayland
-# Successfully tested on Python 3.12+ with NVIDIA RTX A1000 (CUDA 12.9)
-# IMPORTANT: Use the Python version where you have installed the packages
-# Installation: pip3 install --break-system-packages -r requirements.txt
+# Successfully tested on Python 3.12-3.13 with NVIDIA RTX A1000 (CUDA 12.9)
+#
+# INSTALLATION:
+# For Python 3.13+, install in this order to avoid numpy conflict:
+#   1. pip3 install --break-system-packages torch torchaudio
+#   2. pip3 install --break-system-packages -r requirements.txt
+#
+# The issue: nemo_toolkit[asr]==2.5.2 declares numpy<2.0.0 but works fine with 2.x
+# Solution: Install PyTorch first (which brings numpy 2.x), then install nemo without [asr]
 
-# Core ML Framework
-# PyTorch installation is handled by install.sh based on your GPU
-# For manual installation, visit: https://pytorch.org/get-started/locally/
-# torch>=2.1.0
-# torchaudio>=2.1.0
+# Core ML Framework - PyTorch with CUDA support
+# IMPORTANT: Install PyTorch FIRST before other dependencies to avoid conflicts
+# Python 3.13 requires numpy>=2.1.0 but nemo_toolkit[asr] incorrectly declares numpy<2.0.0
+torch>=2.1.0
+torchaudio>=2.1.0
 
 # NVIDIA NeMo for Canary-1B-Flash STT
-nemo_toolkit[asr]==2.5.2
-numpy>=1.26.0  # Works with both numpy 1.x and 2.x despite NeMo's official requirements
+# NOTE: Install WITHOUT [asr] extra to avoid numpy<2.0 constraint
+# The asr dependencies are included manually below
+nemo_toolkit==2.5.2
+numpy>=1.26.0  # Works with both numpy 1.x and 2.x despite NeMo's incorrect [asr] constraint
 
 # Audio Processing
 sounddevice==0.5.3
@@ -24,7 +32,7 @@ huggingface-hub==0.36.0
 tokenizers==0.21.0
 accelerate==1.11.0
 safetensors==0.6.2
-transformers~=4.53.0
+transformers>=4.53.0  # Relaxed from ~=4.53.0 to allow latest versions
 
 # Neural network training
 pytorch-lightning==2.5.5
