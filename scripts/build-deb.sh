@@ -118,33 +118,29 @@ cat > "${BUILD_DIR}/preinst.sh" << 'EOF'
 
 set -e
 
-echo "Checking Python version compatibility..."
+echo "Checking Python version..."
 
-# Check Python version - must be 3.10, 3.11, or 3.12 (NOT 3.13)
+# Check Python version - require 3.10+
 PYTHON_VERSION=$(python3 --version 2>&1 | awk '{print $2}' | cut -d. -f1,2)
 PYTHON_MAJOR=$(echo $PYTHON_VERSION | cut -d. -f1)
 PYTHON_MINOR=$(echo $PYTHON_VERSION | cut -d. -f2)
 
-if [ "$PYTHON_MAJOR" -ne 3 ] || [ "$PYTHON_MINOR" -lt 10 ] || [ "$PYTHON_MINOR" -gt 12 ]; then
+if [ "$PYTHON_MAJOR" -ne 3 ] || [ "$PYTHON_MINOR" -lt 10 ]; then
     echo ""
-    echo "ERROR: Incompatible Python version detected!"
+    echo "ERROR: Python 3.10+ required!"
     echo ""
     echo "Current: Python $PYTHON_VERSION"
-    echo "Required: Python 3.10, 3.11, or 3.12"
-    echo ""
-    echo "Python 3.13+ has numpy>=2.1.0 requirement which conflicts with"
-    echo "nemo-toolkit's numpy<2.0.0 requirement."
-    echo ""
-    echo "Please install Python 3.12:"
-    echo "  sudo apt install python3.12 python3.12-venv python3.12-dev"
-    echo ""
-    echo "Then set it as default:"
-    echo "  sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1"
+    echo "Required: Python 3.10 or newer"
     echo ""
     exit 1
 fi
 
-echo "✓ Python $PYTHON_VERSION detected (compatible)"
+echo "✓ Python $PYTHON_VERSION detected"
+if [ "$PYTHON_MINOR" -ge 13 ]; then
+    echo "  Note: Python 3.13+ detected. NeMo officially requires numpy<2.0,"
+    echo "  but works fine with numpy 2.x. Installation will proceed with"
+    echo "  --break-system-packages flag."
+fi
 echo ""
 
 echo "Checking GPU requirements..."
@@ -215,16 +211,41 @@ echo "Installing for user: $ACTUAL_USER"
 
 # Install Rust wheel for text transformation
 if [ -f /opt/swictation/wheels/midstreamer_transform-0.1.0-cp312-abi3-linux_x86_64.whl ]; then
-    pip3 install --break-system-packages /opt/swictation/wheels/midstreamer_transform-*.whl 2>/dev/null || \
-    pip3 install /opt/swictation/wheels/midstreamer_transform-*.whl
+    echo "Checking midstreamer_transform..."
+    if ! pip3 show midstreamer-transform &>/dev/null; then
+        echo "Installing midstreamer_transform..."
+        pip3 install --break-system-packages /opt/swictation/wheels/midstreamer_transform-*.whl 2>/dev/null || \
+        pip3 install /opt/swictation/wheels/midstreamer_transform-*.whl
+    else
+        echo "✓ midstreamer_transform already installed"
+    fi
 fi
 
-# Install Python dependencies
-if [ -f /opt/swictation/requirements.txt ]; then
+# Check if main dependencies are already installed
+echo "Checking Python dependencies..."
+NEEDS_INSTALL=false
+if ! python3 -c "import nemo" &>/dev/null; then
+    echo "  NeMo not found - will install dependencies"
+    NEEDS_INSTALL=true
+elif ! python3 -c "import torch" &>/dev/null; then
+    echo "  PyTorch not found - will install dependencies"
+    NEEDS_INSTALL=true
+elif ! python3 -c "import transformers" &>/dev/null; then
+    echo "  Transformers not found - will install dependencies"
+    NEEDS_INSTALL=true
+else
+    echo "✓ Core dependencies already installed"
+fi
+
+# Only install if needed
+if [ "$NEEDS_INSTALL" = true ] && [ -f /opt/swictation/requirements.txt ]; then
+    echo ""
     echo "Installing Python packages from requirements.txt..."
     echo "This may take several minutes (PyTorch, NeMo, etc.)..."
     pip3 install --break-system-packages -r /opt/swictation/requirements.txt 2>/dev/null || \
     pip3 install -r /opt/swictation/requirements.txt
+else
+    echo "Skipping dependency installation (already installed)"
 fi
 
 # Create user config directory (as actual user, not root)
