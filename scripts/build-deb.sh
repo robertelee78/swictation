@@ -166,32 +166,8 @@ if [ ! -x /usr/bin/nvidia-smi ] && [ ! -x /usr/local/bin/nvidia-smi ]; then
     exit 1
 fi
 
-# Check for CUDA toolkit (check for nvcc binary or cuda directory)
-NVCC_PATH=""
-if [ -x /usr/local/cuda/bin/nvcc ]; then
-    NVCC_PATH=/usr/local/cuda/bin/nvcc
-elif [ -x /usr/bin/nvcc ]; then
-    NVCC_PATH=/usr/bin/nvcc
-elif command -v nvcc &> /dev/null 2>&1; then
-    NVCC_PATH=$(command -v nvcc)
-fi
-
-if [ -z "$NVCC_PATH" ] && [ ! -d "/usr/local/cuda" ]; then
-    echo ""
-    echo "ERROR: CUDA toolkit not found!"
-    echo ""
-    echo "Swictation requires CUDA 12.4+ for GPU inference."
-    echo ""
-    echo "Install latest CUDA from NVIDIA:"
-    echo "  https://developer.nvidia.com/cuda-downloads"
-    echo ""
-    echo "Get CUDA 12.6 or newer (NOT ancient apt packages)"
-    echo ""
-    exit 1
-fi
-
-# If we got here, requirements are met
-CUDA_VERSION=$($NVCC_PATH --version 2>/dev/null | grep "release" | awk '{print $5}' | tr -d ',' || echo "unknown")
+# Check CUDA version from nvidia-smi (driver provides runtime CUDA support)
+CUDA_VERSION=$(nvidia-smi 2>/dev/null | grep "CUDA Version" | awk '{print $9}' || echo "unknown")
 GPU_NAME=$(/usr/bin/nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 || /usr/local/bin/nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 || echo "unknown")
 
 echo "✓ NVIDIA GPU detected: $GPU_NAME"
