@@ -221,31 +221,40 @@ if [ -f /opt/swictation/wheels/midstreamer_transform-0.1.0-cp312-abi3-linux_x86_
     fi
 fi
 
-# Check if main dependencies are already installed
+# Check if ML dependencies are already installed (check as actual user, not root!)
 echo "Checking Python dependencies..."
-NEEDS_INSTALL=false
-if ! python3 -c "import nemo" &>/dev/null; then
-    echo "  NeMo not found - will install dependencies"
-    NEEDS_INSTALL=true
-elif ! python3 -c "import torch" &>/dev/null; then
-    echo "  PyTorch not found - will install dependencies"
-    NEEDS_INSTALL=true
-elif ! python3 -c "import transformers" &>/dev/null; then
-    echo "  Transformers not found - will install dependencies"
-    NEEDS_INSTALL=true
-else
-    echo "✓ Core dependencies already installed"
+ML_DEPS_OK=false
+if sudo -u "$ACTUAL_USER" python3 -c "import nemo, torch, transformers" &>/dev/null; then
+    echo "✓ Core ML dependencies already installed (NeMo, PyTorch, Transformers)"
+    ML_DEPS_OK=true
 fi
 
-# Only install if needed
-if [ "$NEEDS_INSTALL" = true ] && [ -f /opt/swictation/requirements.txt ]; then
+# Check PySide6 separately (needed for system tray, also check as user!)
+PYSIDE6_OK=false
+if sudo -u "$ACTUAL_USER" python3 -c "import PySide6" &>/dev/null; then
+    echo "✓ PySide6 already installed"
+    PYSIDE6_OK=true
+fi
+
+# Install what's missing
+if [ "$ML_DEPS_OK" = false ]; then
+    if [ -f /opt/swictation/requirements.txt ]; then
+        echo ""
+        echo "Core ML dependencies missing - installing from requirements.txt..."
+        echo "This may take several minutes (PyTorch, NeMo, etc.)..."
+        pip3 install --break-system-packages -r /opt/swictation/requirements.txt 2>/dev/null || \
+        pip3 install -r /opt/swictation/requirements.txt
+    else
+        echo "ERROR: requirements.txt not found and dependencies missing!"
+        exit 1
+    fi
+elif [ "$PYSIDE6_OK" = false ]; then
     echo ""
-    echo "Installing Python packages from requirements.txt..."
-    echo "This may take several minutes (PyTorch, NeMo, etc.)..."
-    pip3 install --break-system-packages -r /opt/swictation/requirements.txt 2>/dev/null || \
-    pip3 install -r /opt/swictation/requirements.txt
+    echo "Installing PySide6 for system tray..."
+    pip3 install --break-system-packages 'PySide6>=6.8.0' 2>/dev/null || \
+    pip3 install 'PySide6>=6.8.0'
 else
-    echo "Skipping dependency installation (already installed)"
+    echo "✓ All dependencies present, skipping installation"
 fi
 
 # Create user config directory (as actual user, not root)
@@ -335,19 +344,19 @@ echo "Python version:"
 $PYTHON_CMD --version
 echo ""
 
-# Check PyTorch
+# Check PyTorch (run as user to access user-installed packages)
 echo "PyTorch + CUDA:"
-$PYTHON_CMD -c "import torch; print(f'  PyTorch: {torch.__version__}'); print(f'  CUDA: {torch.version.cuda}'); print(f'  CUDA available: {torch.cuda.is_available()}'); print(f'  Architectures: {torch.cuda.get_arch_list()}' if torch.cuda.is_available() else '  Architectures: N/A (CUDA not available)')" 2>&1 || echo "  ERROR: PyTorch import failed"
+sudo -u "$ACTUAL_USER" $PYTHON_CMD -c "import torch; print(f'  PyTorch: {torch.__version__}'); print(f'  CUDA: {torch.version.cuda}'); print(f'  CUDA available: {torch.cuda.is_available()}'); print(f'  Architectures: {torch.cuda.get_arch_list()}' if torch.cuda.is_available() else '  Architectures: N/A (CUDA not available)')" 2>&1 || echo "  ERROR: PyTorch import failed"
 echo ""
 
-# Check NeMo
+# Check NeMo (run as user)
 echo "NVIDIA NeMo:"
-$PYTHON_CMD -c "import nemo; print(f'  NeMo: {nemo.__version__}')" 2>&1 || echo "  ERROR: NeMo import failed"
+sudo -u "$ACTUAL_USER" $PYTHON_CMD -c "import nemo; print(f'  NeMo: {nemo.__version__}')" 2>&1 || echo "  ERROR: NeMo import failed"
 echo ""
 
-# Check texterrors
+# Check texterrors (run as user)
 echo "texterrors:"
-$PYTHON_CMD -c "from importlib.metadata import version; print(f'  texterrors: {version(\"texterrors\")}')" 2>&1 || echo "  ERROR: texterrors not installed"
+sudo -u "$ACTUAL_USER" $PYTHON_CMD -c "from importlib.metadata import version; print(f'  texterrors: {version(\"texterrors\")}')" 2>&1 || echo "  ERROR: texterrors not installed"
 echo ""
 
 # Check GPU details
@@ -367,9 +376,9 @@ else
 fi
 echo ""
 
-# Simple GPU compute test
+# Simple GPU compute test (run as user)
 echo "GPU compute test:"
-$PYTHON_CMD -c "
+sudo -u "$ACTUAL_USER" $PYTHON_CMD -c "
 import torch
 if torch.cuda.is_available():
     try:
