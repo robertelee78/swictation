@@ -255,34 +255,39 @@ for PYVER in python3.13 python3.12 python3.11 python3.10 python3; do
     fi
 done
 
+# Determine which Python to use for installation (prefer default python3)
+INSTALL_PYTHON="python3"
+PYTHON_VERSION=$(python3 --version 2>&1 | awk '{print $2}' | cut -d. -f1,2)
+echo "  System default python3 is version $PYTHON_VERSION"
+
 # Install what's missing
 if [ "$ML_DEPS_OK" = false ]; then
     if [ -f /opt/swictation/requirements.txt ]; then
         echo ""
-        echo "Core ML dependencies missing - installing..."
+        echo "Core ML dependencies missing - installing for $INSTALL_PYTHON..."
         echo "This may take several minutes (PyTorch, NeMo, etc.)..."
         echo ""
 
         # Two-step install to avoid numpy conflict on Python 3.13+
         # Step 1: Install PyTorch first (brings numpy 2.x on Python 3.13)
         echo "Step 1/2: Installing PyTorch with CUDA support..."
-        pip3 install --break-system-packages torch torchaudio 2>/dev/null || \
-        pip3 install torch torchaudio
+        $INSTALL_PYTHON -m pip install --break-system-packages torch torchaudio 2>/dev/null || \
+        $INSTALL_PYTHON -m pip install torch torchaudio
 
         echo ""
         echo "Step 2/2: Installing NeMo and other dependencies..."
         # Step 2: Install rest of requirements (nemo_toolkit without [asr] extra avoids numpy<2.0 constraint)
-        pip3 install --break-system-packages -r /opt/swictation/requirements.txt 2>/dev/null || \
-        pip3 install -r /opt/swictation/requirements.txt
+        $INSTALL_PYTHON -m pip install --break-system-packages -r /opt/swictation/requirements.txt 2>/dev/null || \
+        $INSTALL_PYTHON -m pip install -r /opt/swictation/requirements.txt
     else
         echo "ERROR: requirements.txt not found and dependencies missing!"
         exit 1
     fi
 elif [ "$PYSIDE6_OK" = false ]; then
     echo ""
-    echo "Installing PySide6 for system tray..."
-    pip3 install --break-system-packages 'PySide6>=6.8.0' 2>/dev/null || \
-    pip3 install 'PySide6>=6.8.0'
+    echo "Installing PySide6 for system tray on $INSTALL_PYTHON..."
+    $INSTALL_PYTHON -m pip install --break-system-packages 'PySide6>=6.8.0' 2>/dev/null || \
+    $INSTALL_PYTHON -m pip install 'PySide6>=6.8.0'
 else
     echo "✓ All dependencies present, skipping installation"
 fi
