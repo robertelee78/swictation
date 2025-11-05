@@ -118,6 +118,35 @@ cat > "${BUILD_DIR}/preinst.sh" << 'EOF'
 
 set -e
 
+echo "Checking Python version compatibility..."
+
+# Check Python version - must be 3.10, 3.11, or 3.12 (NOT 3.13)
+PYTHON_VERSION=$(python3 --version 2>&1 | awk '{print $2}' | cut -d. -f1,2)
+PYTHON_MAJOR=$(echo $PYTHON_VERSION | cut -d. -f1)
+PYTHON_MINOR=$(echo $PYTHON_VERSION | cut -d. -f2)
+
+if [ "$PYTHON_MAJOR" -ne 3 ] || [ "$PYTHON_MINOR" -lt 10 ] || [ "$PYTHON_MINOR" -gt 12 ]; then
+    echo ""
+    echo "ERROR: Incompatible Python version detected!"
+    echo ""
+    echo "Current: Python $PYTHON_VERSION"
+    echo "Required: Python 3.10, 3.11, or 3.12"
+    echo ""
+    echo "Python 3.13+ has numpy>=2.1.0 requirement which conflicts with"
+    echo "nemo-toolkit's numpy<2.0.0 requirement."
+    echo ""
+    echo "Please install Python 3.12:"
+    echo "  sudo apt install python3.12 python3.12-venv python3.12-dev"
+    echo ""
+    echo "Then set it as default:"
+    echo "  sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1"
+    echo ""
+    exit 1
+fi
+
+echo "✓ Python $PYTHON_VERSION detected (compatible)"
+echo ""
+
 echo "Checking GPU requirements..."
 
 # Check for NVIDIA driver (check actual binary, not just command -v)
