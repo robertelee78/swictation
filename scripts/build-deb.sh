@@ -80,6 +80,12 @@ cp "${PROJECT_ROOT}/requirements.txt" "${STAGING_DIR}/opt/swictation/"
 cp "${PROJECT_ROOT}/README.md" "${STAGING_DIR}/usr/share/doc/swictation/"
 cp "${PROJECT_ROOT}/LICENSE" "${STAGING_DIR}/usr/share/doc/swictation/"
 
+# Fix permissions - ensure all files/dirs are readable by user
+chmod -R 755 "${STAGING_DIR}/opt/swictation"
+find "${STAGING_DIR}/opt/swictation" -type f -exec chmod 644 {} \;
+find "${STAGING_DIR}/opt/swictation" -type f -name "*.py" -exec chmod 755 {} \;
+find "${STAGING_DIR}/opt/swictation" -type f -name "*.sh" -exec chmod 755 {} \;
+
 # Copy Rust wheel
 echo -e "${BLUE}Copying Rust PyO3 wheel...${NC}"
 mkdir -p "${STAGING_DIR}/opt/swictation/wheels"
