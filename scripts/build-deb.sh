@@ -231,17 +231,29 @@ fi
 # Check if ML dependencies are already installed (check as actual user, not root!)
 echo "Checking Python dependencies..."
 ML_DEPS_OK=false
-if sudo -u "$ACTUAL_USER" python3 -c "import nemo, torch, transformers" &>/dev/null; then
-    echo "✓ Core ML dependencies already installed (NeMo, PyTorch, Transformers)"
-    ML_DEPS_OK=true
-fi
+
+# Check all available Python 3 versions (3.10, 3.11, 3.12, 3.13, etc.)
+for PYVER in python3.13 python3.12 python3.11 python3.10 python3; do
+    if command -v "$PYVER" &> /dev/null; then
+        if sudo -u "$ACTUAL_USER" "$PYVER" -c "import nemo, torch, transformers" &>/dev/null; then
+            echo "✓ Core ML dependencies already installed for $PYVER"
+            ML_DEPS_OK=true
+            break
+        fi
+    fi
+done
 
 # Check PySide6 separately (needed for system tray, also check as user!)
 PYSIDE6_OK=false
-if sudo -u "$ACTUAL_USER" python3 -c "import PySide6" &>/dev/null; then
-    echo "✓ PySide6 already installed"
-    PYSIDE6_OK=true
-fi
+for PYVER in python3.13 python3.12 python3.11 python3.10 python3; do
+    if command -v "$PYVER" &> /dev/null; then
+        if sudo -u "$ACTUAL_USER" "$PYVER" -c "import PySide6" &>/dev/null; then
+            echo "✓ PySide6 already installed for $PYVER"
+            PYSIDE6_OK=true
+            break
+        fi
+    fi
+done
 
 # Install what's missing
 if [ "$ML_DEPS_OK" = false ]; then
