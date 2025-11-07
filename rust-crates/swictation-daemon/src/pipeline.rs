@@ -126,7 +126,12 @@ impl Pipeline {
                 // Process in 0.5 second chunks for VAD
                 while buffer.len() >= 8000 { // 0.5 second chunks at 16kHz
                     let vad_chunk: Vec<f32> = buffer.drain(..8000).collect();
-                    eprintln!("DEBUG: Processing VAD chunk, buffer len: {}", buffer.len());
+
+                    // Check audio levels
+                    let max_amplitude = vad_chunk.iter().map(|x| x.abs()).fold(0.0f32, f32::max);
+                    let avg_amplitude = vad_chunk.iter().map(|x| x.abs()).sum::<f32>() / vad_chunk.len() as f32;
+                    eprintln!("DEBUG: Processing VAD chunk, buffer len: {}, max_amplitude: {:.6}, avg_amplitude: {:.6}",
+                              buffer.len(), max_amplitude, avg_amplitude);
 
                     // Process through VAD
                     let mut vad_lock = match vad.lock() {
