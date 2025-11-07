@@ -27,8 +27,17 @@ pub enum SttError {
     #[error("ONNX Runtime error: {0}")]
     OnnxRuntime(#[from] ort::Error),
 
+    #[error("Array shape error: {0}")]
+    ShapeError(String),
+
     #[error("Internal error: {0}")]
     Internal(String),
+}
+
+impl From<ndarray::ShapeError> for SttError {
+    fn from(err: ndarray::ShapeError) -> Self {
+        SttError::ShapeError(err.to_string())
+    }
 }
 
 impl SttError {

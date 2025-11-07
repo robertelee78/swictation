@@ -44,8 +44,8 @@ fn load_wav(path: &str) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== STT Feature Extraction Test ===\n");
 
-    // Test feature extraction with English audio
-    let test_audio = "/opt/swictation/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/test_wavs/en.wav";
+    // Test feature extraction with English audio (16kHz version)
+    let test_audio = "/opt/swictation/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/test_wavs/en_16k.wav";
 
     println!("Loading audio: {}\n", test_audio);
     let audio = load_wav(test_audio)?;
@@ -71,9 +71,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Mean: {:.2}", mean);
 
     println!("\n=== Testing Recognizer ===");
-    let recognizer = Recognizer::new(DEFAULT_MODEL_PATH)?;
+    let mut recognizer = Recognizer::new(DEFAULT_MODEL_PATH)?;
 
-    println!("Running recognition (placeholder implementation)...");
+    println!("Running recognition...");
     let result = recognizer.recognize(&audio)?;
 
     println!("\nResult:");
@@ -81,8 +81,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Confidence: {:.2}", result.confidence);
     println!("  Processing time: {:.2}ms", result.processing_time_ms);
 
-    println!("\n✓ Feature extraction test complete!");
-    println!("  Note: Actual ONNX inference not yet implemented");
+    println!("\n✓ ONNX inference test complete!");
 
     Ok(())
 }

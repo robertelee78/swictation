@@ -167,6 +167,21 @@ impl ParakeetModel {
                 self.joiner.inputs.len(),
                 self.joiner.outputs.len())
     }
+
+    /// Get access to encoder session for direct inference
+    pub fn encoder(&mut self) -> &mut Session {
+        &mut self.encoder
+    }
+
+    /// Get access to decoder session for direct inference
+    pub fn decoder(&mut self) -> &mut Session {
+        &mut self.decoder
+    }
+
+    /// Get access to joiner session for direct inference
+    pub fn joiner(&mut self) -> &mut Session {
+        &mut self.joiner
+    }
 }
 
 #[cfg(test)]
