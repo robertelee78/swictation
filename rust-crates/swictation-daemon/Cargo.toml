@@ -8,6 +8,10 @@ edition = "2021"
 swictation-audio = { path = "../swictation-audio" }
 swictation-vad = { path = "../swictation-vad" }
 swictation-stt = { path = "../swictation-stt" }
+swictation-broadcaster = { path = "../swictation-broadcaster" }
+
+# Working STT implementation
+sherpa-rs = "0.6"
 
 # Text transformation (voice commands → symbols)
 midstreamer-text-transform = { path = "../../external/midstream/crates/text-transform" }
@@ -18,7 +22,8 @@ tokio = { version = "1.0", features = ["full"] }
 # System interaction
 enigo = "0.2"           # Text injection
 sysinfo = "0.32"        # System monitoring
-global-hotkey = "0.6"   # Cross-platform hotkey registration
+global-hotkey = "0.6"   # Cross-platform hotkey registration (X11, Windows, macOS)
+swayipc = "3.0"         # Sway/Wayland IPC for compositor integration
 
 # Configuration
 serde = { workspace = true }

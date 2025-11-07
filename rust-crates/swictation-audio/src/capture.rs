@@ -269,10 +269,12 @@ impl AudioCapture {
 
                 // Convert multi-channel to mono if needed
                 let mono_audio: Vec<f32> = if source_channels > target_channels {
-                    // Use left channel only (first sample in each frame)
-                    // Averaging would cut amplitude in half if mic is only in one channel
+                    // Average all channels to preserve amplitude from any channel
+                    // This ensures we capture audio whether it's on left, right, or both channels
                     data.chunks(source_channels as usize)
-                        .map(|frame| frame[0])
+                        .map(|frame| {
+                            frame.iter().sum::<f32>() / frame.len() as f32
+                        })
                         .collect()
                 } else {
                     data.to_vec()

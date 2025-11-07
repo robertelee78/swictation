@@ -1,8 +1,14 @@
 //! Global hotkey handling for cross-desktop compatibility
+//!
+//! Supports multiple backends:
+//! - X11: Direct hotkey grabbing via global-hotkey crate
+//! - Sway/Wayland: IPC-based integration (requires manual config)
+//! - Windows/macOS: Via global-hotkey crate
 
 use anyhow::{Context, Result};
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState, hotkey::{HotKey, Code, Modifiers}};
 use tokio::sync::mpsc;
+use tracing::{info, warn};
 
 use crate::config::HotkeyConfig;
 
@@ -17,19 +23,99 @@ pub enum HotkeyEvent {
     PushToTalkReleased,
 }
 
+/// Display server types
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum DisplayServer {
+    X11,
+    Sway,
+    Wayland,
+    Headless,
+}
+
+/// Detect which display server is running
+fn detect_display_server() -> DisplayServer {
+    // Check for Sway specifically (wlroots-based compositor)
+    if std::env::var("SWAYSOCK").is_ok() {
+        return DisplayServer::Sway;
+    }
+
+    // Generic Wayland
+    if std::env::var("WAYLAND_DISPLAY").is_ok() {
+        return DisplayServer::Wayland;
+    }
+
+    // X11
+    if std::env::var("DISPLAY").is_ok() {
+        return DisplayServer::X11;
+    }
+
+    DisplayServer::Headless
+}
+
 /// Hotkey manager for global hotkey registration
 pub struct HotkeyManager {
-    manager: GlobalHotKeyManager,
-    toggle_hotkey: HotKey,
-    ptt_hotkey: HotKey,
-    rx: mpsc::UnboundedReceiver<HotkeyEvent>,
+    backend: HotkeyBackend,
+}
+
+/// Backend-specific hotkey implementation
+enum HotkeyBackend {
+    /// X11/Windows/macOS using global-hotkey crate
+    GlobalHotkey {
+        manager: GlobalHotKeyManager,
+        toggle_hotkey: HotKey,
+        ptt_hotkey: HotKey,
+        rx: mpsc::UnboundedReceiver<HotkeyEvent>,
+    },
+    /// Sway compositor (requires manual config)
+    SwayIpc {
+        rx: mpsc::UnboundedReceiver<HotkeyEvent>,
+    },
 }
 
 impl HotkeyManager {
     /// Create new hotkey manager with configured hotkeys
-    pub fn new(config: HotkeyConfig) -> Result<Self> {
-        let manager = GlobalHotKeyManager::new()
-            .context("Failed to create global hotkey manager")?;
+    /// Returns None if hotkeys are not available on this system
+    pub fn new(config: HotkeyConfig) -> Result<Option<Self>> {
+        let display_server = detect_display_server();
+        info!("Detected display server: {:?}", display_server);
+
+        match display_server {
+            DisplayServer::X11 => {
+                info!("Using X11 hotkey backend (direct key grabbing)");
+                Self::new_global_hotkey(config)
+            }
+            DisplayServer::Sway => {
+                info!("Using Sway IPC backend (requires manual config)");
+                Self::new_sway_ipc(config)
+            }
+            DisplayServer::Wayland => {
+                warn!("Generic Wayland compositor detected");
+                warn!("Global hotkeys not supported - compositor-specific integration required");
+                warn!("Please configure hotkeys in your compositor to call:");
+                warn!("  - Toggle: echo 'toggle' | nc -U /tmp/swictation.sock");
+                warn!("  - PTT press: echo 'ptt_press' | nc -U /tmp/swictation.sock");
+                warn!("  - PTT release: echo 'ptt_release' | nc -U /tmp/swictation.sock");
+                Ok(None)
+            }
+            DisplayServer::Headless => {
+                warn!("No display server detected (headless mode)");
+                warn!("Hotkeys disabled - use IPC/CLI for control");
+                Ok(None)
+            }
+        }
+    }
+
+    /// Create X11/Windows/macOS backend using global-hotkey
+    fn new_global_hotkey(config: HotkeyConfig) -> Result<Option<Self>> {
+        // Try to create hotkey manager
+        let manager = match GlobalHotKeyManager::new() {
+            Ok(m) => m,
+            Err(e) => {
+                warn!("Failed to initialize global hotkey manager: {}", e);
+                warn!("Hotkeys disabled - use IPC/CLI for control");
+                return Ok(None);
+            }
+        };
 
         // Parse and register toggle hotkey
         let toggle_hotkey = parse_hotkey(&config.toggle)
@@ -73,24 +159,108 @@ impl HotkeyManager {
             }
         });
 
-        Ok(Self {
-            manager,
-            toggle_hotkey: toggle_hotkey_clone,
-            ptt_hotkey: ptt_hotkey_clone,
-            rx,
-        })
+        Ok(Some(Self {
+            backend: HotkeyBackend::GlobalHotkey {
+                manager,
+                toggle_hotkey: toggle_hotkey_clone,
+                ptt_hotkey: ptt_hotkey_clone,
+                rx,
+            },
+        }))
+    }
+
+    /// Create Sway IPC backend
+    ///
+    /// Note: Sway does not support dynamic hotkey registration via IPC.
+    /// We check if hotkeys exist in ~/.config/sway/config and auto-configure if needed.
+    fn new_sway_ipc(config: HotkeyConfig) -> Result<Option<Self>> {
+        // Check if we can connect to Sway
+        match swayipc::Connection::new() {
+            Ok(_) => {
+                info!("✓ Connected to Sway compositor");
+
+                // Don't auto-configure - let users add hotkeys manually
+                info!("");
+                info!("To add hotkeys, edit ~/.config/sway/config:");
+                info!("  bindsym $mod+Shift+d exec sh -c \"echo 'toggle' | nc -U /tmp/swictation.sock\"");
+                info!("  (Choose your own non-conflicting keys)");
+                info!("");
+
+                // We don't actually listen for events via IPC since Sway will
+                // trigger our Unix socket directly. Return None to indicate
+                // that IPC/CLI is the only control method.
+                Ok(None)
+            }
+            Err(e) => {
+                warn!("Failed to connect to Sway: {}", e);
+                warn!("Make sure SWAYSOCK environment variable is set");
+                Ok(None)
+            }
+        }
+    }
+
+    /// Check if Sway config has our hotkeys, add them if not, and reload Sway
+    fn configure_sway_hotkeys(config: &HotkeyConfig) -> Result<()> {
+        let sway_config_path = std::env::var("HOME")
+            .map(|home| format!("{}/.config/sway/config", home))
+            .context("HOME environment variable not set")?;
+
+        // Read current config
+        let config_content = std::fs::read_to_string(&sway_config_path)
+            .context("Failed to read Sway config")?;
+
+        // Check if our hotkeys already exist
+        if config_content.contains("# Swictation voice-to-text hotkeys") {
+            info!("✓ Swictation hotkeys already configured in Sway");
+            return Ok(());
+        }
+
+        info!("Adding Swictation hotkeys to Sway config...");
+
+        // Append hotkeys to config
+        let hotkey_config = format!(
+            r#"
+# Swictation voice-to-text hotkeys
+bindsym $mod+Shift+d exec sh -c "echo 'toggle' | nc -U /tmp/swictation.sock"
+bindsym $mod+Space exec sh -c "echo 'ptt_press' | nc -U /tmp/swictation.sock"
+bindsym --release $mod+Space exec sh -c "echo 'ptt_release' | nc -U /tmp/swictation.sock"
+"#
+        );
+
+        std::fs::write(&sway_config_path, format!("{}{}", config_content, hotkey_config))
+            .context("Failed to write Sway config")?;
+
+        info!("✓ Hotkeys added to Sway config");
+        info!("Reloading Sway...");
+
+        // Reload Sway
+        if let Ok(mut conn) = swayipc::Connection::new() {
+            if let Err(e) = conn.run_command("reload") {
+                warn!("Failed to reload Sway: {}", e);
+                info!("Please run: swaymsg reload");
+            } else {
+                info!("✓ Sway reloaded successfully");
+            }
+        }
+
+        Ok(())
     }
 
     /// Get next hotkey event (async)
     pub async fn next_event(&mut self) -> Option<HotkeyEvent> {
-        self.rx.recv().await
+        match &mut self.backend {
+            HotkeyBackend::GlobalHotkey { rx, .. } => rx.recv().await,
+            HotkeyBackend::SwayIpc { rx } => rx.recv().await,
+        }
     }
 }
 
 impl Drop for HotkeyManager {
     fn drop(&mut self) {
-        let _ = self.manager.unregister(self.toggle_hotkey.clone());
-        let _ = self.manager.unregister(self.ptt_hotkey.clone());
+        if let HotkeyBackend::GlobalHotkey { manager, toggle_hotkey, ptt_hotkey, .. } = &self.backend {
+            let _ = manager.unregister(toggle_hotkey.clone());
+            let _ = manager.unregister(ptt_hotkey.clone());
+        }
     }
 }
 

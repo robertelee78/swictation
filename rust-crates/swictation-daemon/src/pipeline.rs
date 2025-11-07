@@ -7,7 +7,7 @@ use tracing::info;
 
 use swictation_audio::AudioCapture;
 use swictation_vad::{VadConfig, VadDetector, VadResult};
-use swictation_stt::Recognizer;
+use sherpa_rs::transducer::{TransducerConfig, TransducerRecognizer};
 use midstreamer_text_transform::transform;
 
 use crate::config::DaemonConfig;
@@ -21,7 +21,7 @@ pub struct Pipeline {
     vad: Arc<Mutex<VadDetector>>,
 
     /// Speech-to-Text recognizer
-    stt: Arc<Mutex<Recognizer>>,
+    stt: Arc<Mutex<TransducerRecognizer>>,
 
     /// Recording state
     is_recording: bool,
@@ -62,10 +62,29 @@ impl Pipeline {
 
         info!("Initializing STT with {} provider...",
               gpu_provider.as_deref().unwrap_or("CPU"));
-        // Note: GPU provider and num_threads will be configured via ORT env vars
-        // when ParakeetModel supports them
-        let stt = Recognizer::new(&config.stt_model_path)
-            .context("Failed to initialize STT recognizer")?;
+
+        // Use sherpa-rs (working implementation)
+        let stt_config = TransducerConfig {
+            encoder: format!("{}/encoder.int8.onnx", config.stt_model_path),
+            decoder: format!("{}/decoder.int8.onnx", config.stt_model_path),
+            joiner: format!("{}/joiner.int8.onnx", config.stt_model_path),
+            tokens: format!("{}/tokens.txt", config.stt_model_path),
+            num_threads: config.num_threads.unwrap_or(4),
+            sample_rate: 16000,
+            feature_dim: 128,
+            model_type: "nemo_transducer".to_string(),
+            decoding_method: "greedy_search".to_string(),
+            hotwords_file: String::new(),
+            hotwords_score: 1.5,
+            modeling_unit: String::new(),
+            bpe_vocab: String::new(),
+            blank_penalty: 0.0,
+            debug: false,
+            provider: gpu_provider.clone(),
+        };
+
+        let stt = TransducerRecognizer::new(stt_config)
+            .map_err(|e| anyhow::anyhow!("Failed to initialize STT recognizer: {}", e))?;
 
         let (tx, rx) = mpsc::unbounded_channel();
 
@@ -156,17 +175,15 @@ impl Pipeline {
                                 }
                             };
 
-                            match stt_lock.recognize(&speech_samples) {
-                                Ok(result) => {
-                                    // Transform voice commands → symbols (Midstream)
-                                    // "hello comma world" → "hello, world"
-                                    let transformed = transform(&result.text);
-                                    info!("Transcribed: {} → {}", result.text, transformed);
-                                    let _ = tx.send(Ok(transformed));
-                                }
-                                Err(e) => {
-                                    let _ = tx.send(Err(e.into()));
-                                }
+                            // Use sherpa-rs transcribe method
+                            let text = stt_lock.transcribe(16000, &speech_samples);
+
+                            if !text.is_empty() {
+                                // Transform voice commands → symbols (Midstream)
+                                // "hello comma world" → "hello, world"
+                                let transformed = transform(&text);
+                                info!("Transcribed: {} → {}", text, transformed);
+                                let _ = tx.send(Ok(transformed));
                             }
                         }
                         Ok(VadResult::Silence) => {

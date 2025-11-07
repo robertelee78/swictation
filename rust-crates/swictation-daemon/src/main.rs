@@ -20,6 +20,7 @@ use crate::pipeline::Pipeline;
 use crate::gpu::detect_gpu_provider;
 use crate::ipc::{IpcServer, handle_connection as handle_ipc_connection};
 use crate::hotkey::{HotkeyManager, HotkeyEvent};
+use swictation_broadcaster::MetricsBroadcaster;
 
 #[derive(Debug, Clone, PartialEq)]
 enum DaemonState {
@@ -30,16 +31,29 @@ enum DaemonState {
 struct Daemon {
     pipeline: Arc<RwLock<Pipeline>>,
     state: Arc<RwLock<DaemonState>>,
+    broadcaster: Arc<MetricsBroadcaster>,
+    session_id: Arc<RwLock<Option<i64>>>,
 }
 
 impl Daemon {
     async fn new(config: DaemonConfig, gpu_provider: Option<String>) -> Result<(Self, mpsc::UnboundedReceiver<Result<String>>)> {
         let (pipeline, transcription_rx) = Pipeline::new(config, gpu_provider).await?;
 
+        // Initialize metrics broadcaster
+        let broadcaster = MetricsBroadcaster::new("/tmp/swictation_metrics.sock")
+            .await
+            .context("Failed to create metrics broadcaster")?;
+
         let daemon = Self {
             pipeline: Arc::new(RwLock::new(pipeline)),
             state: Arc::new(RwLock::new(DaemonState::Idle)),
+            broadcaster: Arc::new(broadcaster),
+            session_id: Arc::new(RwLock::new(None)),
         };
+
+        // Start broadcaster Unix socket server
+        daemon.broadcaster.start().await
+            .context("Failed to start metrics broadcaster")?;
 
         Ok((daemon, transcription_rx))
     }
@@ -47,18 +61,37 @@ impl Daemon {
     async fn toggle(&self) -> Result<String> {
         let mut state = self.state.write().await;
         let mut pipeline = self.pipeline.write().await;
+        let mut session_id = self.session_id.write().await;
 
         match *state {
             DaemonState::Idle => {
                 info!("▶️ Starting recording");
                 pipeline.start_recording().await?;
                 *state = DaemonState::Recording;
+
+                // Generate simple session ID (timestamp-based)
+                let sid = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs() as i64;
+                *session_id = Some(sid);
+
+                // Broadcast session start
+                self.broadcaster.start_session(sid).await;
+
                 Ok("Recording started".to_string())
             }
             DaemonState::Recording => {
                 info!("⏸️ Stopping recording");
                 pipeline.stop_recording().await?;
                 *state = DaemonState::Idle;
+
+                // Broadcast session end
+                if let Some(sid) = *session_id {
+                    self.broadcaster.end_session(sid).await;
+                }
+                *session_id = None;
+
                 Ok("Recording stopped".to_string())
             }
         }
@@ -110,13 +143,17 @@ async fn main() -> Result<()> {
         info!("  - GPU: {} acceleration enabled", provider);
     }
     info!("📊 Memory usage: {} MB", get_memory_usage_mb());
+    info!("📡 Metrics broadcaster ready on /tmp/swictation_metrics.sock");
 
-    // Initialize hotkey manager
+    // Initialize hotkey manager (optional - some compositors don't support it)
     let mut hotkey_manager = HotkeyManager::new(config.hotkeys.clone())
         .context("Failed to initialize hotkey manager")?;
 
-    info!("🎹 Hotkey registered: {} (toggle)", config.hotkeys.toggle);
-    info!("🎹 Hotkey registered: {} (push-to-talk)", config.hotkeys.push_to_talk);
+    if let Some(ref manager) = hotkey_manager {
+        info!("✓ Hotkeys initialized successfully");
+    } else {
+        info!("⚠️  Hotkeys not available - using IPC/CLI control only");
+    }
 
     // Start IPC server for CLI/scripts (optional)
     let socket_path = config.socket_path.clone();
@@ -127,7 +164,9 @@ async fn main() -> Result<()> {
         .context("Failed to start IPC server")?;
 
     info!("🚀 Swictation daemon ready!");
-    info!("   Press {} to start/stop recording", config.hotkeys.toggle);
+    if hotkey_manager.is_some() {
+        info!("   Press {} to start/stop recording", config.hotkeys.toggle);
+    }
     info!("   Or use 'swictation-cli toggle' for CLI control");
 
     // Handle transcription results and inject text
@@ -154,8 +193,15 @@ async fn main() -> Result<()> {
     // Main event loop
     loop {
         tokio::select! {
-            // Hotkey events (primary UX)
-            Some(event) = hotkey_manager.next_event() => {
+            // Hotkey events (primary UX) - only if hotkeys are available
+            Some(event) = async {
+                if let Some(ref mut manager) = hotkey_manager {
+                    manager.next_event().await
+                } else {
+                    // No hotkeys - wait forever (IPC is the only control)
+                    std::future::pending().await
+                }
+            } => {
                 match event {
                     HotkeyEvent::Toggle => {
                         if let Err(e) = daemon_clone.toggle().await {
@@ -195,6 +241,12 @@ async fn main() -> Result<()> {
 
     // Cleanup
     info!("🧹 Shutting down...");
+
+    // Stop broadcaster
+    if let Err(e) = daemon_clone.broadcaster.stop().await {
+        warn!("Failed to stop broadcaster cleanly: {}", e);
+    }
+
     info!("👋 Swictation daemon stopped");
 
     Ok(())
