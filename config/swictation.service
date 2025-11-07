@@ -1,25 +1,25 @@
 [Unit]
-Description=Swictation voice dictation daemon
-Documentation=https://github.com/yourusername/swictation
+Description=Swictation voice dictation daemon (Rust)
+Documentation=https://github.com/ruvnet/swictation
 After=graphical-session.target
 PartOf=graphical-session.target
-Wants=swictation-tray.service
+Wants=swictation-tauri.service
 
 [Service]
 Type=simple
-# Use system default Python 3
-ExecStart=/usr/bin/env python3 /opt/swictation/src/swictationd.py
+# Rust daemon binary
+ExecStart=/opt/swictation/bin/swictationd
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
 
 # Environment
-Environment="PYTHONUNBUFFERED=1"
+Environment="RUST_LOG=info"
 Environment="PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin"
 
-# Resource limits
-MemoryMax=6G
+# Resource limits (GPU transcription can be memory-intensive)
+MemoryMax=8G
 CPUQuota=200%
 
 # Security hardening
@@ -27,10 +27,11 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
 NoNewPrivileges=true
+# Allow access to GPU devices
+DeviceAllow=/dev/nvidia* rw
+DeviceAllow=/dev/dri/* rw
 
 [Install]
-WantedBy=sway-session.target
-# Fallback to default.target if sway-session.target doesn't exist
-Also=default.target
-# Ensure tray service is also enabled/started
-Also=swictation-tray.service
+WantedBy=default.target
+# Ensure Tauri UI service is also enabled/started
+Also=swictation-tauri.service

@@ -1,0 +1,15 @@
+[Unit]
+Description=Swictation Voice Dictation Daemon
+After=pulseaudio.service
+
+[Service]
+Type=simple
+ExecStart=/opt/swictation/rust-crates/target/release/swictation-daemon
+Restart=on-failure
+RestartSec=5
+Environment="LD_LIBRARY_PATH=%h/.cache/sherpa-rs/x86_64-unknown-linux-gnu/cd22ee337e205674536643d2bc86e984fbbbf9c5c52743c4df6fc8d8dd17371b/sherpa-onnx-v1.12.9-linux-x64-shared/lib:%h/.cache/ort.pyke.io/dfbin/x86_64-unknown-linux-gnu/ED1716DE95974BF47AB0223CA33734A0B5A5D09A181225D0E8ED62D070AEA893/onnxruntime/lib"
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

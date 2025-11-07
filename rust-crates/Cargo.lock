@@ -3188,6 +3188,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "dirs",
+ "js-sys",
  "metal",
  "nvml-wrapper",
  "rusqlite",
@@ -3199,6 +3200,8 @@ dependencies = [
  "thiserror 2.0.17",
  "tokio",
  "tracing",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
 ]
 
 [[package]]

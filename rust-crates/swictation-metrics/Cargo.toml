@@ -3,6 +3,9 @@ name = "swictation-metrics"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+crate-type = ["cdylib", "rlib"]  # cdylib for WASM, rlib for native
+
 [dependencies]
 # Database
 rusqlite = { version = "0.32", features = ["bundled"] }
@@ -17,8 +20,8 @@ chrono = { version = "0.4", features = ["serde"] }
 # Statistics
 statistical = "1.0"
 
-# Async runtime (for background writes)
-tokio = { version = "1.0", features = ["full"] }
+# Async runtime (for background writes) - disabled for WASM
+tokio = { version = "1.0", features = ["full"], optional = true }
 
 # Error handling
 thiserror = { workspace = true }
@@ -33,16 +36,28 @@ dirs = "5.0"
 # System monitoring
 sysinfo = "0.32"
 
-# GPU monitoring - platform-specific (MANDATORY)
-[target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
+# WASM bindings (for Node.js/browser)
+wasm-bindgen = { version = "0.2", optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
+js-sys = { version = "0.3", optional = true }
+
+# GPU monitoring - platform-specific (MANDATORY for native, excluded from WASM)
+[target.'cfg(all(any(target_os = "linux", target_os = "windows"), not(target_family = "wasm")))'.dependencies]
 nvml-wrapper = { version = "0.10", optional = true }
 
-[target.'cfg(target_os = "macos")'.dependencies]
+[target.'cfg(all(target_os = "macos", not(target_family = "wasm")))'.dependencies]
 metal = { version = "0.29", optional = true }
 
 [features]
-default = ["gpu-monitoring"]
+default = ["gpu-monitoring", "tokio"]
 gpu-monitoring = ["nvml-wrapper", "metal"]
+wasm = ["wasm-bindgen", "wasm-bindgen-futures", "js-sys"]
 
 [dev-dependencies]
 tempfile = "3.8"
+
+[profile.release]
+opt-level = "z"     # Optimize for size (WASM)
+lto = true          # Enable Link Time Optimization
+codegen-units = 1   # Better optimization
+strip = true        # Strip symbols

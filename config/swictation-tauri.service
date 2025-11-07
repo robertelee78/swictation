@@ -1,27 +1,16 @@
 [Unit]
-Description=Swictation Tauri UI (system tray)
-Documentation=https://github.com/ruvnet/swictation
-After=swictation.service
-Requires=swictation.service
-BindsTo=swictation.service
-PartOf=graphical-session.target
+Description=Swictation Tauri UI
+After=swictation-daemon.service graphical-session.target
+Requires=swictation-daemon.service
 
 [Service]
 Type=simple
-# Tauri UI binary
-ExecStart=/opt/swictation/bin/swictation-ui
+ExecStart=/opt/swictation/tauri-ui/src-tauri/target/release/swictation-ui
 Restart=on-failure
 RestartSec=5
+Environment="DISPLAY=:0"
 StandardOutput=journal
 StandardError=journal
-
-# Environment (systemd user services inherit WAYLAND_DISPLAY and DISPLAY)
-Environment="RUST_LOG=info"
-Environment="PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin"
-
-# Security (ProtectHome=read-only allows /opt access)
-ProtectHome=read-only
-NoNewPrivileges=true
 
 [Install]
 WantedBy=default.target

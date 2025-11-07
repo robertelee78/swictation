@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:release": "npm run build && cd src-tauri && cargo build --release --features custom-protocol",
     "preview": "vite preview",
     "tauri": "tauri"
   },
