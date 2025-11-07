@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use crate::buffer::CircularBuffer;
 use crate::error::{AudioError, Result};
+use crate::resampler::Resampler;
 use crate::AudioConfig;
 
 /// Callback for audio chunks (streaming mode)
@@ -38,6 +39,8 @@ pub struct AudioCapture {
     host: Host,
     device: Option<Device>,
     chunk_callback: Option<ChunkCallback>,
+    resampler: Arc<Mutex<Option<Resampler>>>,
+    resample_buffer: Arc<Mutex<Vec<f32>>>,  // Buffer for accumulating samples before resampling
 }
 
 impl AudioCapture {
@@ -67,6 +70,8 @@ impl AudioCapture {
             host,
             device: None,
             chunk_callback: None,
+            resampler: Arc::new(Mutex::new(None)),
+            resample_buffer: Arc::new(Mutex::new(Vec::new())),
         })
     }
 
@@ -171,13 +176,25 @@ impl AudioCapture {
             return Ok(());
         }
 
+        // List available devices for debugging
+        println!("\n=== Available Input Devices ===");
+        for (idx, dev) in self.host.input_devices()
+            .map_err(|e| AudioError::device(format!("Failed to enumerate devices: {}", e)))?
+            .enumerate()
+        {
+            let name = dev.name().unwrap_or_else(|_| "Unknown".to_string());
+            println!("  [{}] {}", idx, name);
+        }
+
         // Select device
         let device = if let Some(index) = self.config.device_index {
+            println!("Selecting device index: {}", index);
             let mut devices = self.host.input_devices()
                 .map_err(|e| AudioError::device(format!("Failed to enumerate devices: {}", e)))?;
             devices.nth(index)
                 .ok_or_else(|| AudioError::device(format!("Device index {} not found", index)))?
         } else {
+            println!("Using default input device");
             self.host.default_input_device()
                 .ok_or_else(|| AudioError::device("No default input device found"))?
         };
@@ -204,7 +221,23 @@ impl AudioCapture {
         // Clear buffers
         self.buffer.lock().clear();
         self.chunk_buffer.lock().clear();
+        self.resample_buffer.lock().clear();
         self.total_frames.store(0, Ordering::Relaxed);
+
+        let target_channels = self.config.channels;
+
+        // Initialize resampler if needed
+        if source_sample_rate != self.config.sample_rate {
+            println!("Creating resampler: {} Hz → {} Hz", source_sample_rate, self.config.sample_rate);
+            let resampler = Resampler::new(
+                source_sample_rate,
+                self.config.sample_rate,
+                target_channels,
+            )?;
+            *self.resampler.lock() = Some(resampler);
+        } else {
+            *self.resampler.lock() = None;
+        }
 
         // Build stream config
         let stream_config = StreamConfig {
@@ -219,10 +252,12 @@ impl AudioCapture {
         let total_frames = Arc::clone(&self.total_frames);
         let is_recording = Arc::clone(&self.is_recording);
         let chunk_callback = self.chunk_callback.clone();
+        let resampler = Arc::clone(&self.resampler);
+        let resample_buffer = Arc::clone(&self.resample_buffer);
 
-        let target_channels = self.config.channels;
         let streaming_mode = self.config.streaming_mode;
         let chunk_frames = (self.config.chunk_duration * self.config.sample_rate as f32) as usize;
+        let resample_chunk_size = (source_sample_rate as f32 * 0.1) as usize;  // 100ms chunks at source rate
 
         // Create audio callback
         let stream = device.build_input_stream(
@@ -233,16 +268,45 @@ impl AudioCapture {
                 }
 
                 // Convert multi-channel to mono if needed
-                let audio: Vec<f32> = if source_channels > target_channels {
-                    // Average across channels
+                let mono_audio: Vec<f32> = if source_channels > target_channels {
+                    // Use left channel only (first sample in each frame)
+                    // Averaging would cut amplitude in half if mic is only in one channel
                     data.chunks(source_channels as usize)
-                        .map(|frame| {
-                            frame.iter().sum::<f32>() / source_channels as f32
-                        })
+                        .map(|frame| frame[0])
                         .collect()
                 } else {
                     data.to_vec()
                 };
+
+                // Resample if needed
+                let mut audio = mono_audio;
+                if resampler.lock().is_some() {
+                    // Accumulate samples for resampling
+                    let mut resample_buf = resample_buffer.lock();
+                    resample_buf.extend_from_slice(&audio);
+
+                    // Process when we have enough samples
+                    if resample_buf.len() >= resample_chunk_size {
+                        // Extract chunk
+                        let chunk_to_resample: Vec<f32> = resample_buf.drain(..resample_chunk_size).collect();
+
+                        // Resample
+                        if let Some(ref mut resampler_lock) = resampler.lock().as_mut() {
+                            match resampler_lock.process(&chunk_to_resample) {
+                                Ok(resampled) => {
+                                    audio = resampled;
+                                }
+                                Err(e) => {
+                                    eprintln!("Resampling error: {}", e);
+                                    return;
+                                }
+                            }
+                        }
+                    } else {
+                        // Not enough samples yet, return without processing
+                        return;
+                    }
+                }
 
                 let frames = audio.len();
 
