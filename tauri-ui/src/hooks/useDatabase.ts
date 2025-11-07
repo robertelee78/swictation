@@ -26,7 +26,7 @@ export function useDatabase() {
     setLoading(true);
     setError(null);
     try {
-      const stats = await invoke<LifetimeMetrics>('get_lifetime_metrics');
+      const stats = await invoke<LifetimeMetrics>('get_lifetime_stats');
       setLifetimeStats(stats);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load lifetime stats');
