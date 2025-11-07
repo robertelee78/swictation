@@ -21,6 +21,7 @@ use crate::gpu::detect_gpu_provider;
 use crate::ipc::{IpcServer, handle_connection as handle_ipc_connection};
 use crate::hotkey::{HotkeyManager, HotkeyEvent};
 use swictation_broadcaster::MetricsBroadcaster;
+use swictation_metrics::{MemoryMonitor, MemoryPressure};
 
 #[derive(Debug, Clone, PartialEq)]
 enum DaemonState {
@@ -177,6 +178,67 @@ async fn main() -> Result<()> {
             loop {
                 interval.tick().await;
                 metrics.lock().unwrap().update_system_metrics();
+            }
+        })
+    };
+
+    // Spawn memory pressure monitor (RAM + VRAM every 5 seconds)
+    let memory_handle = {
+        let broadcaster = daemon_clone.broadcaster.clone();
+        tokio::spawn(async move {
+            let mut memory_monitor = match MemoryMonitor::new() {
+                Ok(m) => {
+                    info!("✓ Memory monitoring initialized: {}", m.gpu_device_name());
+                    m
+                }
+                Err(e) => {
+                    error!("Failed to initialize memory monitor: {}", e);
+                    return;
+                }
+            };
+
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+
+            loop {
+                interval.tick().await;
+
+                // Check memory pressure
+                let (ram_pressure, vram_pressure) = memory_monitor.check_pressure();
+
+                // Handle RAM pressure
+                match ram_pressure {
+                    MemoryPressure::Warning => {
+                        let stats = memory_monitor.get_stats();
+                        warn!("⚠️  RAM usage high: {:.1}% ({} MB used / {} MB total)",
+                             stats.ram.percent_used, stats.ram.used_mb, stats.ram.total_mb);
+                    }
+                    MemoryPressure::Critical => {
+                        let stats = memory_monitor.get_stats();
+                        error!("🚨 RAM critical: {:.1}% ({} MB used / {} MB total) - Process using {} MB",
+                              stats.ram.percent_used, stats.ram.used_mb, stats.ram.total_mb, stats.ram.process_mb);
+                    }
+                    MemoryPressure::Normal => {}
+                }
+
+                // Handle VRAM pressure (MANDATORY GPU monitoring)
+                match vram_pressure {
+                    MemoryPressure::Warning => {
+                        let stats = memory_monitor.get_stats();
+                        if let Some(vram) = stats.vram {
+                            warn!("⚠️  VRAM usage high: {:.1}% ({} MB used / {} MB total) on {}",
+                                 vram.percent_used, vram.used_mb, vram.total_mb, vram.device_name);
+                        }
+                    }
+                    MemoryPressure::Critical => {
+                        let stats = memory_monitor.get_stats();
+                        if let Some(vram) = stats.vram {
+                            error!("🚨 VRAM critical: {:.1}% ({} MB used / {} MB total) on {}",
+                                  vram.percent_used, vram.used_mb, vram.total_mb, vram.device_name);
+                            // Note: Could pause recording here if needed
+                        }
+                    }
+                    MemoryPressure::Normal => {}
+                }
             }
         })
     };
