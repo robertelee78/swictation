@@ -5,11 +5,13 @@
 
 pub mod collector;
 pub mod database;
+pub mod gpu;
 pub mod models;
 
 // Re-export main types
 pub use collector::MetricsCollector;
 pub use database::MetricsDatabase;
+pub use gpu::{GpuMetrics, GpuMonitor};
 pub use models::{
     DaemonState, LifetimeMetrics, RealtimeMetrics, SegmentMetrics, SessionMetrics,
 };

@@ -5,10 +5,12 @@
 use anyhow::Result;
 use chrono::Utc;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Instant;
+use sysinfo::{System, Pid, ProcessesToUpdate};
 use tracing::info;
 
 use crate::database::MetricsDatabase;
+use crate::gpu::GpuMonitor;
 use crate::models::{RealtimeMetrics, SegmentMetrics, SessionMetrics};
 
 /// Orchestrates metrics collection for Swictation daemon
@@ -30,6 +32,10 @@ pub struct MetricsCollector {
 
     // Real-time metrics
     pub realtime: Arc<Mutex<RealtimeMetrics>>,
+
+    // System monitoring
+    system: Arc<Mutex<System>>,
+    gpu_monitor: Arc<Mutex<Option<GpuMonitor>>>,
 }
 
 impl MetricsCollector {
@@ -44,6 +50,10 @@ impl MetricsCollector {
     ) -> Result<Self> {
         let db = Arc::new(MetricsDatabase::new(db_path)?);
 
+        // Initialize system monitor
+        let mut system = System::new_all();
+        system.refresh_all();
+
         Ok(Self {
             db,
             typing_baseline_wpm,
@@ -56,7 +66,16 @@ impl MetricsCollector {
             session_start_time: Arc::new(Mutex::new(None)),
             active_time_accumulator: Arc::new(Mutex::new(0.0)),
             realtime: Arc::new(Mutex::new(RealtimeMetrics::default())),
+            system: Arc::new(Mutex::new(system)),
+            gpu_monitor: Arc::new(Mutex::new(None)),
         })
+    }
+
+    /// Enable GPU monitoring for given provider
+    pub fn enable_gpu_monitoring(&self, provider: &str) {
+        let monitor = GpuMonitor::new(provider);
+        *self.gpu_monitor.lock().unwrap() = Some(monitor);
+        info!("GPU monitoring enabled for provider: {}", provider);
     }
 
     /// Start a new metrics session
@@ -279,6 +298,56 @@ impl MetricsCollector {
     /// Check if session is active
     pub fn has_active_session(&self) -> bool {
         self.current_session.lock().unwrap().is_some()
+    }
+
+    /// Update system metrics (CPU, memory, GPU)
+    /// Should be called periodically (e.g., every 1 second)
+    pub fn update_system_metrics(&self) {
+        // Refresh system info
+        let mut system = self.system.lock().unwrap();
+        system.refresh_cpu_all();
+        system.refresh_memory();
+        system.refresh_processes(sysinfo::ProcessesToUpdate::All, false);
+
+        // Get CPU usage (global average)
+        let cpu_percent = system.global_cpu_usage();
+
+        // Get process memory (current process)
+        let pid = Pid::from_u32(std::process::id());
+        let _process_memory_mb = system
+            .process(pid)
+            .map(|p| p.memory() / 1024 / 1024)
+            .unwrap_or(0);
+
+        // Update realtime metrics
+        self.update_cpu_usage(cpu_percent as f64);
+
+        // Update GPU metrics if available
+        if let Some(ref mut monitor) = *self.gpu_monitor.lock().unwrap() {
+            let gpu_metrics = monitor.update();
+
+            // Update GPU memory if available
+            if let (Some(used), Some(total)) = (gpu_metrics.memory_used_mb, gpu_metrics.memory_total_mb) {
+                self.update_gpu_memory(used as f64, total as f64);
+            }
+        }
+
+        // Update session means if active
+        if let Some(ref mut session) = *self.current_session.lock().unwrap() {
+            // Update CPU mean (simple running average)
+            // TODO: Use proper mean calculation over samples
+            session.cpu_usage_mean_percent = cpu_percent as f64;
+        }
+    }
+
+    /// Get system monitor for external use
+    pub fn get_system(&self) -> Arc<Mutex<System>> {
+        self.system.clone()
+    }
+
+    /// Get GPU monitor for external use
+    pub fn get_gpu_monitor(&self) -> Arc<Mutex<Option<GpuMonitor>>> {
+        self.gpu_monitor.clone()
     }
 }
 
