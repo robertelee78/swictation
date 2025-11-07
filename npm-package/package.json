@@ -1,0 +1,56 @@
+{
+  "name": "swictation",
+  "version": "0.1.0",
+  "description": "Voice-to-text dictation system with smart text transformation",
+  "keywords": [
+    "voice-to-text",
+    "speech-recognition",
+    "dictation",
+    "transcription",
+    "whisper",
+    "stt",
+    "rust"
+  ],
+  "homepage": "https://github.com/yourusername/swictation",
+  "bugs": {
+    "url": "https://github.com/yourusername/swictation/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/swictation.git"
+  },
+  "license": "MIT",
+  "author": "Your Name",
+  "main": "index.js",
+  "bin": {
+    "swictation": "./bin/swictation"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "config/",
+    "postinstall.js",
+    "README.md"
+  ],
+  "scripts": {
+    "postinstall": "node postinstall.js",
+    "test": "node test.js"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "dependencies": {
+    "chalk": "^4.1.2",
+    "inquirer": "^8.2.5",
+    "which": "^2.0.2"
+  },
+  "devDependencies": {
+    "eslint": "^8.0.0"
+  }
+}

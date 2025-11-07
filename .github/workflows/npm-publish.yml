@@ -1,0 +1,170 @@
+name: NPM Package Build and Publish
+
+on:
+  push:
+    branches:
+      - main
+      - rust-migration
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        override: true
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libasound2-dev \
+          libssl-dev \
+          pkg-config \
+          libgtk-3-dev \
+          libwebkit2gtk-4.0-dev \
+          libappindicator3-dev \
+          librsvg2-dev \
+          patchelf
+
+    - name: Cache Rust dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: |
+          rust-crates -> target
+          tauri-ui/src-tauri -> target
+
+    - name: Build daemon
+      working-directory: rust-crates
+      run: |
+        cargo build --release
+        strip target/release/swictation-daemon
+
+    - name: Build Tauri UI
+      working-directory: tauri-ui
+      run: |
+        npm install
+        cd src-tauri
+        cargo build --release
+        strip target/release/swictation-ui
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+        registry-url: 'https://registry.npmjs.org'
+
+    - name: Prepare npm package
+      run: |
+        cd npm-package
+        mkdir -p bin
+        cp ../rust-crates/target/release/swictation-daemon bin/
+        cp ../tauri-ui/src-tauri/target/release/swictation-ui bin/
+        chmod +x bin/*
+        npm install
+
+    - name: Package size report
+      run: |
+        cd npm-package
+        echo "Package contents:"
+        ls -la bin/
+        echo ""
+        echo "Binary sizes:"
+        du -sh bin/*
+        echo ""
+        echo "Total package size:"
+        du -sh .
+
+    - name: Test CLI
+      run: |
+        cd npm-package
+        ./bin/swictation help
+        ./bin/swictation status || true
+
+    - name: Upload npm package artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: npm-package-linux-x64
+        path: npm-package/
+        retention-days: 7
+
+    - name: Create tarball
+      if: startsWith(github.ref, 'refs/tags/')
+      run: |
+        cd npm-package
+        npm pack
+        mv swictation-*.tgz ../
+
+    - name: Publish to npm
+      if: startsWith(github.ref, 'refs/tags/')
+      env:
+        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      run: |
+        cd npm-package
+        npm publish
+
+  create-release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [build-linux]
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Download artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: npm-package-linux-x64
+        path: npm-package/
+
+    - name: Create release tarball
+      run: |
+        cd npm-package
+        npm pack
+        mv swictation-*.tgz ../swictation-linux-x64.tgz
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          swictation-linux-x64.tgz
+        body: |
+          ## Installation
+
+          ### Via npm (recommended)
+          ```bash
+          npm install -g swictation
+          ```
+
+          ### Manual installation
+          Download the tarball and install:
+          ```bash
+          npm install -g swictation-linux-x64.tgz
+          ```
+
+          ## Quick Start
+          ```bash
+          swictation setup    # Configure systemd and hotkeys
+          swictation start    # Start the daemon
+          swictation toggle   # Toggle recording
+          ```
+
+          See [README](https://github.com/${{ github.repository }}/blob/main/npm-package/README.md) for full documentation.
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

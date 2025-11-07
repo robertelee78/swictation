@@ -1,0 +1,28 @@
+[Unit]
+Description=Swictation Voice-to-Text Daemon
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/swictation-daemon
+Restart=on-failure
+RestartSec=5
+
+# Environment
+Environment="RUST_LOG=info"
+
+# Resource limits
+MemoryMax=500M
+CPUQuota=50%
+
+# Security hardening
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/tmp
+ReadWritePaths=%h/.local/share/swictation
+ReadWritePaths=%h/.cache/swictation
+ReadWritePaths=%h/.config/swictation
+
+[Install]
+WantedBy=default.target
