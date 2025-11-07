@@ -5,22 +5,22 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
-use swictation_audio::{AudioCapture, AudioCaptureConfig};
+use swictation_audio::AudioCapture;
 use swictation_vad::{VadConfig, VadDetector, VadResult};
-use swictation_stt::{Recognizer, RecognizerConfig};
+use swictation_stt::Recognizer;
 
 use crate::config::DaemonConfig;
 
 /// Pipeline state
 pub struct Pipeline {
     /// Audio capture
-    audio: AudioCapture,
+    audio: Arc<Mutex<AudioCapture>>,
 
     /// Voice Activity Detection
-    vad: VadDetector,
+    vad: Arc<Mutex<VadDetector>>,
 
     /// Speech-to-Text recognizer
-    stt: Recognizer,
+    stt: Arc<Mutex<Recognizer>>,
 
     /// Recording state
     is_recording: bool,
@@ -34,10 +34,14 @@ impl Pipeline {
     /// Create new pipeline with GPU acceleration
     pub async fn new(config: DaemonConfig, gpu_provider: Option<String>) -> Result<Self> {
         info!("Initializing Audio capture...");
-        let audio_config = AudioCaptureConfig {
+        let audio_config = swictation_audio::AudioConfig {
             sample_rate: 16000,
             channels: 1,
-            buffer_size: 8000, // 0.5 seconds
+            blocksize: 1024,
+            buffer_duration: 10.0,
+            device_index: None,
+            streaming_mode: true,
+            chunk_duration: 0.5,
         };
         let audio = AudioCapture::new(audio_config)
             .context("Failed to initialize audio capture")?;
@@ -57,28 +61,17 @@ impl Pipeline {
 
         info!("Initializing STT with {} provider...",
               gpu_provider.as_deref().unwrap_or("CPU"));
-        let stt_config = RecognizerConfig {
-            model_path: config.stt_model_path.clone(),
-            tokens_path: config.stt_tokens_path.clone(),
-            provider: gpu_provider,
-            num_threads: config.num_threads,
-            sample_rate: 16000,
-            enable_endpoint: true,
-            decoding_method: "greedy_search".to_string(),
-            max_active_paths: 4,
-            hotwords_file: None,
-            hotwords_score: 1.5,
-        };
-
-        let stt = Recognizer::new(stt_config)
+        // Note: GPU provider and num_threads will be configured via ORT env vars
+        // when ParakeetModel supports them
+        let stt = Recognizer::new(&config.stt_model_path)
             .context("Failed to initialize STT recognizer")?;
 
         let (tx, rx) = mpsc::unbounded_channel();
 
         Ok(Self {
-            audio,
-            vad,
-            stt,
+            audio: Arc::new(Mutex::new(audio)),
+            vad: Arc::new(Mutex::new(vad)),
+            stt: Arc::new(Mutex::new(stt)),
             is_recording: false,
             tx,
             rx,
@@ -94,16 +87,15 @@ impl Pipeline {
         self.is_recording = true;
         info!("Recording started");
 
-        // Start audio capture
-        // Note: For now, we'll collect audio and process in batches
-        // A more sophisticated implementation would use Arc<Mutex<>> for thread-safe sharing
-        // TODO: Implement proper streaming with thread-safe VAD/STT
+        // Start audio capture with thread-safe pipeline
+        let _vad = self.vad.clone();
+        let _stt = self.stt.clone();
+        let _tx = self.tx.clone();
 
-        // For now, just start audio capture - processing will be implemented next
-        self.audio.start(move |_samples: &[f32]| {
-            // TODO: Implement pipeline processing
-            // This requires thread-safe wrappers around VAD and STT
-        })?;
+        // Note: Full audio → VAD → STT pipeline implementation pending
+        // AudioCapture callback needs to be Send + Sync safe
+        // This will be implemented when we make Pipeline fully thread-safe
+        self.audio.lock().unwrap().start()?;
 
         Ok(())
     }
@@ -115,10 +107,10 @@ impl Pipeline {
         }
 
         self.is_recording = false;
-        self.audio.stop()?;
+        self.audio.lock().unwrap().stop()?;
 
         // Flush remaining audio through VAD
-        self.vad.flush();
+        self.vad.lock().unwrap().flush();
 
         info!("Recording stopped");
         Ok(())

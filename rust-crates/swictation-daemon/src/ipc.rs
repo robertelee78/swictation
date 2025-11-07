@@ -47,28 +47,16 @@ impl IpcServer {
         Ok(Self { listener, daemon })
     }
 
-    /// Run the IPC server
-    pub async fn run(&mut self) -> Result<()> {
-        loop {
-            match self.listener.accept().await {
-                Ok((stream, _addr)) => {
-                    let daemon = self.daemon.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = handle_connection(stream, daemon).await {
-                            error!("Connection error: {}", e);
-                        }
-                    });
-                }
-                Err(e) => {
-                    error!("Failed to accept connection: {}", e);
-                }
-            }
-        }
+    /// Accept next IPC connection
+    pub async fn accept(&mut self) -> Result<(UnixStream, Arc<Daemon>)> {
+        let (stream, _) = self.listener.accept().await
+            .context("Failed to accept connection")?;
+        Ok((stream, self.daemon.clone()))
     }
 }
 
 /// Handle a single IPC connection
-async fn handle_connection(mut stream: UnixStream, daemon: Arc<Daemon>) -> Result<()> {
+pub async fn handle_connection(mut stream: UnixStream, daemon: Arc<Daemon>) -> Result<()> {
     let mut buffer = [0u8; 1024];
     let n = stream.read(&mut buffer).await?;
 

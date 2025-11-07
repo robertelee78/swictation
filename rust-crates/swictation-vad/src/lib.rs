@@ -145,6 +145,18 @@ impl VadConfig {
         self
     }
 
+    /// Set ONNX Runtime provider
+    pub fn provider(mut self, provider: Option<String>) -> Self {
+        self.provider = provider;
+        self
+    }
+
+    /// Set number of threads
+    pub fn num_threads(mut self, num_threads: Option<i32>) -> Self {
+        self.num_threads = num_threads;
+        self
+    }
+
     /// Set buffer size in seconds
     pub fn buffer_size(mut self, seconds: f32) -> Self {
         self.buffer_size_seconds = seconds;

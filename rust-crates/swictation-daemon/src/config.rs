@@ -4,6 +4,27 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// Hotkey configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HotkeyConfig {
+    /// Toggle hotkey (default: "Super+Shift+D" for Dictation)
+    /// User-configurable via UI settings
+    pub toggle: String,
+
+    /// Push-to-talk hotkey (default: "Super+Space")
+    /// User-configurable via UI settings
+    pub push_to_talk: String,
+}
+
+impl Default for HotkeyConfig {
+    fn default() -> Self {
+        Self {
+            toggle: "Super+Shift+D".to_string(),  // Windows/Super key + Shift + D (Dictation)
+            push_to_talk: "Super+Space".to_string(),  // Windows/Super key + Space
+        }
+    }
+}
+
 /// Daemon configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DaemonConfig {
@@ -37,6 +58,9 @@ pub struct DaemonConfig {
 
     /// Number of threads for ONNX Runtime
     pub num_threads: Option<i32>,
+
+    /// Hotkey configuration
+    pub hotkeys: HotkeyConfig,
 }
 
 impl Default for DaemonConfig {
@@ -52,6 +76,7 @@ impl Default for DaemonConfig {
             stt_model_path: "/opt/swictation/models/parakeet-tdt-0.6b-v3-int8/model.int8.onnx".to_string(),
             stt_tokens_path: "/opt/swictation/models/parakeet-tdt-0.6b-v3-int8/tokens.txt".to_string(),
             num_threads: Some(4),
+            hotkeys: HotkeyConfig::default(),
         }
     }
 }

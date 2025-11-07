@@ -72,18 +72,15 @@ fn check_directml_available() -> bool {
     }
 }
 
-#[cfg(not(all(target_os = "windows", feature = "gpu-info")))]
-fn check_directml_available() -> bool {
-    // On Windows without gpu-info feature, assume DirectML is available
-    #[cfg(target_os = "windows")]
-    { true }
-    #[cfg(not(target_os = "windows"))]
-    { false }
-}
-
 #[cfg(not(target_os = "windows"))]
 fn check_directml_available() -> bool {
     false
+}
+
+#[cfg(all(target_os = "windows", not(feature = "gpu-info")))]
+fn check_directml_available() -> bool {
+    // On Windows without gpu-info feature, assume DirectML is available
+    true
 }
 
 /// Check if CoreML is available (macOS Apple Silicon)

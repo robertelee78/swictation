@@ -15,6 +15,7 @@ tokio = { version = "1.0", features = ["full"] }
 # System interaction
 enigo = "0.2"           # Text injection
 sysinfo = "0.32"        # System monitoring
+global-hotkey = "0.6"   # Cross-platform hotkey registration
 
 # Configuration
 serde = { workspace = true }

@@ -8,6 +8,7 @@ mod pipeline;
 mod gpu;
 mod config;
 mod ipc;
+mod hotkey;
 
 use anyhow::{Context, Result};
 use tracing::{info, error, warn};
@@ -17,7 +18,8 @@ use tokio::sync::RwLock;
 use crate::config::DaemonConfig;
 use crate::pipeline::Pipeline;
 use crate::gpu::detect_gpu_provider;
-use crate::ipc::IpcServer;
+use crate::ipc::{IpcServer, handle_connection as handle_ipc_connection};
+use crate::hotkey::{HotkeyManager, HotkeyEvent};
 
 #[derive(Debug, Clone, PartialEq)]
 enum DaemonState {
@@ -107,7 +109,14 @@ async fn main() -> Result<()> {
     }
     info!("📊 Memory usage: {} MB", get_memory_usage_mb());
 
-    // Start IPC server for toggle commands
+    // Initialize hotkey manager
+    let mut hotkey_manager = HotkeyManager::new(config.hotkeys.clone())
+        .context("Failed to initialize hotkey manager")?;
+
+    info!("🎹 Hotkey registered: {} (toggle)", config.hotkeys.toggle);
+    info!("🎹 Hotkey registered: {} (push-to-talk)", config.hotkeys.push_to_talk);
+
+    // Start IPC server for CLI/scripts (optional)
     let socket_path = config.socket_path.clone();
     info!("🔌 Starting IPC server on {}", socket_path);
 
@@ -116,29 +125,59 @@ async fn main() -> Result<()> {
         .context("Failed to start IPC server")?;
 
     info!("🚀 Swictation daemon ready!");
-    info!("   Use 'swictation-cli toggle' or Sway hotkey to start/stop recording");
+    info!("   Press {} to start/stop recording", config.hotkeys.toggle);
+    info!("   Or use 'swictation-cli toggle' for CLI control");
 
-    // Handle transcription results in background
-    let daemon_for_transcription = daemon_clone.clone();
-    tokio::spawn(async move {
-        loop {
-            let pipeline = daemon_for_transcription.pipeline.read().await;
-            // TODO: Implement transcription result handling
-            // This will inject text when speech is transcribed
-            drop(pipeline);
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        }
-    });
+    // TODO: Handle transcription results in background
+    // This requires making Pipeline Send + Sync safe
+    // let daemon_for_transcription = daemon_clone.clone();
+    // tokio::spawn(async move {
+    //     loop {
+    //         if let Some(result) = pipeline.next_transcription().await {
+    //             // Inject text with enigo
+    //         }
+    //     }
+    // });
 
-    // Run IPC server
-    tokio::select! {
-        result = ipc_server.run() => {
-            if let Err(e) = result {
-                error!("IPC server error: {}", e);
+    // Main event loop
+    loop {
+        tokio::select! {
+            // Hotkey events (primary UX)
+            Some(event) = hotkey_manager.next_event() => {
+                match event {
+                    HotkeyEvent::Toggle => {
+                        if let Err(e) = daemon_clone.toggle().await {
+                            error!("Toggle error: {}", e);
+                        }
+                    }
+                    HotkeyEvent::PushToTalkPressed => {
+                        info!("⏺️ Push-to-talk pressed");
+                        if let Err(e) = daemon_clone.toggle().await {
+                            error!("PTT start error: {}", e);
+                        }
+                    }
+                    HotkeyEvent::PushToTalkReleased => {
+                        info!("⏸️ Push-to-talk released");
+                        if let Err(e) = daemon_clone.toggle().await {
+                            error!("PTT stop error: {}", e);
+                        }
+                    }
+                }
             }
-        }
-        _ = tokio::signal::ctrl_c() => {
-            info!("🛑 Received shutdown signal");
+
+            // IPC server (secondary, for CLI/scripts)
+            Ok((stream, daemon)) = ipc_server.accept() => {
+                // Handle connection inline (no spawn needed)
+                if let Err(e) = handle_ipc_connection(stream, daemon).await {
+                    error!("IPC connection error: {}", e);
+                }
+            }
+
+            // Shutdown signal
+            _ = tokio::signal::ctrl_c() => {
+                info!("🛑 Received shutdown signal");
+                break;
+            }
         }
     }
 
@@ -151,12 +190,13 @@ async fn main() -> Result<()> {
 
 /// Get current process memory usage in MB
 fn get_memory_usage_mb() -> u64 {
-    use sysinfo::{System, Pid};
+    use sysinfo::{System, Pid, ProcessesToUpdate};
 
     let mut sys = System::new();
-    sys.refresh_process(Pid::from_u32(std::process::id()));
+    let pid = Pid::from_u32(std::process::id());
+    sys.refresh_processes(ProcessesToUpdate::Some(&[pid]), false);
 
-    if let Some(process) = sys.process(Pid::from_u32(std::process::id())) {
+    if let Some(process) = sys.process(pid) {
         process.memory() / 1_048_576 // bytes to MB
     } else {
         0
