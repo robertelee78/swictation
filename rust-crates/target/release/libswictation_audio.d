@@ -1,0 +1,1 @@
+/opt/swictation/rust-crates/target/release/libswictation_audio.rlib: /opt/swictation/rust-crates/swictation-audio/src/buffer.rs /opt/swictation/rust-crates/swictation-audio/src/capture.rs /opt/swictation/rust-crates/swictation-audio/src/error.rs /opt/swictation/rust-crates/swictation-audio/src/lib.rs /opt/swictation/rust-crates/swictation-audio/src/resampler.rs

@@ -34,6 +34,9 @@ parking_lot = "0.12"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
+# Audio file loading
+hound = "3.5"
+
 [dev-dependencies]
 approx = "0.5"
 

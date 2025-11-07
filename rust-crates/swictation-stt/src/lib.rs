@@ -19,6 +19,7 @@
 //! ```
 
 pub mod error;
+pub mod features;
 pub mod model;
 pub mod recognizer;
 pub mod tokens;
