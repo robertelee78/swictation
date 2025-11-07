@@ -4,6 +4,7 @@ members = [
     "swictation-stt",
     "swictation-vad",
     "swictation-daemon",
+    "swictation-metrics",
 ]
 resolver = "2"
 
