@@ -2,9 +2,11 @@
 """Swictation system tray application."""
 
 import sys
+import os
 import socket
 import json
 import threading
+import subprocess
 from pathlib import Path
 from PySide6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QGuiApplication, QClipboard, QCursor
@@ -329,6 +331,11 @@ class SwictationTrayApp(QApplication):
         # Setup paths
         self.icon_path = Path(__file__).parent.parent.parent / "docs" / "swictation_logo.png"
 
+        # Track Tauri UI process
+        self.tauri_process = None
+        self.tauri_ui_binary = os.environ.get('SWICTATION_UI_BINARY',
+                                             str(Path(__file__).parent.parent.parent / "tauri-ui" / "src-tauri" / "target" / "release" / "swictation-ui"))
+
         # Click debounce timer (prevent single-click from interfering with double-click)
         self.click_timer = QTimer(self)
         self.click_timer.setSingleShot(True)
@@ -341,19 +348,20 @@ class SwictationTrayApp(QApplication):
         # Keep a strong reference to prevent garbage collection
         self.backend.setParent(self)  # Make app the parent to keep backend alive
 
-        # Load QML window (hidden by default)
-        self.engine = QQmlApplicationEngine(self)  # Set parent to prevent early cleanup
-        self.engine.rootContext().setContextProperty("backend", self.backend)
+        # QML window no longer needed - we launch Tauri UI instead
+        # Commenting out to save resources
+        # self.engine = QQmlApplicationEngine(self)
+        # self.engine.rootContext().setContextProperty("backend", self.backend)
+        # qml_file = Path(__file__).parent / "MetricsUI.qml"
+        # self.engine.load(QUrl.fromLocalFile(str(qml_file)))
+        # if not self.engine.rootObjects():
+        #     print("✗ Failed to load QML")
+        #     sys.exit(1)
+        # self.window = self.engine.rootObjects()[0]
+        # self.window.hide()
 
-        qml_file = Path(__file__).parent / "MetricsUI.qml"
-        self.engine.load(QUrl.fromLocalFile(str(qml_file)))
-
-        if not self.engine.rootObjects():
-            print("✗ Failed to load QML")
-            sys.exit(1)
-
-        self.window = self.engine.rootObjects()[0]
-        self.window.hide()
+        # Initialize window reference for compatibility (not used)
+        self.window = None
 
         # Create system tray icon AFTER QML loads
         self.tray_icon = QSystemTrayIcon(self)
@@ -447,19 +455,38 @@ class SwictationTrayApp(QApplication):
 
     @Slot()
     def toggle_window(self):
-        """Show/hide metrics window with proper focus handling."""
-        if self.window.isVisible():
-            self.window.hide()
-        else:
-            self.window.show()
-            self.window.raise_()
-            self.window.requestActivate()  # Request focus (important for Wayland)
+        """Launch or focus the Tauri UI application."""
+        self.launch_tauri_ui()
 
     @Slot()
     def show_window(self):
-        """Show metrics window."""
-        self.window.show()
-        self.window.raise_()
+        """Launch or focus the Tauri UI application."""
+        self.launch_tauri_ui()
+
+    def launch_tauri_ui(self):
+        """Launch the Tauri UI if not running, or bring it to focus."""
+        try:
+            # Check if Tauri UI is already running
+            if self.tauri_process and self.tauri_process.poll() is None:
+                # Process is still running - could implement focus logic here if needed
+                print("Tauri UI is already running")
+            else:
+                # Launch Tauri UI
+                print(f"Launching Tauri UI: {self.tauri_ui_binary}")
+                self.tauri_process = subprocess.Popen(
+                    [self.tauri_ui_binary],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    start_new_session=True  # Don't tie to parent process
+                )
+                print("✓ Tauri UI launched")
+        except Exception as e:
+            print(f"✗ Failed to launch Tauri UI: {e}")
+            self.tray_icon.showMessage(
+                "Swictation",
+                f"Failed to launch UI: {e}",
+                QSystemTrayIcon.Warning
+            )
 
     @Slot(str)
     def on_state_changed(self, state):

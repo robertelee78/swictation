@@ -1,6 +1,7 @@
 #!/bin/bash
 # Smart launcher for Swictation UI
-# Detects desktop environment and uses appropriate tray implementation
+# Uses QT tray icon on Sway/Wayland (because Tauri tray doesn't work there)
+# But the tray launches the Tauri UI when clicked
 
 set -e
 
@@ -27,10 +28,11 @@ fi
 
 # Choose tray implementation based on environment
 if is_sway_wayland || is_problematic_x11; then
-    echo "Detected Sway/Wayland - using Qt tray (proven to work)"
+    echo "Detected Sway/Wayland - using Qt tray icon (Tauri tray doesn't work here)"
     export SWICTATION_TRAY_MODE="qt"
+    export SWICTATION_UI_BINARY="${REPO_ROOT}/tauri-ui/src-tauri/target/release/swictation-ui"
 
-    # Launch Python/Qt tray (works perfectly on Sway)
+    # Launch Python/Qt tray (just for the tray icon, will launch Tauri UI when clicked)
     exec python3 "${REPO_ROOT}/src/ui/swictation_tray.py"
 else
     echo "Detected compatible environment - using Tauri (cross-platform)"
