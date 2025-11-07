@@ -9,6 +9,9 @@ swictation-audio = { path = "../swictation-audio" }
 swictation-vad = { path = "../swictation-vad" }
 swictation-stt = { path = "../swictation-stt" }
 
+# Text transformation (voice commands → symbols)
+midstreamer-text-transform = { path = "../../external/midstream/crates/text-transform" }
+
 # Async runtime
 tokio = { version = "1.0", features = ["full"] }
 

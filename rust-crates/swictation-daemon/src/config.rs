@@ -59,6 +59,9 @@ pub struct DaemonConfig {
     /// Number of threads for ONNX Runtime
     pub num_threads: Option<i32>,
 
+    /// Audio device index (None = default device)
+    pub audio_device_index: Option<usize>,
+
     /// Hotkey configuration
     pub hotkeys: HotkeyConfig,
 }
@@ -73,9 +76,11 @@ impl Default for DaemonConfig {
             vad_min_speech: 0.25,
             vad_max_speech: 30.0,
             vad_threshold: 0.5,
-            stt_model_path: "/opt/swictation/models/parakeet-tdt-0.6b-v3-int8/model.int8.onnx".to_string(),
-            stt_tokens_path: "/opt/swictation/models/parakeet-tdt-0.6b-v3-int8/tokens.txt".to_string(),
+            // STT expects directory containing encoder.int8.onnx, decoder.int8.onnx, joiner.int8.onnx, tokens.txt
+            stt_model_path: "/opt/swictation/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8".to_string(),
+            stt_tokens_path: "/opt/swictation/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/tokens.txt".to_string(),
             num_threads: Some(4),
+            audio_device_index: None,
             hotkeys: HotkeyConfig::default(),
         }
     }

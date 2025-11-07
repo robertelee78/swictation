@@ -1541,6 +1541,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "midstreamer-text-transform"
+version = "0.1.0"
+dependencies = [
+ "once_cell",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "mime"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2743,6 +2752,7 @@ dependencies = [
  "enigo",
  "global-hotkey",
  "metal",
+ "midstreamer-text-transform",
  "serde",
  "serde_json",
  "swictation-audio",

@@ -13,6 +13,9 @@ use crate::buffer::CircularBuffer;
 use crate::error::{AudioError, Result};
 use crate::AudioConfig;
 
+/// Callback for audio chunks (streaming mode)
+pub type ChunkCallback = Arc<dyn Fn(Vec<f32>) + Send + Sync>;
+
 /// Audio device information
 #[derive(Debug, Clone)]
 pub struct DeviceInfo {
@@ -34,6 +37,7 @@ pub struct AudioCapture {
     total_frames: Arc<AtomicUsize>,
     host: Host,
     device: Option<Device>,
+    chunk_callback: Option<ChunkCallback>,
 }
 
 impl AudioCapture {
@@ -62,7 +66,16 @@ impl AudioCapture {
             total_frames: Arc::new(AtomicUsize::new(0)),
             host,
             device: None,
+            chunk_callback: None,
         })
+    }
+
+    /// Set callback for audio chunks (streaming mode)
+    pub fn set_chunk_callback<F>(&mut self, callback: F)
+    where
+        F: Fn(Vec<f32>) + Send + Sync + 'static,
+    {
+        self.chunk_callback = Some(Arc::new(callback));
     }
 
     /// List all available audio devices
@@ -205,6 +218,7 @@ impl AudioCapture {
         let chunk_buffer = Arc::clone(&self.chunk_buffer);
         let total_frames = Arc::clone(&self.total_frames);
         let is_recording = Arc::clone(&self.is_recording);
+        let chunk_callback = self.chunk_callback.clone();
 
         let target_channels = self.config.channels;
         let streaming_mode = self.config.streaming_mode;
@@ -232,18 +246,9 @@ impl AudioCapture {
 
                 let frames = audio.len();
 
-                // Write to main buffer
-                {
-                    let mut buf = buffer.lock();
-                    let written = buf.write(&audio);
-                    if written < audio.len() {
-                        eprintln!("Warning: Buffer overflow, dropped {} samples", audio.len() - written);
-                    }
-                }
-
                 total_frames.fetch_add(frames, Ordering::Relaxed);
 
-                // Streaming mode: accumulate chunks
+                // Streaming mode: accumulate chunks and invoke callback
                 if streaming_mode {
                     let mut chunk_buf = chunk_buffer.lock();
                     chunk_buf.extend_from_slice(&audio);
@@ -251,10 +256,22 @@ impl AudioCapture {
                     // Process complete chunks
                     while chunk_buf.len() >= chunk_frames {
                         // Extract chunk
-                        let _chunk: Vec<f32> = chunk_buf.drain(..chunk_frames).collect();
+                        let chunk: Vec<f32> = chunk_buf.drain(..chunk_frames).collect();
 
-                        // TODO: Call chunk callback when we add callback support
-                        // For now, chunks are just accumulated in buffer
+                        // Invoke chunk callback if set
+                        if let Some(ref callback) = chunk_callback {
+                            eprintln!("AUDIO: Invoking chunk callback with {} samples", chunk.len());
+                            callback(chunk);
+                        } else {
+                            eprintln!("AUDIO: No chunk callback set!");
+                        }
+                    }
+                } else {
+                    // Non-streaming mode: write to circular buffer for later retrieval
+                    let mut buf = buffer.lock();
+                    let written = buf.write(&audio);
+                    if written < audio.len() {
+                        eprintln!("Warning: Buffer overflow, dropped {} samples", audio.len() - written);
                     }
                 }
             },

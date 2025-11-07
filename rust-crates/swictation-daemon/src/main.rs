@@ -13,7 +13,7 @@ mod hotkey;
 use anyhow::{Context, Result};
 use tracing::{info, error, warn};
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, mpsc};
 
 use crate::config::DaemonConfig;
 use crate::pipeline::Pipeline;
@@ -33,13 +33,15 @@ struct Daemon {
 }
 
 impl Daemon {
-    async fn new(config: DaemonConfig, gpu_provider: Option<String>) -> Result<Self> {
-        let pipeline = Pipeline::new(config, gpu_provider).await?;
+    async fn new(config: DaemonConfig, gpu_provider: Option<String>) -> Result<(Self, mpsc::UnboundedReceiver<Result<String>>)> {
+        let (pipeline, transcription_rx) = Pipeline::new(config, gpu_provider).await?;
 
-        Ok(Self {
+        let daemon = Self {
             pipeline: Arc::new(RwLock::new(pipeline)),
             state: Arc::new(RwLock::new(DaemonState::Idle)),
-        })
+        };
+
+        Ok((daemon, transcription_rx))
     }
 
     async fn toggle(&self) -> Result<String> {
@@ -96,7 +98,7 @@ async fn main() -> Result<()> {
 
     // Initialize daemon with models loaded
     info!("🔧 Initializing pipeline (this may take a moment)...");
-    let daemon = Daemon::new(config.clone(), gpu_provider.clone())
+    let (daemon, mut transcription_rx) = Daemon::new(config.clone(), gpu_provider.clone())
         .await
         .context("Failed to initialize daemon")?;
 
@@ -128,16 +130,26 @@ async fn main() -> Result<()> {
     info!("   Press {} to start/stop recording", config.hotkeys.toggle);
     info!("   Or use 'swictation-cli toggle' for CLI control");
 
-    // TODO: Handle transcription results in background
-    // This requires making Pipeline Send + Sync safe
-    // let daemon_for_transcription = daemon_clone.clone();
-    // tokio::spawn(async move {
-    //     loop {
-    //         if let Some(result) = pipeline.next_transcription().await {
-    //             // Inject text with enigo
-    //         }
-    //     }
-    // });
+    // Handle transcription results and inject text
+    tokio::spawn(async move {
+        use enigo::{Enigo, Keyboard, Settings};
+        let mut enigo = Enigo::new(&Settings::default()).expect("Failed to initialize enigo");
+
+        // Receive transcriptions directly from channel (no locks needed)
+        while let Some(result) = transcription_rx.recv().await {
+            match result {
+                Ok(text) => {
+                    info!("Injecting text: {}", text);
+                    if let Err(e) = enigo.text(&text) {
+                        error!("Failed to inject text: {}", e);
+                    }
+                }
+                Err(e) => {
+                    error!("Transcription error: {}", e);
+                }
+            }
+        }
+    });
 
     // Main event loop
     loop {
