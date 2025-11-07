@@ -146,10 +146,18 @@ impl Recognizer {
         let decoder_state_2 = Array3::<f32>::zeros((2, 1, 640)); // Fixed size, doesn't change
 
         // 4. RNN-T greedy search
-        // For RNN-T, blank is typically at output index 0 in joiner logits
-        // Start decoder with <unk> token (ID 0 in vocabulary)
-        let blank_output_id = 0; // Blank in joiner output space
-        let start_token = 0; // <unk> token to start decoding
+        // For Parakeet TDT (Timed Duration Transducer):
+        // - Joiner outputs 8198 logits total
+        // - First 8193 logits: token predictions (vocab_size = 8193)
+        // - Remaining 5 logits: duration predictions (TDT-specific)
+        // - Blank token is at vocab_size - 1 = 8192 (last token)
+        // Reference: sherpa-onnx offline-transducer-greedy-search-nemo-decoder.cc
+        let vocab_size = 8193;
+        let blank_id = vocab_size - 1; // 8192
+
+        // FIX #1 REVERTED: Actually, let's try starting with 0 (SOS/BOS token)
+        // The issue might be that starting with blank creates wrong decoder context
+        let start_token = 0;
         let max_symbols_per_frame = 3;
         let mut hypothesis: Vec<usize> = Vec::new();
         let mut prev_token = start_token;
@@ -157,14 +165,14 @@ impl Recognizer {
         for t in 0..encoded_time {
             let mut symbols_emitted = 0;
 
-            loop {
-                // Prepare decoder inputs
-                // targets: [batch=1, seq=1] with previous token (int32)
-                let targets = Array2::from_shape_vec((1, 1), vec![prev_token as i32])?;
-                // target_length: [batch=1] (int32)
-                let target_length = ndarray::arr1(&[1i32]);
+            // FIX #5: Reset prev_token to blank at START of each frame
+            // This ensures each frame starts with fresh blank context
+            prev_token = blank_id;
 
+            loop {
                 // Run decoder with current token and states
+                let targets = Array2::from_shape_vec((1, 1), vec![prev_token as i32])?;
+                let target_length = ndarray::arr1(&[1i32]);
                 let targets_tensor = Value::from_array(targets)?;
                 let target_length_tensor = Value::from_array(target_length)?;
                 let decoder_state_1_tensor = Value::from_array(decoder_state_1.clone())?;
@@ -186,7 +194,7 @@ impl Recognizer {
                         decoder_out_result.1.to_vec(),
                     )?;
 
-                    // Update first decoder state
+                    // Extract new decoder state
                     let decoder_state_result = decoder_outputs["states"]
                         .try_extract_tensor::<f32>()?;
                     let new_decoder_state_1 = Array3::from_shape_vec(
@@ -196,25 +204,23 @@ impl Recognizer {
 
                     (decoder_out, new_decoder_state_1)
                 };
-                decoder_state_1 = new_decoder_state_1;
 
                 // Get encoder embedding at time t: [batch=1, 1024, 1]
                 let encoder_proj = encoder_out
                     .slice(ndarray::s![0..1, .., t..t+1])
                     .to_owned();
 
-                // decoder_out shape already [batch=1, 640, seq=1] - perfect for joiner
-
-                // Run joiner to get logits
+                // Run joiner with current encoder and decoder outputs
                 let encoder_proj_tensor = Value::from_array(encoder_proj)?;
-                let decoder_proj_tensor = Value::from_array(decoder_out.clone())?;
+                let decoder_proj_tensor = Value::from_array(decoder_out)?;
                 let logits = {
                     let joiner_outputs = self.model.joiner().run(inputs![
                         "encoder_outputs" => &encoder_proj_tensor,
                         "decoder_outputs" => &decoder_proj_tensor
                     ])?;
 
-                    // Output: [batch, time, seq, vocab] = [1, 1, 1, 8198]
+                    // Output: [batch, time, seq, total] = [1, 1, 1, 8198]
+                    // TDT splits this into token logits (8193) + duration logits (5)
                     let logits_result = joiner_outputs["outputs"]
                         .try_extract_tensor::<f32>()?;
                     // We want [1, 8198] - flatten first 3 dims
@@ -224,23 +230,37 @@ impl Recognizer {
                     )?
                 };
 
-                // logits shape: [batch=1, vocab_size=8198]
-                // Find argmax token
-                let logits_slice = logits.slice(ndarray::s![0, ..]);
-                let (token_id, _score) = logits_slice
+                // Extract ONLY token logits (first vocab_size=8193 values)
+                // Ignore duration logits (remaining 5 values)
+                let mut token_logits = logits.slice(ndarray::s![0, ..vocab_size]).to_owned();
+
+                // Apply blank penalty to encourage non-blank emissions
+                // Reference: sherpa-onnx offline-transducer-greedy-search-nemo-decoder.cc
+                // blank_penalty typically ranges from 0.0 (no penalty) to 3.0+ (aggressive)
+                // FIX #4: Increase blank penalty significantly - we're getting all blanks!
+                let blank_penalty = 8.0;  // Much higher to force non-blank emissions
+                token_logits[blank_id] -= blank_penalty;
+
+                // Find argmax token across token logits only
+                let (token_id, _score) = token_logits
                     .iter()
                     .enumerate()
                     .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
                     .unwrap();
 
-                if token_id == blank_output_id {
-                    // Blank token - move to next time step
-                    break;
+                // DEBUG: Print first few frames to see what's happening
+                if t < 3 && symbols_emitted == 0 {
+                    eprintln!("Frame {}: token_id={}, blank_id={}, score={:.4}", t, token_id, blank_id, _score);
+                    if token_id != blank_id {
+                        eprintln!("  Non-blank token! Symbol: {:?}", self.model.tokens.id_to_token(token_id));
+                    }
                 }
 
-                // Safety check: ensure token_id is valid for vocabulary
-                if token_id >= 8193 {
-                    // Invalid token from joiner, treat as blank
+                if token_id == blank_id {
+                    // Blank token - move to next encoder frame
+                    // FIX #2: Do NOT update decoder state, but DO reset prev_token to blank
+                    // This ensures next frame starts fresh with blank context
+                    prev_token = blank_id;
                     break;
                 }
 
@@ -248,6 +268,9 @@ impl Recognizer {
                 hypothesis.push(token_id);
                 prev_token = token_id;
                 symbols_emitted += 1;
+
+                // FIX #3: Update decoder state ONLY for non-blank tokens
+                decoder_state_1 = new_decoder_state_1;
 
                 // Prevent infinite loops
                 if symbols_emitted >= max_symbols_per_frame {

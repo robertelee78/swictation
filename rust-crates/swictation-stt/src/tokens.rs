@@ -20,7 +20,7 @@ pub struct TokenDecoder {
 impl TokenDecoder {
     /// Load tokens from tokens.txt file
     ///
-    /// Format: Each line is a token, line number is the token ID
+    /// Format: Each line is "token_text token_id"
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
         let file = File::open(path.as_ref())
             .map_err(|e| SttError::model_load(format!("Failed to open tokens file: {}", e)))?;
@@ -28,22 +28,55 @@ impl TokenDecoder {
         let reader = BufReader::new(file);
         let mut tokens = Vec::new();
         let mut token_to_id = HashMap::new();
+        let mut max_id = 0;
 
-        for (id, line) in reader.lines().enumerate() {
-            let token = line.map_err(|e| {
-                SttError::model_load(format!("Failed to read token line {}: {}", id, e))
+        // First pass: determine max ID to size the vector
+        for line in reader.lines() {
+            let line = line.map_err(|e| {
+                SttError::model_load(format!("Failed to read token line: {}", e))
             })?;
 
-            token_to_id.insert(token.clone(), id);
-            tokens.push(token);
+            // Parse line format: "token_text token_id"
+            // Split from the right to handle tokens that contain spaces
+            if let Some(last_space_idx) = line.rfind(' ') {
+                let id_str = &line[last_space_idx + 1..];
+                if let Ok(id) = id_str.parse::<usize>() {
+                    max_id = max_id.max(id);
+                }
+            }
+        }
+
+        // Initialize tokens vector with correct size
+        tokens.resize(max_id + 1, String::new());
+
+        // Second pass: populate the tokens
+        let file = File::open(path.as_ref())
+            .map_err(|e| SttError::model_load(format!("Failed to open tokens file: {}", e)))?;
+        let reader = BufReader::new(file);
+
+        for line in reader.lines() {
+            let line = line.map_err(|e| {
+                SttError::model_load(format!("Failed to read token line: {}", e))
+            })?;
+
+            // Parse line format: "token_text token_id"
+            if let Some(last_space_idx) = line.rfind(' ') {
+                let token_text = &line[..last_space_idx];
+                let id_str = &line[last_space_idx + 1..];
+
+                if let Ok(id) = id_str.parse::<usize>() {
+                    tokens[id] = token_text.to_string();
+                    token_to_id.insert(token_text.to_string(), id);
+                }
+            }
         }
 
         if tokens.is_empty() {
             return Err(SttError::model_load("Token file is empty"));
         }
 
-        // Blank token is typically ID 0 for RNN-T models
-        let blank_id = 0;
+        // For Parakeet TDT, blank token is at the last position (vocab_size - 1)
+        let blank_id = tokens.len() - 1;
 
         println!("Loaded {} tokens (blank_id: {})", tokens.len(), blank_id);
 
@@ -76,12 +109,23 @@ impl TokenDecoder {
                 SttError::TokenDecodingError(format!("Invalid token ID: {}", id))
             })?;
 
+            // Skip special tokens (those starting with <)
+            if token.starts_with('<') {
+                prev_id = id;
+                continue;
+            }
+
             // Append token
             text.push_str(token);
             prev_id = id;
         }
 
-        Ok(text)
+        // Post-process: Convert sentencepiece format to readable text
+        // Replace ▁ (U+2581 LOWER ONE EIGHTH BLOCK) with space
+        let text = text.replace('▁', " ");
+
+        // Trim leading/trailing whitespace
+        Ok(text.trim().to_string())
     }
 
     /// Get token ID for a string

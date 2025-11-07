@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["SenseVoiceConfig","SenseVoiceRecognizer"],"type":["SenseVoiceRecognizerResult"]};
