@@ -29,16 +29,17 @@ pub mod capture;
 pub mod error;
 pub mod resampler;
 
-#[cfg(feature = "pyo3-bindings")]
-pub mod python;
+// TODO: Add PyO3 bindings later if needed
+// #[cfg(feature = "pyo3-bindings")]
+// pub mod python;
 
 pub use buffer::CircularBuffer;
 pub use capture::AudioCapture;
 pub use error::{AudioError, Result};
 pub use resampler::Resampler;
 
-#[cfg(feature = "pyo3-bindings")]
-use pyo3::prelude::*;
+// #[cfg(feature = "pyo3-bindings")]
+// use pyo3::prelude::*;
 
 /// Audio sample rate constant (16kHz for STT models)
 pub const TARGET_SAMPLE_RATE: u32 = 16000;
@@ -79,10 +80,11 @@ impl Default for AudioConfig {
     }
 }
 
-#[cfg(feature = "pyo3-bindings")]
-#[pymodule]
-fn swictation_audio(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<python::PyAudioCapture>()?;
-    m.add_class::<python::PyAudioConfig>()?;
-    Ok(())
-}
+// TODO: Add PyO3 bindings later if needed
+// #[cfg(feature = "pyo3-bindings")]
+// #[pymodule]
+// fn swictation_audio(m: &Bound<'_, PyModule>) -> PyResult<()> {
+//     m.add_class::<python::PyAudioCapture>()?;
+//     m.add_class::<python::PyAudioConfig>()?;
+//     Ok(())
+// }

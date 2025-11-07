@@ -1,10 +1,7 @@
 //! Lock-free circular buffer for audio samples
 
 use ringbuf::traits::{Consumer, Observer, Producer, Split};
-use ringbuf::{HeapRb, SharedRb};
-use std::sync::Arc;
-
-use crate::error::{AudioError, Result};
+use ringbuf::HeapRb;
 
 /// Lock-free circular buffer for audio samples
 ///
@@ -103,7 +100,7 @@ impl CircularBuffer {
     /// Peek at samples without consuming them
     pub fn peek(&self, count: usize) -> Vec<f32> {
         let available = self.available().min(count);
-        let mut output = vec![0.0; available];
+        let output = vec![0.0; available];
 
         // ringbuf doesn't have built-in peek, so we need to implement it
         // For now, we'll use a simplified version
