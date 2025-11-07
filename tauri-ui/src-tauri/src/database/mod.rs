@@ -58,8 +58,8 @@ impl Database {
                 s.end_time,
                 s.duration_s,
                 s.words_dictated,
-                s.segments_processed,
-                s.wpm
+                s.wpm,
+                s.average_latency_ms
              FROM sessions s
              ORDER BY s.start_time DESC
              LIMIT ?1"
@@ -68,16 +68,19 @@ impl Database {
         let sessions = stmt.query_map([limit], |row| {
             let start_time: f64 = row.get(1)?;
             let end_time: Option<f64> = row.get(2)?;
-            let duration_s: Option<f64> = row.get(3)?;
+            let duration_s: f64 = row.get(3)?;
+            let words_dictated: i32 = row.get(4)?;
+            let wpm: f64 = row.get(5)?;
+            let avg_latency_ms: f64 = row.get(6)?;
 
             Ok(SessionSummary {
                 id: row.get(0)?,
                 start_time: start_time as i64,
                 end_time: end_time.map(|t| t as i64),
-                duration_ms: duration_s.map(|d| (d * 1000.0) as i64),
-                words_dictated: row.get(4)?,
-                segments_count: row.get(5)?,
-                wpm: row.get(6)?,
+                duration_s,
+                words_dictated,
+                wpm,
+                avg_latency_ms,
             })
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;

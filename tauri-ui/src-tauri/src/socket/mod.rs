@@ -109,7 +109,8 @@ impl SocketConnection {
                 // Parse and emit event
                 if let Ok(event) = serde_json::from_str::<Value>(&line) {
                     if let Some(event_type) = event.get("type").and_then(|t| t.as_str()) {
-                        self.app_handle.emit_all(event_type, &event).ok();
+                        // Emit as 'metrics-event' for frontend listener
+                        self.app_handle.emit_all("metrics-event", &event).ok();
                         log::debug!("Emitted event: {}", event_type);
                     }
                 }
