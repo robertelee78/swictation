@@ -1,0 +1,34 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Tokyo Night Dark theme colors */
+    --color-background: #1a1b26;
+    --color-card: #24283b;
+    --color-border: #414868;
+    --color-foreground: #a9b1d6;
+    --color-foreground-bright: #c0caf5;
+    --color-muted: #565f89;
+    --color-primary: #7aa2f7;
+    --color-success: #9ece6a;
+    --color-warning: #e0af68;
+    --color-error: #f7768e;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+
+  html,
+  body,
+  #root {
+    @apply h-full w-full m-0 p-0 overflow-hidden;
+  }
+}

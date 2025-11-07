@@ -1,0 +1,127 @@
+// Example Tauri integration for the MetricsSocket
+// This shows how to integrate the socket handler into your Tauri app
+
+mod socket;
+
+use socket::MetricsSocket;
+use tauri::{AppHandle, Manager};
+use tokio::task;
+
+#[tauri::command]
+async fn toggle_recording() -> Result<(), String> {
+    MetricsSocket::send_toggle_command()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn get_socket_status(state: tauri::State<'_, SocketState>) -> Result<bool, String> {
+    let socket = state.socket.lock().await;
+    Ok(socket.is_connected())
+}
+
+// Shared state for socket connection
+struct SocketState {
+    socket: tokio::sync::Mutex<MetricsSocket>,
+}
+
+#[tokio::main]
+async fn main() {
+    // Initialize tracing
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .init();
+
+    tauri::Builder::default()
+        .setup(|app| {
+            let app_handle = app.handle().clone();
+
+            // Initialize socket state
+            let socket_state = SocketState {
+                socket: tokio::sync::Mutex::new(MetricsSocket::new()),
+            };
+
+            app.manage(socket_state);
+
+            // Spawn socket listener task
+            task::spawn(async move {
+                let mut socket = match MetricsSocket::connect().await {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Failed to initialize socket: {}", e);
+                        return;
+                    }
+                };
+
+                // Listen indefinitely (with auto-reconnect)
+                if let Err(e) = socket.listen(app_handle).await {
+                    eprintln!("Socket listener failed: {}", e);
+                }
+            });
+
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            toggle_recording,
+            get_socket_status
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}
+
+// Example frontend integration (TypeScript/JavaScript):
+//
+// ```typescript
+// import { listen } from '@tauri-apps/api/event';
+// import { invoke } from '@tauri-apps/api/tauri';
+//
+// // Listen for metrics events
+// await listen('metrics-update', (event) => {
+//   const metrics = event.payload;
+//   console.log('Metrics:', metrics);
+//   // Update UI with metrics.wpm, metrics.cpu_percent, etc.
+// });
+//
+// await listen('transcription', (event) => {
+//   const data = event.payload;
+//   console.log('Transcription:', data.text);
+//   // Display transcription in UI
+// });
+//
+// await listen('session-start', (event) => {
+//   console.log('Session started:', event.payload.session_id);
+//   // Clear UI for new session
+// });
+//
+// await listen('session-end', (event) => {
+//   console.log('Session ended:', event.payload.session_id);
+//   // Show session summary
+// });
+//
+// await listen('state-change', (event) => {
+//   console.log('State changed:', event.payload.state);
+//   // Update recording status indicator
+// });
+//
+// await listen('metrics-connected', (event) => {
+//   const connected = event.payload;
+//   console.log('Socket connected:', connected);
+//   // Show connection status in UI
+// });
+//
+// // Toggle recording
+// async function toggleRecording() {
+//   try {
+//     await invoke('toggle_recording');
+//     console.log('Recording toggled');
+//   } catch (error) {
+//     console.error('Failed to toggle recording:', error);
+//   }
+// }
+//
+// // Check socket status
+// async function checkStatus() {
+//   const connected = await invoke('get_socket_status');
+//   console.log('Socket connected:', connected);
+// }
+// ```
