@@ -558,34 +558,36 @@ except:
                 RECOMMENDED_CUDA="12.4 (Maxwell-compatible)"
                 TORCH_INSTALL_CMD="$PYTHON_CMD -m pip install --break-system-packages torch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1 --index-url https://download.pytorch.org/whl/cu124"
             elif [[ "$DRIVER_MAJOR" -ge 555 ]] && [[ "$COMPUTE_MAJOR" -ge 6 ]] 2>/dev/null; then
-                # Modern GPU (Pascal+) + modern driver = CUDA 13.0
-                RECOMMENDED_CUDA="13.0 (latest)"
-                TORCH_INSTALL_CMD="$PYTHON_CMD -m pip install --break-system-packages torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130"
+                # Modern GPU (Pascal+) + modern driver = CUDA 13.0 (Ubuntu 25.10+)
+                echo "Detected modern GPU with CUDA 13.0+ driver"
+                RECOMMENDED_CUDA="13.0 (latest - Ubuntu 25.10+)"
+                TORCH_INSTALL_CMD="$PYTHON_CMD -m pip install --break-system-packages torch torchaudio --index-url https://download.pytorch.org/whl/cu130"
             elif [[ "$DRIVER_MAJOR" -ge 520 ]]; then
-                # CUDA 12.9 works for most modern GPUs with driver 520+
-                RECOMMENDED_CUDA="12.9 (stable)"
-                TORCH_INSTALL_CMD="$PYTHON_CMD -m pip install --break-system-packages torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu129"
+                # CUDA 12.9 works for most modern GPUs with driver 520+ (Ubuntu 24.04/24.10)
+                RECOMMENDED_CUDA="12.9 (stable - Ubuntu 24.04/24.10)"
+                TORCH_INSTALL_CMD="$PYTHON_CMD -m pip install --break-system-packages torch torchaudio --index-url https://download.pytorch.org/whl/cu129"
             else
                 # Legacy CUDA 11.8 for older drivers
                 RECOMMENDED_CUDA="11.8 (legacy)"
-                TORCH_INSTALL_CMD="$PYTHON_CMD -m pip install --break-system-packages torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118"
+                TORCH_INSTALL_CMD="$PYTHON_CMD -m pip install --break-system-packages torch torchaudio --index-url https://download.pytorch.org/whl/cu118"
             fi
 
             echo "Recommended: PyTorch with CUDA ${RECOMMENDED_CUDA}"
             echo ""
             echo "Installation options:"
-            echo "  1. CUDA 13.0 (latest, requires compute 6.0+ and driver 555+):"
-            echo "     pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130"
+            echo "  1. CUDA 13.0 (Ubuntu 25.10+, requires compute 6.0+ and driver 555+):"
+            echo "     pip3 install torch torchaudio --index-url https://download.pytorch.org/whl/cu130"
             echo ""
-            echo "  2. CUDA 12.9 (stable, requires compute 6.0+ and driver 520+):"
-            echo "     pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu129"
+            echo "  2. CUDA 12.9 (Ubuntu 24.04/24.10, requires compute 6.0+ and driver 520+):"
+            echo "     pip3 install torch torchaudio --index-url https://download.pytorch.org/whl/cu129"
             echo ""
             echo "  3. CUDA 12.4 (Maxwell-compatible, compute 5.x - RECOMMENDED FOR MAXWELL):"
-            echo "     pip3 install torch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1 --index-url https://download.pytorch.org/whl/cu124"
+            echo "     pip3 install torch==2.4.1 torchaudio==2.4.1 --index-url https://download.pytorch.org/whl/cu124"
             echo ""
             echo "  4. CUDA 11.8 (legacy, older drivers):"
-            echo "     pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118"
+            echo "     pip3 install torch torchaudio --index-url https://download.pytorch.org/whl/cu118"
             echo ""
+            echo "Note: We no longer install torchvision as it's not used by Swictation"
             echo "Visit https://pytorch.org/get-started/locally/ for more options"
             echo ""
 

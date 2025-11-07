@@ -1,25 +1,31 @@
 # Swictation - Voice Dictation System for Sway/Wayland
-# Successfully tested on Python 3.12-3.13 with NVIDIA RTX A1000 (CUDA 12.9)
+# Successfully tested on Python 3.12-3.13 with NVIDIA RTX A1000 (CUDA 12.9) and RTX 6000 (CUDA 13.0)
 #
 # INSTALLATION:
-# For Python 3.13+, install in this order to avoid numpy conflict:
-#   1. pip3 install --break-system-packages torch torchaudio
+#
+# For Ubuntu 25.10+ with CUDA 13.0:
+#   1. pip3 install --break-system-packages torch torchaudio --index-url https://download.pytorch.org/whl/cu130
 #   2. pip3 install --break-system-packages -r requirements.txt
 #
+# For Ubuntu 24.04/24.10 with CUDA 12.9:
+#   1. pip3 install --break-system-packages torch torchaudio --index-url https://download.pytorch.org/whl/cu129
+#   2. pip3 install --break-system-packages -r requirements.txt
+#
+# For older CUDA versions, adjust the cu*** suffix accordingly (cu126, cu124, etc.)
+#
 # The issue: nemo_toolkit[asr]==2.5.2 declares numpy<2.0.0 but works fine with 2.x
-# Solution: Install PyTorch first (which brings numpy 2.x), then install nemo without [asr]
+# Solution: Install PyTorch first (which brings numpy 2.x), then install nemo_toolkit[asr]
 
 # Core ML Framework - PyTorch with CUDA support
 # IMPORTANT: Install PyTorch FIRST before other dependencies to avoid conflicts
-# Python 3.13 requires numpy>=2.1.0 but nemo_toolkit[asr] incorrectly declares numpy<2.0.0
-torch>=2.1.0
-torchaudio>=2.1.0
+# Must be installed with --index-url flag matching your CUDA version (see above)
+# torch>=2.9.0 (installed separately with CUDA support)
+# torchaudio>=2.9.0 (installed separately with CUDA support)
 
 # NVIDIA NeMo for Canary-1B-Flash STT
-# NOTE: Install WITHOUT [asr] extra to avoid numpy<2.0 constraint
-# The asr dependencies are included manually below
-nemo_toolkit==2.5.2
-numpy>=1.26.0  # Works with both numpy 1.x and 2.x despite NeMo's incorrect [asr] constraint
+# Install with [asr] extra to get all required ASR dependencies
+nemo_toolkit[asr]==2.5.2
+numpy>=1.26.0  # NeMo works with both numpy 1.x and 2.x
 
 # Audio Processing
 sounddevice==0.5.3
@@ -35,6 +41,7 @@ safetensors==0.6.2
 transformers>=4.53.0  # Relaxed from ~=4.53.0 to allow latest versions
 
 # Neural network training
+lightning>=2.4.0
 pytorch-lightning==2.5.5
 lightning-utilities==0.15.2
 torchmetrics>=1.0.0,<2.0.0
@@ -53,6 +60,10 @@ intervaltree==3.1.0
 cytoolz==1.1.0
 lilcom==1.8.1
 tabulate==0.9.0
+braceexpand>=0.1.7
+webdataset>=1.0.0
+jiwer>=3.1.0
+editdistance>=0.8.0
 
 # Text error analysis
 texterrors<1.0.0
@@ -61,7 +72,7 @@ termcolor==3.2.0
 plac==1.4.5
 
 # Configuration management
-fsspec==2024.12.0
+fsspec>=2024.6.1,<=2024.12.0  # NeMo requires 2024.12.0, but allow flexibility
 omegaconf>=2.3.0
 hydra-core>=1.3.0
 pyyaml>=6.0
@@ -78,10 +89,16 @@ werkzeug==3.1.3
 grpcio==1.76.0
 absl-py==2.3.1
 
-# NV One Logger
+# NV One Logger (required by NeMo 2.5.2+)
+nv_one_logger_core>=2.3.0
+nv_one_logger_training_telemetry>=2.3.0
+nv_one_logger_pytorch_lightning_integration>=2.3.0
 StrEnum==0.4.15
 overrides==7.7.0
 setuptools==80.9.0
+
+# Fiddle (required by NeMo Lightning)
+fiddle>=0.3.0
 
 # Graph utilities
 graphviz==0.21
