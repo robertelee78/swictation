@@ -56,22 +56,21 @@ fn main() {
                 app.handle(),
             ));
 
-            // Start socket listener in background
-            let socket_clone = socket.clone();
-            tokio::spawn(async move {
-                socket_clone.start_listener().await;
-            });
-
             // Create app state
             let state = AppState {
                 db: Mutex::new(db.unwrap_or_else(|| {
                     // Fallback: try to create database if it doesn't exist
                     Database::new(&db_path).expect("Failed to create database")
                 })),
-                socket,
+                socket: socket.clone(),
             };
 
             app.manage(state);
+
+            // Start socket listener AFTER app is managed (within Tauri's async context)
+            tauri::async_runtime::spawn(async move {
+                socket.start_listener().await;
+            });
 
             Ok(())
         })

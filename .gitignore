@@ -244,3 +244,13 @@ site/
 *~
 .backup/
 backup/
+
+# Rust build artifacts
+target/
+*.rlib
+*.rmeta
+.rustc_info.json
+
+# Node build artifacts  
+dist/
+node_modules/
