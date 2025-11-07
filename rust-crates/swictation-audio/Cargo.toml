@@ -1,0 +1,57 @@
+[package]
+name = "swictation-audio"
+version = "0.1.0"
+edition = "2021"
+description = "High-performance audio capture for Swictation with zero-copy buffers"
+license = "Apache-2.0"
+repository = "https://github.com/robertelee78/swictation"
+keywords = ["audio", "capture", "pipewire", "dictation", "real-time"]
+categories = ["multimedia::audio"]
+
+[lib]
+name = "swictation_audio"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]  # PyO3 + Rust library
+
+[dependencies]
+# Audio I/O
+cpal = "0.15"
+
+# Lock-free circular buffer
+ringbuf = "0.4"
+
+# Resampling
+rubato = "0.15"
+
+# PyO3 bindings (optional for Python integration)
+pyo3 = { version = "0.23", features = ["extension-module", "abi3-py312"], optional = true }
+numpy = { version = "0.23", optional = true }
+
+# Error handling
+thiserror = "2.0"
+anyhow = "1.0"
+
+# Concurrency
+parking_lot = "0.12"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+approx = "0.5"
+
+[features]
+default = ["pyo3-bindings"]
+pyo3-bindings = ["pyo3", "numpy"]
+
+[[bench]]
+name = "audio_bench"
+harness = false
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
