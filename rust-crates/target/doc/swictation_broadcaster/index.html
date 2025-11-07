@@ -1,0 +1,59 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Real-time metrics broadcaster for Swictation UI"><title>swictation_broadcaster - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../static.files/rustdoc-aa0817cf.css"><meta name="rustdoc-vars" data-root-path="../" data-static-root-path="../static.files/" data-current-crate="swictation_broadcaster" data-themes="" data-resource-suffix="" data-rustdoc-version="1.90.0 (1159e78c4 2025-09-14)" data-channel="1.90.0" data-search-js="search-fa3e91e5.js" data-settings-js="settings-5514c975.js" ><script src="../static.files/storage-68b7e25d.js"></script><script defer src="../crates.js"></script><script defer src="../static.files/main-eebb9057.js"></script><noscript><link rel="stylesheet" href="../static.files/noscript-32bb7600.css"></noscript><link rel="alternate icon" type="image/png" href="../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../static.files/favicon-044be391.svg"></head><body class="rustdoc mod crate"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button></nav><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../swictation_broadcaster/index.html">swictation_<wbr>broadcaster</a><span class="version">0.1.0</span></h2></div><div class="sidebar-elems"><ul class="block"><li><a id="all-types" href="all.html">All Items</a></li></ul><section id="rustdoc-toc"><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#features" title="Features">Features</a></li><li><a href="#event-types" title="Event Types">Event Types</a></li><li><a href="#example-usage" title="Example Usage">Example Usage</a></li></ul><h3><a href="#reexports">Crate Items</a></h3><ul class="block"><li><a href="#reexports" title="Re-exports">Re-exports</a></li><li><a href="#modules" title="Modules">Modules</a></li></ul></section><div id="rustdoc-modnav"></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1>Crate <span>swictation_broadcaster</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../src/swictation_broadcaster/lib.rs.html#1-73">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Real-time metrics broadcaster for Swictation UI</p>
+<p>This crate provides a Unix socket server that broadcasts real-time metrics
+and transcription events to connected UI clients. It manages multiple concurrent
+clients, session-based transcription buffers, and various event types.</p>
+<h2 id="features"><a class="doc-anchor" href="#features">§</a>Features</h2>
+<ul>
+<li>Unix domain socket server (<code>/tmp/swictation_metrics.sock</code>)</li>
+<li>Newline-delimited JSON protocol</li>
+<li>Multiple concurrent client connections</li>
+<li>Session-based transcription buffer (RAM only)</li>
+<li>Thread-safe client management</li>
+<li>New client catch-up (current state + buffer)</li>
+</ul>
+<h2 id="event-types"><a class="doc-anchor" href="#event-types">§</a>Event Types</h2>
+<ul>
+<li><code>session_start</code> - Session begins, clears buffer</li>
+<li><code>session_end</code> - Session ends, buffer stays visible</li>
+<li><code>transcription</code> - New transcription segment</li>
+<li><code>metrics_update</code> - Real-time metrics from daemon</li>
+<li><code>state_change</code> - Daemon state change</li>
+</ul>
+<h2 id="example-usage"><a class="doc-anchor" href="#example-usage">§</a>Example Usage</h2>
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>swictation_broadcaster::MetricsBroadcaster;
+<span class="kw">use </span>swictation_metrics::{MetricsCollector, DaemonState};
+
+<span class="attr">#[tokio::main]
+</span><span class="kw">async fn </span>main() -&gt; <span class="prelude-ty">Result</span>&lt;(), Box&lt;<span class="kw">dyn </span>std::error::Error&gt;&gt; {
+    <span class="comment">// Create and start broadcaster
+    </span><span class="kw">let </span>broadcaster = MetricsBroadcaster::new(<span class="string">"/tmp/swictation_metrics.sock"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+    broadcaster.start().<span class="kw">await</span><span class="question-mark">?</span>;
+
+    <span class="comment">// Start session
+    </span><span class="kw">let </span>session_id = <span class="number">123</span>;
+    broadcaster.start_session(session_id).<span class="kw">await</span>;
+
+    <span class="comment">// Add transcription
+    </span>broadcaster.add_transcription(
+        <span class="string">"Hello world"</span>.to_string(),
+        <span class="number">145.2</span>,  <span class="comment">// wpm
+        </span><span class="number">234.5</span>,  <span class="comment">// latency_ms
+        </span><span class="number">2</span>,      <span class="comment">// words
+    </span>).<span class="kw">await</span>;
+
+    <span class="comment">// Update metrics
+    // let metrics = collector.get_realtime_metrics();
+    // broadcaster.update_metrics(&amp;metrics).await;
+
+    // Broadcast state change
+    </span>broadcaster.broadcast_state_change(DaemonState::Recording).<span class="kw">await</span>;
+
+    <span class="comment">// End session
+    </span>broadcaster.end_session(session_id).<span class="kw">await</span>;
+
+    <span class="comment">// Stop broadcaster
+    </span>broadcaster.stop().<span class="kw">await</span><span class="question-mark">?</span>;
+
+    <span class="prelude-val">Ok</span>(())
+}</code></pre></div>
+</div></details><h2 id="reexports" class="section-header">Re-exports<a href="#reexports" class="anchor">§</a></h2><dl class="item-table reexports"><dt id="reexport.MetricsBroadcaster"><code>pub use broadcaster::<a class="struct" href="broadcaster/struct.MetricsBroadcaster.html" title="struct swictation_broadcaster::broadcaster::MetricsBroadcaster">MetricsBroadcaster</a>;</code></dt><dt id="reexport.BroadcasterError"><code>pub use error::<a class="enum" href="error/enum.BroadcasterError.html" title="enum swictation_broadcaster::error::BroadcasterError">BroadcasterError</a>;</code></dt><dt id="reexport.Result"><code>pub use error::<a class="type" href="error/type.Result.html" title="type swictation_broadcaster::error::Result">Result</a>;</code></dt><dt id="reexport.BroadcastEvent"><code>pub use events::<a class="enum" href="events/enum.BroadcastEvent.html" title="enum swictation_broadcaster::events::BroadcastEvent">BroadcastEvent</a>;</code></dt><dt id="reexport.TranscriptionSegment"><code>pub use events::<a class="struct" href="events/struct.TranscriptionSegment.html" title="struct swictation_broadcaster::events::TranscriptionSegment">TranscriptionSegment</a>;</code></dt></dl><h2 id="modules" class="section-header">Modules<a href="#modules" class="anchor">§</a></h2><dl class="item-table"><dt><a class="mod" href="broadcaster/index.html" title="mod swictation_broadcaster::broadcaster">broadcaster</a></dt><dt><a class="mod" href="client/index.html" title="mod swictation_broadcaster::client">client</a></dt><dt><a class="mod" href="error/index.html" title="mod swictation_broadcaster::error">error</a></dt><dt><a class="mod" href="events/index.html" title="mod swictation_broadcaster::events">events</a></dt></dl></section></div></main></body></html>

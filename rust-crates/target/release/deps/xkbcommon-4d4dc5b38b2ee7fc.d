@@ -1,0 +1,11 @@
+/opt/swictation/rust-crates/target/release/deps/xkbcommon-4d4dc5b38b2ee7fc.d: /home/robert/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/xkbcommon-0.7.0/src/lib.rs /home/robert/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/xkbcommon-0.7.0/src/xkb/mod.rs /home/robert/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/xkbcommon-0.7.0/src/xkb/compose.rs /home/robert/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/xkbcommon-0.7.0/src/xkb/ffi.rs /home/robert/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/xkbcommon-0.7.0/src/xkb/keysyms.rs
+
+/opt/swictation/rust-crates/target/release/deps/libxkbcommon-4d4dc5b38b2ee7fc.rlib: /home/robert/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/xkbcommon-0.7.0/src/lib.rs /home/robert/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/xkbcommon-0.7.0/src/xkb/mod.rs /home/robert/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/xkbcommon-0.7.0/src/xkb/compose.rs /home/robert/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/xkbcommon-0.7.0/src/xkb/ffi.rs /home/robert/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/xkbcommon-0.7.0/src/xkb/keysyms.rs
+
+/opt/swictation/rust-crates/target/release/deps/libxkbcommon-4d4dc5b38b2ee7fc.rmeta: /home/robert/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/xkbcommon-0.7.0/src/lib.rs /home/robert/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/xkbcommon-0.7.0/src/xkb/mod.rs /home/robert/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/xkbcommon-0.7.0/src/xkb/compose.rs /home/robert/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/xkbcommon-0.7.0/src/xkb/ffi.rs /home/robert/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/xkbcommon-0.7.0/src/xkb/keysyms.rs
+
+/home/robert/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/xkbcommon-0.7.0/src/lib.rs:
+/home/robert/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/xkbcommon-0.7.0/src/xkb/mod.rs:
+/home/robert/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/xkbcommon-0.7.0/src/xkb/compose.rs:
+/home/robert/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/xkbcommon-0.7.0/src/xkb/ffi.rs:
+/home/robert/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/xkbcommon-0.7.0/src/xkb/keysyms.rs:

@@ -9,6 +9,7 @@ use swictation_audio::AudioCapture;
 use swictation_vad::{VadConfig, VadDetector, VadResult};
 use sherpa_rs::transducer::{TransducerConfig, TransducerRecognizer};
 use midstreamer_text_transform::transform;
+use swictation_metrics::MetricsCollector;
 
 use crate::config::DaemonConfig;
 
@@ -22,6 +23,9 @@ pub struct Pipeline {
 
     /// Speech-to-Text recognizer
     stt: Arc<Mutex<TransducerRecognizer>>,
+
+    /// Metrics collector
+    metrics: Arc<Mutex<MetricsCollector>>,
 
     /// Recording state
     is_recording: bool,
@@ -86,12 +90,41 @@ impl Pipeline {
         let stt = TransducerRecognizer::new(stt_config)
             .map_err(|e| anyhow::anyhow!("Failed to initialize STT recognizer: {}", e))?;
 
+        info!("Initializing metrics collector...");
+
+        // Initialize metrics collector with database
+        let metrics_db_path = dirs::data_local_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join("swictation")
+            .join("metrics.db");
+
+        // Ensure directory exists
+        if let Some(parent) = metrics_db_path.parent() {
+            std::fs::create_dir_all(parent)
+                .context("Failed to create metrics directory")?;
+        }
+
+        let metrics = MetricsCollector::new(
+            metrics_db_path.to_str().unwrap(),
+            40.0,  // typing_baseline_wpm
+            true,  // store_transcription_text
+            true,  // warnings_enabled
+            1000.0, // high_latency_threshold_ms
+            80.0,   // gpu_memory_threshold_percent
+        ).context("Failed to initialize metrics collector")?;
+
+        // Enable GPU monitoring if provider is available
+        if let Some(ref provider) = gpu_provider {
+            metrics.enable_gpu_monitoring(provider);
+        }
+
         let (tx, rx) = mpsc::unbounded_channel();
 
         let pipeline = Self {
             audio: Arc::new(Mutex::new(audio)),
             vad: Arc::new(Mutex::new(vad)),
             stt: Arc::new(Mutex::new(stt)),
+            metrics: Arc::new(Mutex::new(metrics)),
             is_recording: false,
             tx,
         };
@@ -223,6 +256,10 @@ impl Pipeline {
         self.is_recording
     }
 
+    /// Get metrics collector (clone Arc for external use)
+    pub fn get_metrics(&self) -> Arc<Mutex<MetricsCollector>> {
+        self.metrics.clone()
+    }
 
     /// Get audio sample rate
     pub fn audio_sample_rate(&self) -> u32 {

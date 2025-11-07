@@ -66,25 +66,29 @@ impl Daemon {
         match *state {
             DaemonState::Idle => {
                 info!("▶️ Starting recording");
+
+                // Start metrics session
+                let metrics = pipeline.get_metrics();
+                let sid = metrics.lock().unwrap().start_session()?;
+                *session_id = Some(sid);
+
+                // Start recording pipeline
                 pipeline.start_recording().await?;
                 *state = DaemonState::Recording;
-
-                // Generate simple session ID (timestamp-based)
-                let sid = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs() as i64;
-                *session_id = Some(sid);
 
                 // Broadcast session start
                 self.broadcaster.start_session(sid).await;
 
-                Ok("Recording started".to_string())
+                Ok(format!("Recording started (Session #{})", sid))
             }
             DaemonState::Recording => {
                 info!("⏸️ Stopping recording");
                 pipeline.stop_recording().await?;
                 *state = DaemonState::Idle;
+
+                // End metrics session
+                let metrics = pipeline.get_metrics();
+                let session_metrics = metrics.lock().unwrap().end_session()?;
 
                 // Broadcast session end
                 if let Some(sid) = *session_id {
@@ -92,7 +96,9 @@ impl Daemon {
                 }
                 *session_id = None;
 
-                Ok("Recording stopped".to_string())
+                Ok(format!("Recording stopped ({} words, {:.1} WPM)",
+                          session_metrics.words_dictated,
+                          session_metrics.words_per_minute))
             }
         }
     }
@@ -162,6 +168,18 @@ async fn main() -> Result<()> {
     let daemon_clone = Arc::new(daemon);
     let mut ipc_server = IpcServer::new(&socket_path, daemon_clone.clone())
         .context("Failed to start IPC server")?;
+
+    // Spawn background metrics updater (CPU/GPU monitoring every 1 second)
+    let metrics_handle = {
+        let metrics = daemon_clone.pipeline.read().await.get_metrics();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+            loop {
+                interval.tick().await;
+                metrics.lock().unwrap().update_system_metrics();
+            }
+        })
+    };
 
     info!("🚀 Swictation daemon ready!");
     if hotkey_manager.is_some() {

@@ -6,7 +6,7 @@ use anyhow::Result;
 use chrono::Utc;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
-use sysinfo::{System, Pid, ProcessesToUpdate};
+use sysinfo::{System, Pid};
 use tracing::info;
 
 use crate::database::MetricsDatabase;

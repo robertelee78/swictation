@@ -9,6 +9,7 @@ swictation-audio = { path = "../swictation-audio" }
 swictation-vad = { path = "../swictation-vad" }
 swictation-stt = { path = "../swictation-stt" }
 swictation-broadcaster = { path = "../swictation-broadcaster" }
+swictation-metrics = { path = "../swictation-metrics" }
 
 # Working STT implementation
 sherpa-rs = "0.6"

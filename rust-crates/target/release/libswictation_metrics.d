@@ -1,0 +1,1 @@
+/opt/swictation/rust-crates/target/release/libswictation_metrics.rlib: /opt/swictation/rust-crates/swictation-metrics/src/collector.rs /opt/swictation/rust-crates/swictation-metrics/src/database.rs /opt/swictation/rust-crates/swictation-metrics/src/gpu.rs /opt/swictation/rust-crates/swictation-metrics/src/lib.rs /opt/swictation/rust-crates/swictation-metrics/src/models.rs
