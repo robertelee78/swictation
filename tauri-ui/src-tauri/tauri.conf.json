@@ -1,53 +1,25 @@
 {
+  "productName": "Swictation",
+  "version": "0.1.0",
+  "identifier": "com.swictation.ui",
   "build": {
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build",
-    "devPath": "http://localhost:1420",
-    "distDir": "../dist",
-    "withGlobalTauri": false
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../dist"
   },
-  "package": {
-    "productName": "Swictation",
-    "version": "0.1.0"
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
   },
-  "tauri": {
-    "allowlist": {
-      "all": false,
-      "shell": {
-        "all": false,
-        "open": true
-      },
-      "path": {
-        "all": true
-      },
-      "fs": {
-        "all": true,
-        "scope": [
-          "$HOME/.local/share/swictation/*",
-          "/tmp/swictation_metrics.sock"
-        ]
-      }
-    },
-    "bundle": {
-      "active": true,
-      "targets": "all",
-      "identifier": "com.swictation.ui",
-      "icon": [
-        "icons/32x32.png",
-        "icons/128x128.png",
-        "icons/128x128@2x.png",
-        "icons/icon.icns",
-        "icons/icon.ico"
-      ]
-    },
-    "security": {
-      "csp": null
-    },
-    "systemTray": {
-      "iconPath": "icons/icon.png",
-      "iconAsTemplate": true,
-      "menuOnLeftClick": false
-    },
+  "app": {
     "windows": [
       {
         "fullscreen": false,
@@ -62,6 +34,9 @@
         "alwaysOnTop": false,
         "skipTaskbar": false
       }
-    ]
+    ],
+    "security": {
+      "csp": null
+    }
   }
 }

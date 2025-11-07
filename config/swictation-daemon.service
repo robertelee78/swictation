@@ -1,6 +1,7 @@
 [Unit]
 Description=Swictation Voice Dictation Daemon
 After=pulseaudio.service
+Wants=swictation-ui.service
 
 [Service]
 Type=simple

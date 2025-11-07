@@ -18,7 +18,7 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use std::time::Duration;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter};
 use tokio::time::sleep;
 
 /// Unix socket connection for real-time metrics streaming
@@ -66,7 +66,7 @@ impl SocketConnection {
                             *self.stream.lock().await = Some(stream);
 
                             // Emit connection status
-                            self.app_handle.emit_all("socket-connected", true).ok();
+                            self.app_handle.emit("socket-connected", true).ok();
                         }
                         Err(e) => {
                             log::warn!("Failed to connect to socket: {}. Retrying...", e);
@@ -85,7 +85,7 @@ impl SocketConnection {
                             log::error!("Socket read error: {}. Reconnecting...", e);
                             drop(stream_lock); // Drop lock before acquiring again
                             *self.stream.lock().await = None;
-                            self.app_handle.emit_all("socket-connected", false).ok();
+                            self.app_handle.emit("socket-connected", false).ok();
                             sleep(Duration::from_secs(2)).await;
                         }
                     }
@@ -110,7 +110,7 @@ impl SocketConnection {
                 if let Ok(event) = serde_json::from_str::<Value>(&line) {
                     if let Some(event_type) = event.get("type").and_then(|t| t.as_str()) {
                         // Emit as 'metrics-event' for frontend listener
-                        self.app_handle.emit_all("metrics-event", &event).ok();
+                        self.app_handle.emit("metrics-event", &event).ok();
                         log::debug!("Emitted event: {}", event_type);
                     }
                 }

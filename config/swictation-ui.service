@@ -1,0 +1,25 @@
+[Unit]
+Description=Swictation UI (Smart Launcher - Qt or Tauri based on environment)
+Documentation=https://github.com/yourusername/swictation
+After=swictation-daemon.service graphical-session.target
+Requires=swictation-daemon.service
+BindsTo=swictation-daemon.service
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/opt/swictation/scripts/launch-swictation-ui.sh
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Environment
+Environment="PYTHONUNBUFFERED=1"
+Environment="PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin"
+
+# Security
+ProtectHome=read-only
+
+[Install]
+WantedBy=default.target

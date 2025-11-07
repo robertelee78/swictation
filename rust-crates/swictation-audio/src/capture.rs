@@ -4,7 +4,7 @@
 //! Uses lock-free circular buffer for zero-copy operations.
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{Device, Host, Stream, StreamConfig};
+use cpal::{Device, Host, Stream, StreamConfig, SampleFormat};
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -137,6 +137,78 @@ impl AudioCapture {
         Ok(devices)
     }
 
+    /// Auto-detect best available audio device (cross-platform)
+    fn auto_select_device(&self) -> Result<Device> {
+        // Check for environment variable override first
+        if let Ok(device_name) = std::env::var("SWICTATION_AUDIO_DEVICE") {
+            println!("Looking for device from env var: {}", device_name);
+
+            // Find device by name (cross-platform)
+            for device in self.host.input_devices()
+                .map_err(|e| AudioError::device(format!("Failed to enumerate devices: {}", e)))? {
+
+                if let Ok(name) = device.name() {
+                    if name.to_lowercase().contains(&device_name.to_lowercase()) {
+                        println!("Found matching device: {}", name);
+                        return Ok(device);
+                    }
+                }
+            }
+            println!("Device '{}' not found, continuing with auto-detection", device_name);
+        }
+
+        // Auto-detect best device based on capabilities
+        let mut best_device = None;
+        let mut best_score = 0;
+
+        for device in self.host.input_devices()
+            .map_err(|e| AudioError::device(format!("Failed to enumerate devices: {}", e)))? {
+
+            let name = device.name().unwrap_or_else(|_| "Unknown".to_string());
+            let mut score = 0;
+
+            // Check if device supports our desired format
+            if let Ok(config) = device.default_input_config() {
+                // Prefer devices that support standard sample rates
+                if config.sample_rate().0 == 44100 || config.sample_rate().0 == 48000 {
+                    score += 10;
+                }
+
+                // Prefer devices with standard channel counts
+                if config.channels() <= 2 {
+                    score += 5;
+                }
+
+                // On Linux, prefer "plughw" devices for better compatibility
+                #[cfg(target_os = "linux")]
+                if name.contains("plughw") {
+                    score += 20;
+                }
+
+                // Prefer USB devices (often external mics)
+                if name.to_lowercase().contains("usb") || name.to_lowercase().contains("camera") {
+                    score += 15;
+                }
+
+                // Avoid certain problematic devices
+                if name.to_lowercase().contains("monitor") ||
+                   name.to_lowercase().contains("loopback") ||
+                   name.to_lowercase().contains("virtual") {
+                    score = 0;  // Skip these
+                }
+
+                if score > best_score {
+                    best_score = score;
+                    best_device = Some(device);
+                }
+            }
+        }
+
+        // Fall back to default if no good device found
+        best_device.or_else(|| self.host.default_input_device())
+            .ok_or_else(|| AudioError::device("No suitable input device available".to_string()))
+    }
+
     /// Print device list in formatted output (matches Python version)
     pub fn print_devices() -> Result<()> {
         let devices = Self::list_devices()?;
@@ -194,9 +266,8 @@ impl AudioCapture {
             devices.nth(index)
                 .ok_or_else(|| AudioError::device(format!("Device index {} not found", index)))?
         } else {
-            println!("Using default input device");
-            self.host.default_input_device()
-                .ok_or_else(|| AudioError::device("No default input device found"))?
+            println!("Auto-detecting best audio device...");
+            self.auto_select_device()?
         };
 
         let device_name = device.name().unwrap_or_else(|_| "Unknown".to_string());
@@ -259,93 +330,83 @@ impl AudioCapture {
         let chunk_frames = (self.config.chunk_duration * self.config.sample_rate as f32) as usize;
         let resample_chunk_size = (source_sample_rate as f32 * 0.1) as usize;  // 100ms chunks at source rate
 
-        // Create audio callback
-        let stream = device.build_input_stream(
-            &stream_config,
-            move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                if !is_recording.load(Ordering::Relaxed) {
-                    return;
-                }
+        // Determine the sample format and build appropriate stream
+        let sample_format = supported_config.sample_format();
+        println!("Device sample format: {:?}", sample_format);
 
-                // Convert multi-channel to mono if needed
-                let mono_audio: Vec<f32> = if source_channels > target_channels {
-                    // Average all channels to preserve amplitude from any channel
-                    // This ensures we capture audio whether it's on left, right, or both channels
-                    data.chunks(source_channels as usize)
-                        .map(|frame| {
-                            frame.iter().sum::<f32>() / frame.len() as f32
-                        })
-                        .collect()
-                } else {
-                    data.to_vec()
-                };
-
-                // Resample if needed
-                let mut audio = mono_audio;
-                if resampler.lock().is_some() {
-                    // Accumulate samples for resampling
-                    let mut resample_buf = resample_buffer.lock();
-                    resample_buf.extend_from_slice(&audio);
-
-                    // Process when we have enough samples
-                    if resample_buf.len() >= resample_chunk_size {
-                        // Extract chunk
-                        let chunk_to_resample: Vec<f32> = resample_buf.drain(..resample_chunk_size).collect();
-
-                        // Resample
-                        if let Some(ref mut resampler_lock) = resampler.lock().as_mut() {
-                            match resampler_lock.process(&chunk_to_resample) {
-                                Ok(resampled) => {
-                                    audio = resampled;
-                                }
-                                Err(e) => {
-                                    eprintln!("Resampling error: {}", e);
-                                    return;
-                                }
-                            }
+        // Create audio stream with proper format handling
+        let stream = match sample_format {
+            SampleFormat::I16 => {
+                // Build stream for i16 format (most common for USB mics)
+                device.build_input_stream(
+                    &stream_config,
+                    move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                        if !is_recording.load(Ordering::Relaxed) {
+                            return;
                         }
-                    } else {
-                        // Not enough samples yet, return without processing
-                        return;
-                    }
-                }
 
-                let frames = audio.len();
+                        // Convert i16 to f32 with proper normalization
+                        let f32_data: Vec<f32> = data.iter()
+                            .map(|&sample| sample as f32 / i16::MAX as f32)
+                            .collect();
 
-                total_frames.fetch_add(frames, Ordering::Relaxed);
-
-                // Streaming mode: accumulate chunks and invoke callback
-                if streaming_mode {
-                    let mut chunk_buf = chunk_buffer.lock();
-                    chunk_buf.extend_from_slice(&audio);
-
-                    // Process complete chunks
-                    while chunk_buf.len() >= chunk_frames {
-                        // Extract chunk
-                        let chunk: Vec<f32> = chunk_buf.drain(..chunk_frames).collect();
-
-                        // Invoke chunk callback if set
-                        if let Some(ref callback) = chunk_callback {
-                            eprintln!("AUDIO: Invoking chunk callback with {} samples", chunk.len());
-                            callback(chunk);
-                        } else {
-                            eprintln!("AUDIO: No chunk callback set!");
+                        Self::process_audio_data(
+                            &f32_data,
+                            source_channels,
+                            target_channels,
+                            &buffer,
+                            &chunk_buffer,
+                            &total_frames,
+                            &chunk_callback,
+                            &resampler,
+                            &resample_buffer,
+                            streaming_mode,
+                            chunk_frames,
+                            resample_chunk_size,
+                        );
+                    },
+                    |err| {
+                        eprintln!("Audio stream error: {}", err);
+                    },
+                    None,
+                )
+            },
+            SampleFormat::F32 => {
+                // Build stream for f32 format
+                device.build_input_stream(
+                    &stream_config,
+                    move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                        if !is_recording.load(Ordering::Relaxed) {
+                            return;
                         }
-                    }
-                } else {
-                    // Non-streaming mode: write to circular buffer for later retrieval
-                    let mut buf = buffer.lock();
-                    let written = buf.write(&audio);
-                    if written < audio.len() {
-                        eprintln!("Warning: Buffer overflow, dropped {} samples", audio.len() - written);
-                    }
-                }
+
+                        Self::process_audio_data(
+                            data,
+                            source_channels,
+                            target_channels,
+                            &buffer,
+                            &chunk_buffer,
+                            &total_frames,
+                            &chunk_callback,
+                            &resampler,
+                            &resample_buffer,
+                            streaming_mode,
+                            chunk_frames,
+                            resample_chunk_size,
+                        );
+                    },
+                    |err| {
+                        eprintln!("Audio stream error: {}", err);
+                    },
+                    None,
+                )
             },
-            |err| {
-                eprintln!("Audio stream error: {}", err);
-            },
-            None, // No timeout
-        ).map_err(|e| AudioError::stream(format!("Failed to build stream: {}", e)))?;
+            _ => {
+                return Err(AudioError::device(
+                    format!("Unsupported sample format: {:?}", sample_format)
+                ));
+            }
+        }.map_err(|e| AudioError::stream(format!("Failed to build stream: {}", e)))?;
 
         // Start the stream
         stream.play()
@@ -358,6 +419,94 @@ impl AudioCapture {
         println!("✓ Audio capture started (cpal backend)");
 
         Ok(())
+    }
+
+    /// Common audio data processing logic
+    fn process_audio_data(
+        data: &[f32],
+        source_channels: u16,
+        target_channels: u16,
+        buffer: &Arc<Mutex<CircularBuffer>>,
+        chunk_buffer: &Arc<Mutex<Vec<f32>>>,
+        total_frames: &Arc<AtomicUsize>,
+        chunk_callback: &Option<ChunkCallback>,
+        resampler: &Arc<Mutex<Option<Resampler>>>,
+        resample_buffer: &Arc<Mutex<Vec<f32>>>,
+        streaming_mode: bool,
+        chunk_frames: usize,
+        resample_chunk_size: usize,
+    ) {
+        // Convert multi-channel to mono if needed
+        let mono_audio: Vec<f32> = if source_channels > target_channels {
+            // Average all channels to preserve amplitude from any channel
+            data.chunks(source_channels as usize)
+                .map(|frame| {
+                    frame.iter().sum::<f32>() / frame.len() as f32
+                })
+                .collect()
+        } else {
+            data.to_vec()
+        };
+
+        // Resample if needed
+        let mut audio = mono_audio;
+        if resampler.lock().is_some() {
+            // Accumulate samples for resampling
+            let mut resample_buf = resample_buffer.lock();
+            resample_buf.extend_from_slice(&audio);
+
+            // Process when we have enough samples
+            if resample_buf.len() >= resample_chunk_size {
+                // Extract chunk
+                let chunk_to_resample: Vec<f32> = resample_buf.drain(..resample_chunk_size).collect();
+
+                // Resample
+                if let Some(ref mut resampler_lock) = resampler.lock().as_mut() {
+                    match resampler_lock.process(&chunk_to_resample) {
+                        Ok(resampled) => {
+                            audio = resampled;
+                        }
+                        Err(e) => {
+                            eprintln!("Resampling error: {}", e);
+                            return;
+                        }
+                    }
+                }
+            } else {
+                // Not enough samples yet, return without processing
+                return;
+            }
+        }
+
+        let frames = audio.len();
+        total_frames.fetch_add(frames, Ordering::Relaxed);
+
+        // Streaming mode: accumulate chunks and invoke callback
+        if streaming_mode {
+            let mut chunk_buf = chunk_buffer.lock();
+            chunk_buf.extend_from_slice(&audio);
+
+            // Process complete chunks
+            while chunk_buf.len() >= chunk_frames {
+                // Extract chunk
+                let chunk: Vec<f32> = chunk_buf.drain(..chunk_frames).collect();
+
+                // Invoke chunk callback if set
+                if let Some(ref callback) = chunk_callback {
+                    eprintln!("AUDIO: Invoking chunk callback with {} samples", chunk.len());
+                    callback(chunk);
+                } else {
+                    eprintln!("AUDIO: No chunk callback set!");
+                }
+            }
+        } else {
+            // Non-streaming mode: write to circular buffer for later retrieval
+            let mut buf = buffer.lock();
+            let written = buf.write(&audio);
+            if written < audio.len() {
+                eprintln!("Warning: Buffer overflow, dropped {} samples", audio.len() - written);
+            }
+        }
     }
 
     /// Stop audio capture and return buffered audio

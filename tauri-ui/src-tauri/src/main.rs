@@ -9,34 +9,93 @@ mod utils;
 
 use commands::AppState;
 use database::Database;
+use image::GenericImageView;
 use socket::SocketConnection;
 use std::sync::{Arc, Mutex};
 use tauri::{
-    AppHandle, CustomMenuItem, Manager, SystemTray, SystemTrayEvent, SystemTrayMenu,
-    SystemTrayMenuItem, WindowEvent,
+    image::Image,
+    menu::{Menu, MenuItemBuilder, PredefinedMenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    Emitter, Manager, WindowEvent,
 };
 
 fn main() {
     // Initialize logger
     env_logger::init();
 
-    // Create system tray menu
-    let show_metrics = CustomMenuItem::new("show_metrics".to_string(), "Show Metrics");
-    let toggle_recording = CustomMenuItem::new("toggle_recording".to_string(), "Toggle Recording");
-    let quit = CustomMenuItem::new("quit".to_string(), "Quit");
-
-    let tray_menu = SystemTrayMenu::new()
-        .add_item(show_metrics)
-        .add_item(toggle_recording)
-        .add_native_item(SystemTrayMenuItem::Separator)
-        .add_item(quit);
-
-    let system_tray = SystemTray::new().with_menu(tray_menu);
-
     tauri::Builder::default()
-        .system_tray(system_tray)
-        .on_system_tray_event(handle_system_tray_event)
         .setup(|app| {
+            // Create menu items
+            let show_metrics = MenuItemBuilder::with_id("show_metrics", "Show Metrics").build(app)?;
+            let toggle_recording = MenuItemBuilder::with_id("toggle_recording", "Toggle Recording").build(app)?;
+            let separator = PredefinedMenuItem::separator(app)?;
+            let quit = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
+
+            // Build menu
+            let menu = Menu::with_items(app, &[&show_metrics, &toggle_recording, &separator, &quit])?;
+
+            // Load tray icon from embedded bytes (for SNI compatibility)
+            let icon_bytes = include_bytes!("../icons/tray-48.png");
+            let img = image::load_from_memory(icon_bytes)?;
+            let rgba = img.to_rgba8();
+            let (width, height) = img.dimensions();
+            let tray_icon = Image::new_owned(rgba.into_raw(), width, height);
+
+            // Build and configure tray icon with template mode for better SNI compatibility
+            let _tray = TrayIconBuilder::new()
+                .icon(tray_icon)
+                .icon_as_template(true)
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "show_metrics" => {
+                        // Show main window
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.unminimize();
+                            let _ = window.set_focus();
+                        }
+                    }
+                    "toggle_recording" => {
+                        // Emit toggle event to frontend
+                        let _ = app.emit("toggle-recording-requested", ());
+                    }
+                    "quit" => {
+                        app.exit(0);
+                    }
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| match event {
+                    TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } => {
+                        // Left click: Toggle recording (same as Qt tray and hotkey)
+                        let app = tray.app_handle();
+                        let _ = app.emit("toggle-recording-requested", ());
+                    }
+                    TrayIconEvent::Click {
+                        button: MouseButton::Middle,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } => {
+                        // Middle click: Toggle window visibility (same as Qt tray)
+                        let app = tray.app_handle();
+                        if let Some(window) = app.get_webview_window("main") {
+                            if window.is_visible().unwrap_or(false) {
+                                let _ = window.hide();
+                            } else {
+                                let _ = window.show();
+                                let _ = window.unminimize();
+                                let _ = window.set_focus();
+                            }
+                        }
+                    }
+                    _ => {}
+                })
+                .build(app)?;
+
             // Get database path
             let db_path = utils::get_default_db_path();
             log::info!("Opening database at: {:?}", db_path);
@@ -53,7 +112,7 @@ fn main() {
             let socket_path = utils::get_default_socket_path();
             let socket = Arc::new(SocketConnection::new(
                 socket_path.clone(),
-                app.handle(),
+                app.handle().clone(),
             ));
 
             // Create app state
@@ -74,10 +133,10 @@ fn main() {
 
             Ok(())
         })
-        .on_window_event(|event| {
-            if let WindowEvent::CloseRequested { api, .. } = event.event() {
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
                 // Prevent window close, hide instead
-                event.window().hide().unwrap();
+                window.hide().unwrap();
                 api.prevent_close();
             }
         })
@@ -91,36 +150,4 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
-}
-
-/// Handle system tray events
-fn handle_system_tray_event(app: &AppHandle, event: SystemTrayEvent) {
-    match event {
-        SystemTrayEvent::MenuItemClick { id, .. } => match id.as_str() {
-            "show_metrics" => {
-                // Show main window
-                if let Some(window) = app.get_window("main") {
-                    window.show().unwrap();
-                    window.set_focus().unwrap();
-                }
-            }
-            "toggle_recording" => {
-                // Emit toggle event to frontend
-                app.emit_all("toggle-recording-requested", ()).ok();
-            }
-            "quit" => {
-                // Quit application
-                std::process::exit(0);
-            }
-            _ => {}
-        },
-        SystemTrayEvent::LeftClick { .. } => {
-            // Show window on left click
-            if let Some(window) = app.get_window("main") {
-                window.show().unwrap();
-                window.set_focus().unwrap();
-            }
-        }
-        _ => {}
-    }
 }

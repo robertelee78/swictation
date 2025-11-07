@@ -80,7 +80,7 @@ impl Default for DaemonConfig {
             stt_model_path: "/opt/swictation/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8".to_string(),
             stt_tokens_path: "/opt/swictation/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/tokens.txt".to_string(),
             num_threads: Some(4),
-            audio_device_index: None,
+            audio_device_index: None, // Will be set from env var or auto-detected
             hotkeys: HotkeyConfig::default(),
         }
     }

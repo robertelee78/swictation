@@ -173,11 +173,29 @@ async fn main() -> Result<()> {
     // Spawn background metrics updater (CPU/GPU monitoring every 1 second)
     let metrics_handle = {
         let metrics = daemon_clone.pipeline.read().await.get_metrics();
+        let broadcaster = daemon_clone.broadcaster.clone();
+        let daemon_state = daemon_clone.state.clone(); // Clone state for metrics thread
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
             loop {
                 interval.tick().await;
+
+                // Update internal metrics
                 metrics.lock().unwrap().update_system_metrics();
+
+                // Get realtime metrics and update daemon state
+                let mut realtime = metrics.lock().unwrap().get_realtime_metrics();
+
+                // Update the current state from daemon
+                let state = daemon_state.read().await;
+                realtime.current_state = match *state {
+                    DaemonState::Idle => swictation_metrics::DaemonState::Idle,
+                    DaemonState::Recording => swictation_metrics::DaemonState::Recording,
+                };
+                drop(state); // Release lock quickly
+
+                // Broadcast to connected clients
+                broadcaster.update_metrics(&realtime).await;
             }
         })
     };

@@ -8,23 +8,33 @@ use tracing::{debug, error, info};
 
 use crate::Daemon;
 
-/// IPC command
-#[derive(Debug)]
-enum IpcCommand {
-    Toggle,
-    Status,
-    Quit,
+/// IPC command - JSON only
+#[derive(Debug, serde::Deserialize)]
+struct IpcCommand {
+    action: String,
 }
 
 impl IpcCommand {
     fn parse(s: &str) -> Result<Self> {
-        match s.trim().to_lowercase().as_str() {
-            "toggle" => Ok(Self::Toggle),
-            "status" => Ok(Self::Status),
-            "quit" | "exit" | "shutdown" => Ok(Self::Quit),
-            _ => anyhow::bail!("Unknown command: {}", s),
+        serde_json::from_str(s.trim())
+            .context("Invalid JSON. Expected: {\"action\": \"toggle|status|quit\"}")
+    }
+
+    fn to_command_type(&self) -> Result<CommandType> {
+        match self.action.to_lowercase().as_str() {
+            "toggle" => Ok(CommandType::Toggle),
+            "status" => Ok(CommandType::Status),
+            "quit" | "exit" | "shutdown" => Ok(CommandType::Quit),
+            _ => anyhow::bail!("Unknown action: {}", self.action),
         }
     }
+}
+
+#[derive(Debug)]
+enum CommandType {
+    Toggle,
+    Status,
+    Quit,
 }
 
 /// Unix socket IPC server
@@ -68,19 +78,24 @@ pub async fn handle_connection(mut stream: UnixStream, daemon: Arc<Daemon>) -> R
     debug!("Received IPC command: {}", request.trim());
 
     let response = match IpcCommand::parse(&request) {
-        Ok(IpcCommand::Toggle) => {
-            match daemon.toggle().await {
-                Ok(msg) => msg,
-                Err(e) => format!("Error: {}", e),
+        Ok(cmd) => match cmd.to_command_type() {
+            Ok(CommandType::Toggle) => {
+                match daemon.toggle().await {
+                    Ok(msg) => msg,
+                    Err(e) => format!("Error: {}", e),
+                }
             }
-        }
-        Ok(IpcCommand::Status) => {
-            daemon.status().await
-        }
-        Ok(IpcCommand::Quit) => {
-            info!("Received quit command");
-            std::process::exit(0);
-        }
+            Ok(CommandType::Status) => {
+                daemon.status().await
+            }
+            Ok(CommandType::Quit) => {
+                info!("Received quit command");
+                std::process::exit(0);
+            }
+            Err(e) => {
+                format!("Error: {}", e)
+            }
+        },
         Err(e) => {
             format!("Error: {}", e)
         }

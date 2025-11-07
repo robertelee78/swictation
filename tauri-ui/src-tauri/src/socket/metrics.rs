@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::time::Duration;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::time::sleep;
@@ -129,7 +129,7 @@ impl MetricsSocket {
 
         // Emit connection status
         app_handle
-            .emit_all("metrics-connected", true)
+            .emit("metrics-connected", true)
             .context("Failed to emit connection status")?;
 
         // Set up buffered reader for line-by-line processing
@@ -164,7 +164,7 @@ impl MetricsSocket {
         // Connection closed
         self.connected = false;
         app_handle
-            .emit_all("metrics-connected", false)
+            .emit("metrics-connected", false)
             .context("Failed to emit disconnection status")?;
 
         Ok(())
@@ -178,21 +178,21 @@ impl MetricsSocket {
             MetricsEvent::SessionStart { session_id, .. } => {
                 info!("Session started: {}", session_id);
                 app_handle
-                    .emit_all("session-start", event)
+                    .emit("session-start", event)
                     .context("Failed to emit session-start")?;
             }
 
             MetricsEvent::SessionEnd { session_id, .. } => {
                 info!("Session ended: {}", session_id);
                 app_handle
-                    .emit_all("session-end", event)
+                    .emit("session-end", event)
                     .context("Failed to emit session-end")?;
             }
 
             MetricsEvent::StateChange { state, .. } => {
                 info!("Daemon state changed: {}", state);
                 app_handle
-                    .emit_all("state-change", event)
+                    .emit("state-change", event)
                     .context("Failed to emit state-change")?;
             }
 
@@ -201,7 +201,7 @@ impl MetricsSocket {
             } => {
                 debug!("Transcription: '{}' (WPM: {}, latency: {}ms)", text, wpm, latency_ms);
                 app_handle
-                    .emit_all("transcription", event)
+                    .emit("transcription", event)
                     .context("Failed to emit transcription")?;
             }
 
@@ -220,7 +220,7 @@ impl MetricsSocket {
                     state, wpm, words, latency_ms, segments, duration_s, gpu_memory_mb, cpu_percent
                 );
                 app_handle
-                    .emit_all("metrics-update", event)
+                    .emit("metrics-update", event)
                     .context("Failed to emit metrics-update")?;
             }
         }
