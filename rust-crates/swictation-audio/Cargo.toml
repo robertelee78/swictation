@@ -46,10 +46,6 @@ approx = "0.5"
 default = ["pyo3-bindings"]
 pyo3-bindings = ["pyo3", "numpy"]
 
-[[bench]]
-name = "audio_bench"
-harness = false
-
 [profile.release]
 opt-level = 3
 lto = true
