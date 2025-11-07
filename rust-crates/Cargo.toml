@@ -2,6 +2,7 @@
 members = [
     "swictation-audio",
     "swictation-stt",
+    "swictation-vad",
 ]
 resolver = "2"
 

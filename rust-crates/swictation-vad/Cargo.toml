@@ -1,0 +1,35 @@
+[package]
+name = "swictation-vad"
+version = "0.1.0"
+edition = "2021"
+description = "Voice Activity Detection (VAD) for Swictation using Silero VAD"
+license = "Apache-2.0"
+repository = "https://github.com/robertelee78/swictation"
+keywords = ["vad", "voice-activity-detection", "silero", "speech", "audio"]
+categories = ["multimedia::audio"]
+
+[lib]
+name = "swictation_vad"
+path = "src/lib.rs"
+crate-type = ["rlib"]
+
+[dependencies]
+# VAD implementation via sherpa-rs (includes Silero VAD)
+sherpa-rs = "0.6"
+
+# Error handling
+thiserror = "2.0"
+anyhow = "1.0"
+
+# Audio resampling (for non-16kHz input)
+rubato = "0.15"
+
+[dev-dependencies]
+# Audio file loading for tests
+hound = "3.5"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
