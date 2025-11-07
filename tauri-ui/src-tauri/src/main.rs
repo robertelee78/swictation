@@ -25,29 +25,31 @@ fn main() {
 
     tauri::Builder::default()
         .setup(|app| {
-            // Create menu items
-            let show_metrics = MenuItemBuilder::with_id("show_metrics", "Show Metrics").build(app)?;
-            let toggle_recording = MenuItemBuilder::with_id("toggle_recording", "Toggle Recording").build(app)?;
-            let separator = PredefinedMenuItem::separator(app)?;
-            let quit = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
+            // Only create tray icon if not disabled (e.g., when launched from QT tray on Sway)
+            if std::env::var("SWICTATION_NO_TRAY").is_err() {
+                // Create menu items
+                let show_metrics = MenuItemBuilder::with_id("show_metrics", "Show Metrics").build(app)?;
+                let toggle_recording = MenuItemBuilder::with_id("toggle_recording", "Toggle Recording").build(app)?;
+                let separator = PredefinedMenuItem::separator(app)?;
+                let quit = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
 
-            // Build menu
-            let menu = Menu::with_items(app, &[&show_metrics, &toggle_recording, &separator, &quit])?;
+                // Build menu
+                let menu = Menu::with_items(app, &[&show_metrics, &toggle_recording, &separator, &quit])?;
 
-            // Load tray icon from embedded bytes (for SNI compatibility)
-            let icon_bytes = include_bytes!("../icons/tray-48.png");
-            let img = image::load_from_memory(icon_bytes)?;
-            let rgba = img.to_rgba8();
-            let (width, height) = img.dimensions();
-            let tray_icon = Image::new_owned(rgba.into_raw(), width, height);
+                // Load tray icon from embedded bytes (for SNI compatibility)
+                let icon_bytes = include_bytes!("../icons/tray-48.png");
+                let img = image::load_from_memory(icon_bytes)?;
+                let rgba = img.to_rgba8();
+                let (width, height) = img.dimensions();
+                let tray_icon = Image::new_owned(rgba.into_raw(), width, height);
 
-            // Build and configure tray icon with template mode for better SNI compatibility
-            let _tray = TrayIconBuilder::new()
-                .icon(tray_icon)
-                .icon_as_template(true)
-                .menu(&menu)
-                .show_menu_on_left_click(false)
-                .on_menu_event(|app, event| match event.id.as_ref() {
+                // Build and configure tray icon with template mode for better SNI compatibility
+                let _tray = TrayIconBuilder::new()
+                    .icon(tray_icon)
+                    .icon_as_template(true)
+                    .menu(&menu)
+                    .show_menu_on_left_click(false)
+                    .on_menu_event(|app, event| match event.id.as_ref() {
                     "show_metrics" => {
                         // Show main window
                         if let Some(window) = app.get_webview_window("main") {
@@ -95,6 +97,7 @@ fn main() {
                     _ => {}
                 })
                 .build(app)?;
+            } // End of tray icon creation (disabled when SWICTATION_NO_TRAY is set)
 
             // Get database path
             let db_path = utils::get_default_db_path();

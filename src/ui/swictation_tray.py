@@ -471,15 +471,18 @@ class SwictationTrayApp(QApplication):
                 # Process is still running - could implement focus logic here if needed
                 print("Tauri UI is already running")
             else:
-                # Launch Tauri UI
+                # Launch Tauri UI without tray icon (we're already providing the tray)
                 print(f"Launching Tauri UI: {self.tauri_ui_binary}")
+                env = os.environ.copy()
+                env['SWICTATION_NO_TRAY'] = '1'  # Disable Tauri tray icon
                 self.tauri_process = subprocess.Popen(
                     [self.tauri_ui_binary],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
+                    env=env,
                     start_new_session=True  # Don't tie to parent process
                 )
-                print("✓ Tauri UI launched")
+                print("✓ Tauri UI launched (without tray icon)")
         except Exception as e:
             print(f"✗ Failed to launch Tauri UI: {e}")
             self.tray_icon.showMessage(
