@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "swictation-audio",
+    "swictation-stt",
 ]
 resolver = "2"
 
