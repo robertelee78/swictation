@@ -9,6 +9,7 @@ mod gpu;
 mod config;
 mod ipc;
 mod hotkey;
+mod text_injection;
 
 use anyhow::{Context, Result};
 use tracing::{info, error, warn};
@@ -269,15 +270,29 @@ async fn main() -> Result<()> {
 
     // Handle transcription results and inject text
     tokio::spawn(async move {
-        use enigo::{Enigo, Keyboard, Settings};
-        let mut enigo = Enigo::new(&Settings::default()).expect("Failed to initialize enigo");
+        use crate::text_injection::TextInjector;
+
+        // Initialize text injector with display server detection
+        let text_injector = match TextInjector::new() {
+            Ok(injector) => {
+                info!("Text injector initialized for: {:?}", injector.display_server());
+                injector
+            }
+            Err(e) => {
+                error!("Failed to initialize text injector: {}", e);
+                error!("Text injection will be disabled. Install required tools:");
+                error!("  For X11: sudo apt install xdotool");
+                error!("  For Wayland: sudo apt install wtype");
+                return;
+            }
+        };
 
         // Receive transcriptions directly from channel (no locks needed)
         while let Some(result) = transcription_rx.recv().await {
             match result {
                 Ok(text) => {
                     info!("Injecting text: {}", text);
-                    if let Err(e) = enigo.text(&text) {
+                    if let Err(e) = text_injector.inject_text(&text) {
                         error!("Failed to inject text: {}", e);
                     }
                 }

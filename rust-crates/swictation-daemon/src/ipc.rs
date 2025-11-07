@@ -77,31 +77,49 @@ pub async fn handle_connection(mut stream: UnixStream, daemon: Arc<Daemon>) -> R
     let request = String::from_utf8_lossy(&buffer[..n]);
     debug!("Received IPC command: {}", request.trim());
 
+    // Create JSON response
     let response = match IpcCommand::parse(&request) {
         Ok(cmd) => match cmd.to_command_type() {
             Ok(CommandType::Toggle) => {
                 match daemon.toggle().await {
-                    Ok(msg) => msg,
-                    Err(e) => format!("Error: {}", e),
+                    Ok(msg) => serde_json::json!({
+                        "status": "success",
+                        "message": msg
+                    }),
+                    Err(e) => serde_json::json!({
+                        "status": "error",
+                        "error": format!("{}", e)
+                    }),
                 }
             }
             Ok(CommandType::Status) => {
-                daemon.status().await
+                let status = daemon.status().await;
+                serde_json::json!({
+                    "status": "success",
+                    "state": status
+                })
             }
             Ok(CommandType::Quit) => {
                 info!("Received quit command");
                 std::process::exit(0);
             }
             Err(e) => {
-                format!("Error: {}", e)
+                serde_json::json!({
+                    "status": "error",
+                    "error": format!("{}", e)
+                })
             }
         },
         Err(e) => {
-            format!("Error: {}", e)
+            serde_json::json!({
+                "status": "error",
+                "error": format!("{}", e)
+            })
         }
     };
 
-    stream.write_all(response.as_bytes()).await?;
+    let response_str = serde_json::to_string(&response)?;
+    stream.write_all(response_str.as_bytes()).await?;
     stream.flush().await?;
 
     Ok(())

@@ -75,7 +75,7 @@ impl Default for DaemonConfig {
             vad_min_silence: 0.5,
             vad_min_speech: 0.25,
             vad_max_speech: 30.0,
-            vad_threshold: 0.5,
+            vad_threshold: 0.1, // Lowered for USB camera mic levels
             // STT expects directory containing encoder.int8.onnx, decoder.int8.onnx, joiner.int8.onnx, tokens.txt
             stt_model_path: "/opt/swictation/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8".to_string(),
             stt_tokens_path: "/opt/swictation/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/tokens.txt".to_string(),

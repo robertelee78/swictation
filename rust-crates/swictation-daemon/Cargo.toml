@@ -21,7 +21,7 @@ midstreamer-text-transform = { path = "../../external/midstream/crates/text-tran
 tokio = { version = "1.0", features = ["full"] }
 
 # System interaction
-enigo = "0.2"           # Text injection
+# enigo removed - using native text injection via wtype/xdotool
 sysinfo = "0.32"        # System monitoring
 global-hotkey = "0.6"   # Cross-platform hotkey registration (X11, Windows, macOS)
 swayipc = "3.0"         # Sway/Wayland IPC for compositor integration
