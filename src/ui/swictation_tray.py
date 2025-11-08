@@ -1,295 +1,15 @@
 #!/usr/bin/env python3
-"""Swictation system tray application."""
+"""Swictation minimal system tray launcher."""
 
 import sys
 import os
 import socket
 import json
-import threading
 import subprocess
 from pathlib import Path
 from PySide6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
-from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QGuiApplication, QClipboard, QCursor
-from PySide6.QtCore import QObject, Signal, QUrl, Slot, Property, QTimer, QEvent, Qt
-from PySide6.QtQml import QQmlApplicationEngine
-
-# Add src to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from metrics.database import MetricsDatabase
-
-
-class MetricsBackend(QObject):
-    """
-    Dual data source backend:
-    - Socket: Real-time metrics from /tmp/swictation_metrics.sock
-    - Database: Historical data from ~/.local/share/swictation/metrics.db
-    """
-
-    # Qt signals for QML bindings
-    stateChanged = Signal(str)
-    wpmChanged = Signal(float)
-    wordsChanged = Signal(int)
-    latencyChanged = Signal(float)
-    segmentsChanged = Signal(int)
-    durationChanged = Signal(str)
-    gpuMemoryChanged = Signal(float)
-    cpuPercentChanged = Signal(float)
-    connectedChanged = Signal(bool)  # Socket connection status
-
-    # Transcription signals
-    transcriptionAdded = Signal(str, str, float, float)  # text, timestamp, wpm, latency
-    sessionCleared = Signal()
-
-    # Session list signals
-    recentSessionsChanged = Signal()
-    lifetimeStatsChanged = Signal()
-    lifetimeStatsLoaded = Signal('QVariantMap')  # Emit when stats are loaded
-
-    def __init__(self):
-        super().__init__()
-
-        # Database access for historical data
-        self.db = MetricsDatabase()
-
-        # Current state (from socket)
-        self._state = "idle"
-        self._wpm = 0.0
-        self._words = 0
-        self._latency_ms = 0.0
-        self._segments = 0
-        self._duration = "00:00"
-        self._gpu_memory_mb = 0.0
-        self._cpu_percent = 0.0
-        self._connected = False
-
-        # Socket connection
-        self.socket = None
-        self.socket_thread = threading.Thread(target=self._socket_listener, daemon=True)
-        self.socket_thread.start()
-
-    # Qt properties for QML
-    @Property(str, notify=stateChanged)
-    def state(self):
-        return self._state
-
-    @state.setter
-    def state(self, value):
-        if self._state != value:
-            self._state = value
-            self.stateChanged.emit(value)
-
-    @Property(float, notify=wpmChanged)
-    def wpm(self):
-        return self._wpm
-
-    @wpm.setter
-    def wpm(self, value):
-        if self._wpm != value:
-            self._wpm = value
-            self.wpmChanged.emit(value)
-
-    @Property(int, notify=wordsChanged)
-    def words(self):
-        return self._words
-
-    @words.setter
-    def words(self, value):
-        if self._words != value:
-            self._words = value
-            self.wordsChanged.emit(value)
-
-    @Property(float, notify=latencyChanged)
-    def latency_ms(self):
-        return self._latency_ms
-
-    @latency_ms.setter
-    def latency_ms(self, value):
-        if self._latency_ms != value:
-            self._latency_ms = value
-            self.latencyChanged.emit(value)
-
-    @Property(int, notify=segmentsChanged)
-    def segments(self):
-        return self._segments
-
-    @segments.setter
-    def segments(self, value):
-        if self._segments != value:
-            self._segments = value
-            self.segmentsChanged.emit(value)
-
-    @Property(str, notify=durationChanged)
-    def duration(self):
-        return self._duration
-
-    @duration.setter
-    def duration(self, value):
-        if self._duration != value:
-            self._duration = value
-            self.durationChanged.emit(value)
-
-    @Property(float, notify=gpuMemoryChanged)
-    def gpu_memory_mb(self):
-        return self._gpu_memory_mb
-
-    @gpu_memory_mb.setter
-    def gpu_memory_mb(self, value):
-        if self._gpu_memory_mb != value:
-            self._gpu_memory_mb = value
-            self.gpuMemoryChanged.emit(value)
-
-    @Property(float, notify=cpuPercentChanged)
-    def cpu_percent(self):
-        return self._cpu_percent
-
-    @cpu_percent.setter
-    def cpu_percent(self, value):
-        if self._cpu_percent != value:
-            self._cpu_percent = value
-            self.cpuPercentChanged.emit(value)
-
-    @Property(bool, notify=connectedChanged)
-    def connected(self):
-        return self._connected
-
-    @connected.setter
-    def connected(self, value):
-        if self._connected != value:
-            self._connected = value
-            self.connectedChanged.emit(value)
-
-    def _socket_listener(self):
-        """Background thread: connect to metrics socket and process events."""
-        import time
-        import traceback
-
-        while True:
-            try:
-                # Connect to metrics socket
-                self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                self.socket.settimeout(30.0)  # 30 second timeout to detect stuck connections
-                self.socket.connect('/tmp/swictation_metrics.sock')
-                print("✓ Connected to metrics socket")
-                self.connected = True
-
-                # Read events line by line
-                buffer = ""
-                while True:
-                    try:
-                        data = self.socket.recv(4096).decode('utf-8')
-                        if not data:
-                            print("⚠️  Socket connection closed by daemon")
-                            break
-
-                        buffer += data
-                        while '\n' in buffer:
-                            line, buffer = buffer.split('\n', 1)
-                            if line.strip():
-                                try:
-                                    self._handle_event(json.loads(line))
-                                except (json.JSONDecodeError, KeyError) as e:
-                                    print(f"⚠️  Failed to parse event: {e}")
-                                    continue
-                    except socket.timeout:
-                        # Keep-alive check - connection is still alive
-                        continue
-                    except Exception as e:
-                        print(f"⚠️  Socket read error: {e}")
-                        traceback.print_exc()
-                        break
-
-            except Exception as e:
-                print(f"⚠️  Metrics socket error: {e}")
-                traceback.print_exc()
-                self.connected = False
-            finally:
-                if self.socket:
-                    try:
-                        self.socket.close()
-                    except:
-                        pass
-                    self.socket = None
-                self.connected = False
-
-            # Reconnect after 5 seconds
-            print("⚠️  Reconnecting in 5 seconds...")
-            time.sleep(5)
-
-    def _handle_event(self, event: dict):
-        """Handle incoming socket event."""
-        event_type = event.get('type')
-        print(f"[MetricsBackend] Received event: {event_type}")
-
-        if event_type == 'session_start':
-            self.sessionCleared.emit()
-
-        elif event_type == 'session_end':
-            # Refresh history with newly completed session
-            self.recentSessionsChanged.emit()
-
-        elif event_type == 'transcription':
-            self.transcriptionAdded.emit(
-                event['text'],
-                event['timestamp'],
-                event['wpm'],
-                event['latency_ms']
-            )
-
-        elif event_type == 'metrics_update':
-            self.state = event['state']
-            self.wpm = event['wpm']
-            self.words = event['words']
-            self.latency_ms = event['latency_ms']
-            self.segments = event['segments']
-
-            # Format duration
-            duration_s = event['duration_s']
-            minutes = int(duration_s // 60)
-            seconds = int(duration_s % 60)
-            self.duration = f"{minutes:02d}:{seconds:02d}"
-
-            self.gpu_memory_mb = event['gpu_memory_mb']
-            self.cpu_percent = event['cpu_percent']
-
-        elif event_type == 'state_change':
-            self.state = event['state']
-
-    @Slot(result='QVariantList')
-    def loadHistory(self):
-        """Load recent sessions from database."""
-        sessions = self.db.get_recent_sessions(limit=10)
-        # Convert to QML-friendly format (list of dicts)
-        return [dict(s) for s in sessions]
-
-    @Slot(result='QVariantMap')
-    def loadLifetimeStats(self):
-        """Load lifetime statistics from database."""
-        stats = self.db.get_lifetime_stats()
-
-        if stats:
-            result = dict(stats)
-            self.lifetimeStatsLoaded.emit(result)
-            return result
-        else:
-            defaults = {
-                'total_words': 0,
-                'total_sessions': 0,
-                'avg_wpm': 0,
-                'time_saved_minutes': 0,
-                'best_wpm_value': 0,
-                'lowest_latency_ms': 0
-            }
-            self.lifetimeStatsLoaded.emit(defaults)
-            return defaults
-
-    @Slot(str)
-    def copyToClipboard(self, text):
-        """Copy text to system clipboard."""
-        clipboard = QGuiApplication.clipboard()
-        # Set text in both Selection (middle-click) and Clipboard (Ctrl+V) modes
-        clipboard.setText(text, QClipboard.Clipboard)
-        clipboard.setText(text, QClipboard.Selection)
-        print(f"✓ Copied to clipboard: {text[:50]}...")
+from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QCursor
+from PySide6.QtCore import QObject, Signal, QTimer, QEvent, Qt, Slot
 
 
 class TrayEventFilter(QObject):
@@ -319,13 +39,13 @@ class TrayEventFilter(QObject):
 
 
 class SwictationTrayApp(QApplication):
-    """Main system tray application."""
+    """Minimal system tray application for launching Tauri UI."""
 
     def __init__(self, argv):
         super().__init__(argv)
 
         # CRITICAL: Prevent app from quitting when last window closes
-        # We're a system tray app - we should keep running even when window is hidden
+        # We're a system tray app - we should keep running
         self.setQuitOnLastWindowClosed(False)
 
         # Setup paths
@@ -341,54 +61,36 @@ class SwictationTrayApp(QApplication):
         self.click_timer.setSingleShot(True)
         self.click_timer.timeout.connect(self.toggle_recording)
 
-        # Create metrics backend FIRST (before QML)
-        # This ensures the backend object exists before QML tries to bind to it
-        self.backend = MetricsBackend()
+        # Track current state for icon changes
+        self.current_state = "idle"
 
-        # Keep a strong reference to prevent garbage collection
-        self.backend.setParent(self)  # Make app the parent to keep backend alive
-
-        # QML window no longer needed - we launch Tauri UI instead
-        # Commenting out to save resources
-        # self.engine = QQmlApplicationEngine(self)
-        # self.engine.rootContext().setContextProperty("backend", self.backend)
-        # qml_file = Path(__file__).parent / "MetricsUI.qml"
-        # self.engine.load(QUrl.fromLocalFile(str(qml_file)))
-        # if not self.engine.rootObjects():
-        #     print("✗ Failed to load QML")
-        #     sys.exit(1)
-        # self.window = self.engine.rootObjects()[0]
-        # self.window.hide()
-
-        # Initialize window reference for compatibility (not used)
-        self.window = None
-
-        # Create system tray icon AFTER QML loads
+        # Create system tray icon
         self.tray_icon = QSystemTrayIcon(self)
         self.tray_icon.setIcon(self._load_icon("idle"))
         self.tray_icon.activated.connect(self.on_tray_activated)
 
         # Create tray menu
         menu = QMenu()
-        menu.addAction("Show Metrics", self.show_window)
+        menu.addAction("Show Metrics", self.launch_tauri_ui)
         menu.addAction("Toggle Recording", self.toggle_recording)
         menu.addSeparator()
         menu.addAction("Quit", self.quit)
         self.tray_icon.setContextMenu(menu)
 
         # Install event filter to catch right-clicks reliably on Wayland
-        # This intercepts events BEFORE Qt's buggy Wayland handler processes them
         self.event_filter = TrayEventFilter(self)
         self.instance().installEventFilter(self.event_filter)
         self.event_filter.context_menu_requested.connect(self.show_context_menu)
 
-        # Show tray icon (always visible)
+        # Show tray icon
         self.tray_icon.show()
 
-        # Connect backend signals AFTER everything is set up
-        self.backend.stateChanged.connect(self.on_state_changed)
+        # Start monitoring socket for state changes
+        self.state_timer = QTimer(self)
+        self.state_timer.timeout.connect(self.check_daemon_state)
+        self.state_timer.start(1000)  # Check every second
 
-        print("✓ Swictation tray app started")
+        print("✓ Swictation tray launcher started (minimal)")
 
     def _load_icon(self, state: str) -> QIcon:
         """Load icon with optional recording overlay."""
@@ -413,13 +115,11 @@ class SwictationTrayApp(QApplication):
             self.click_timer.start(interval)
 
         elif reason == QSystemTrayIcon.MiddleClick:
-            # Middle-click: show/hide metrics window
-            self.toggle_window()
+            # Middle-click: show metrics window
+            self.launch_tauri_ui()
 
         elif reason == QSystemTrayIcon.Context:
             # Right-click: handled by event filter for Wayland reliability
-            # Event filter catches MouseButtonPress BEFORE this signal fires
-            # and shows the menu reliably. If we get here, it's a fallback.
             pass
 
     @Slot()
@@ -427,11 +127,21 @@ class SwictationTrayApp(QApplication):
         """Send toggle command to daemon."""
         try:
             sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            sock.settimeout(5.0)
+            sock.settimeout(2.0)
             sock.connect('/tmp/swictation.sock')
             sock.sendall(json.dumps({'action': 'toggle'}).encode('utf-8'))
             response = sock.recv(1024)
             sock.close()
+
+            # Parse response to update state immediately
+            try:
+                resp_data = json.loads(response.decode('utf-8'))
+                if resp_data.get('success'):
+                    new_state = resp_data.get('state', self.current_state)
+                    self.update_state(new_state)
+            except:
+                pass
+
             print(f"✓ Toggle response: {response.decode('utf-8')}")
         except Exception as e:
             print(f"✗ Toggle failed: {e}")
@@ -442,33 +152,63 @@ class SwictationTrayApp(QApplication):
             )
 
     @Slot()
-    def show_context_menu(self):
-        """Show context menu at cursor position (called by event filter).
+    def check_daemon_state(self):
+        """Periodically check daemon state for icon updates."""
+        try:
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            sock.settimeout(0.5)  # Short timeout for status check
+            sock.connect('/tmp/swictation.sock')
+            sock.sendall(json.dumps({'action': 'status'}).encode('utf-8'))
+            response = sock.recv(1024)
+            sock.close()
 
-        This is triggered by the event filter when it detects a right-click,
-        ensuring the menu appears reliably on Wayland by bypassing Qt's
-        broken positioning code.
-        """
+            # Parse response and update state
+            try:
+                resp_data = json.loads(response.decode('utf-8'))
+                new_state = resp_data.get('state', 'idle')
+                self.update_state(new_state)
+            except:
+                pass
+        except:
+            # Socket connection failed, assume idle
+            self.update_state('idle')
+
+    def update_state(self, state: str):
+        """Update icon based on state change."""
+        if state != self.current_state:
+            self.current_state = state
+            self.tray_icon.setIcon(self._load_icon(state))
+
+            # Show notification for recording state change
+            if state == "recording":
+                self.tray_icon.showMessage(
+                    "Swictation",
+                    "Recording started",
+                    QSystemTrayIcon.Information,
+                    2000
+                )
+            elif self.current_state == "recording" and state == "idle":
+                self.tray_icon.showMessage(
+                    "Swictation",
+                    "Recording stopped",
+                    QSystemTrayIcon.Information,
+                    2000
+                )
+
+    @Slot()
+    def show_context_menu(self):
+        """Show context menu at cursor position (called by event filter)."""
         menu = self.tray_icon.contextMenu()
         if menu:
             menu.popup(QCursor.pos())
 
     @Slot()
-    def toggle_window(self):
-        """Launch or focus the Tauri UI application."""
-        self.launch_tauri_ui()
-
-    @Slot()
-    def show_window(self):
-        """Launch or focus the Tauri UI application."""
-        self.launch_tauri_ui()
-
     def launch_tauri_ui(self):
         """Launch the Tauri UI if not running, or bring it to focus."""
         try:
             # Check if Tauri UI is already running
             if self.tauri_process and self.tauri_process.poll() is None:
-                # Process is still running - could implement focus logic here if needed
+                # Process is still running
                 print("Tauri UI is already running")
             else:
                 # Launch Tauri UI without tray icon (we're already providing the tray)
@@ -489,20 +229,6 @@ class SwictationTrayApp(QApplication):
                 "Swictation",
                 f"Failed to launch UI: {e}",
                 QSystemTrayIcon.Warning
-            )
-
-    @Slot(str)
-    def on_state_changed(self, state):
-        """Update tray icon when state changes."""
-        self.tray_icon.setIcon(self._load_icon(state))
-
-        # Show notification
-        if state == "recording":
-            self.tray_icon.showMessage(
-                "Swictation",
-                "Recording started",
-                QSystemTrayIcon.Information,
-                2000
             )
 
 
