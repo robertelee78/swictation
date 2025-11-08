@@ -23,6 +23,10 @@ pub enum VadError {
     /// I/O error
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
+
+    /// ONNX Runtime error
+    #[error("ONNX Runtime error: {0}")]
+    OnnxRuntime(#[from] ort::Error),
 }
 
 impl VadError {

@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["create"],"struct":["CommonTtsConfig","CommonTtsRaw","KittenTts","KittenTtsConfig","KokoroTts","KokoroTtsConfig","MatchaTts","MatchaTtsConfig","TtsAudio","VitsTts","VitsTtsConfig"]};

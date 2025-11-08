@@ -1,1 +1,0 @@
-/opt/swictation/rust-crates/target/release/examples/test_vad_basic: /opt/swictation/rust-crates/swictation-vad/examples/test_vad_basic.rs /opt/swictation/rust-crates/swictation-vad/src/error.rs /opt/swictation/rust-crates/swictation-vad/src/lib.rs

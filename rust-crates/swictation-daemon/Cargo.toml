@@ -11,14 +11,17 @@ swictation-stt = { path = "../swictation-stt" }
 swictation-broadcaster = { path = "../swictation-broadcaster" }
 swictation-metrics = { path = "../swictation-metrics" }
 
-# Working STT implementation
-sherpa-rs = "0.6"
+# STT implementation using parakeet-rs with modern GPU support
+parakeet-rs = { version = "0.1.7", features = ["cuda"] }
 
 # Text transformation (voice commands → symbols)
 midstreamer-text-transform = { path = "../../external/midstream/crates/text-transform" }
 
 # Async runtime
 tokio = { version = "1.0", features = ["full"] }
+
+# Time and dates
+chrono = "0.4"
 
 # System interaction
 # enigo removed - using native text injection via wtype/xdotool

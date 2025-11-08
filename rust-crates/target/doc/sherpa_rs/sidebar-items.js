@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["get_default_provider","read_audio_file","write_audio_file"],"mod":["audio_tag","diarize","dolphin","embedding_manager","keyword_spot","language_id","moonshine","paraformer","punctuate","sense_voice","silero_vad","speaker_id","ten_vad","transducer","tts","whisper","zipformer"],"struct":["OfflineRecognizerResult","OnnxConfig"]};

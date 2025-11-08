@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["DEFAULT_SIMILARITY_THRESHOLD"],"struct":["EmbeddingExtractor","ExtractorConfig"]};

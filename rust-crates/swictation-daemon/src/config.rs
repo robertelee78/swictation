@@ -76,9 +76,9 @@ impl Default for DaemonConfig {
             vad_min_speech: 0.25,
             vad_max_speech: 30.0,
             vad_threshold: 0.1, // Lowered for USB camera mic levels
-            // STT expects directory containing encoder.int8.onnx, decoder.int8.onnx, joiner.int8.onnx, tokens.txt
-            stt_model_path: "/opt/swictation/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8".to_string(),
-            stt_tokens_path: "/opt/swictation/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/tokens.txt".to_string(),
+            // Parakeet-TDT-1.1B model path (auto-downloads if not present)
+            stt_model_path: "/opt/swictation/models/nvidia-parakeet-tdt-1.1b".to_string(),
+            stt_tokens_path: "/opt/swictation/models/nvidia-parakeet-tdt-1.1b/tokenizer.json".to_string(),
             num_threads: Some(4),
             audio_device_index: None, // Will be set from env var or auto-detected
             hotkeys: HotkeyConfig::default(),

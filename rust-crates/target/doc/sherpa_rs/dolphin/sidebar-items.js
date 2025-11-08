@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"struct":["DolphinConfig","DolphinRecognizer"],"type":["DolphinRecognizerResult"]};

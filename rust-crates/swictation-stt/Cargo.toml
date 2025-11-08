@@ -40,9 +40,8 @@ hound = "3.5"
 # Tensor operations
 ndarray = "0.16"
 
-# Alternative implementations for comparison
-parakeet-rs = "0.1.6"
-sherpa-rs = "0.6"
+# Modern STT implementation with GPU support
+parakeet-rs = { version = "0.1.7", features = ["cuda"] }
 
 [dev-dependencies]
 approx = "0.5"

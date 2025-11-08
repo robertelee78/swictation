@@ -1,2 +1,0 @@
-createSrcSidebar('[["sherpa_rs",["",[["tts",[],["kitten.rs","kokoro.rs","matcha.rs","mod.rs","vits.rs"]]],["audio_tag.rs","diarize.rs","dolphin.rs","embedding_manager.rs","keyword_spot.rs","language_id.rs","lib.rs","moonshine.rs","paraformer.rs","punctuate.rs","sense_voice.rs","silero_vad.rs","speaker_id.rs","ten_vad.rs","transducer.rs","utils.rs","whisper.rs","zipformer.rs"]]],["swictation_broadcaster",["",[],["broadcaster.rs","client.rs","error.rs","events.rs","lib.rs"]]]]');
-//{"start":19,"fragment_lengths":[361,98]}

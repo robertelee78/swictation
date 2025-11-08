@@ -42,14 +42,19 @@ impl Daemon {
         let (pipeline, transcription_rx) = Pipeline::new(config, gpu_provider).await?;
 
         // Initialize metrics broadcaster
-        let broadcaster = MetricsBroadcaster::new("/tmp/swictation_metrics.sock")
-            .await
-            .context("Failed to create metrics broadcaster")?;
+        let broadcaster = Arc::new(
+            MetricsBroadcaster::new("/tmp/swictation_metrics.sock")
+                .await
+                .context("Failed to create metrics broadcaster")?
+        );
+
+        // Set broadcaster in pipeline for real-time updates
+        pipeline.set_broadcaster(broadcaster.clone());
 
         let daemon = Self {
             pipeline: Arc::new(RwLock::new(pipeline)),
             state: Arc::new(RwLock::new(DaemonState::Idle)),
-            broadcaster: Arc::new(broadcaster),
+            broadcaster: broadcaster.clone(),
             session_id: Arc::new(RwLock::new(None)),
         };
 
@@ -74,6 +79,9 @@ impl Daemon {
                 let sid = metrics.lock().unwrap().start_session()?;
                 *session_id = Some(sid);
 
+                // Set session ID in pipeline so segments can be associated with it
+                pipeline.set_session_id(sid);
+
                 // Start recording pipeline
                 pipeline.start_recording().await?;
                 *state = DaemonState::Recording;
@@ -81,12 +89,18 @@ impl Daemon {
                 // Broadcast session start
                 self.broadcaster.start_session(sid).await;
 
+                // Broadcast state change to Recording
+                self.broadcaster.broadcast_state_change(swictation_metrics::DaemonState::Recording).await;
+
                 Ok(format!("Recording started (Session #{})", sid))
             }
             DaemonState::Recording => {
                 info!("⏸️ Stopping recording");
                 pipeline.stop_recording().await?;
                 *state = DaemonState::Idle;
+
+                // Clear session ID in pipeline
+                pipeline.clear_session_id();
 
                 // End metrics session
                 let metrics = pipeline.get_metrics();
@@ -97,6 +111,9 @@ impl Daemon {
                     self.broadcaster.end_session(sid).await;
                 }
                 *session_id = None;
+
+                // Broadcast state change to Idle
+                self.broadcaster.broadcast_state_change(swictation_metrics::DaemonState::Idle).await;
 
                 Ok(format!("Recording stopped ({} words, {:.1} WPM)",
                           session_metrics.words_dictated,

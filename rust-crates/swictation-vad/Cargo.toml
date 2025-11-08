@@ -14,8 +14,11 @@ path = "src/lib.rs"
 crate-type = ["rlib"]
 
 [dependencies]
-# VAD implementation via sherpa-rs (includes Silero VAD)
-sherpa-rs = "0.6"
+# Direct ONNX Runtime for Silero VAD (modern CUDA support)
+ort = { version = "2.0.0-rc.10", features = ["cuda", "half"] }
+
+# Tensor operations for ONNX
+ndarray = "0.16"
 
 # Error handling
 thiserror = "2.0"
