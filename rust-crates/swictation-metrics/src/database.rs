@@ -410,6 +410,7 @@ impl MetricsDatabase {
             gpu_memory_mean_mb: row.get("gpu_mean_mb").unwrap_or(0.0),
             cpu_usage_mean_percent: row.get("cpu_mean_percent").unwrap_or(0.0),
             cpu_usage_peak_percent: row.get("cpu_peak_percent").unwrap_or(0.0),
+            total_samples: 0,
         })
     }
 
@@ -485,6 +486,7 @@ impl MetricsDatabase {
                 gpu_memory_mean_mb: row.get("gpu_mean_mb").unwrap_or(0.0),
                 cpu_usage_mean_percent: row.get("cpu_mean_percent").unwrap_or(0.0),
                 cpu_usage_peak_percent: row.get("cpu_peak_percent").unwrap_or(0.0),
+                total_samples: 0,
             })
         })?;
 
@@ -630,6 +632,7 @@ impl MetricsDatabase {
                 gpu_memory_mean_mb: row.get("gpu_mean_mb").unwrap_or(0.0),
                 cpu_usage_mean_percent: row.get("cpu_mean_percent").unwrap_or(0.0),
                 cpu_usage_peak_percent: row.get("cpu_peak_percent").unwrap_or(0.0),
+                total_samples: 0,
             })
         })?;
 

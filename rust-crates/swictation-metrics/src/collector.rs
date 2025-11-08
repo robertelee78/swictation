@@ -334,9 +334,12 @@ impl MetricsCollector {
 
         // Update session means if active
         if let Some(ref mut session) = *self.current_session.lock().unwrap() {
-            // Update CPU mean (simple running average)
-            // TODO: Use proper mean calculation over samples
-            session.cpu_usage_mean_percent = cpu_percent as f64;
+            // Update CPU mean using incremental average formula
+            // new_mean = old_mean + (new_value - old_mean) / sample_count
+            let sample_count = session.total_samples.saturating_add(1) as f64;
+            let old_mean = session.cpu_usage_mean_percent;
+            session.cpu_usage_mean_percent = old_mean + (cpu_percent as f64 - old_mean) / sample_count;
+            session.total_samples += 1;
         }
     }
 

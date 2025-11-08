@@ -62,6 +62,10 @@ pub struct SessionMetrics {
     pub gpu_memory_mean_mb: f64,
     pub cpu_usage_mean_percent: f64,
     pub cpu_usage_peak_percent: f64,
+
+    // Internal tracking
+    #[serde(skip)]
+    pub total_samples: u64,
 }
 
 impl Default for SessionMetrics {
@@ -89,6 +93,7 @@ impl Default for SessionMetrics {
             gpu_memory_mean_mb: 0.0,
             cpu_usage_mean_percent: 0.0,
             cpu_usage_peak_percent: 0.0,
+            total_samples: 0,
         }
     }
 }

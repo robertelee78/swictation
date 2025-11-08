@@ -76,9 +76,9 @@ impl Default for DaemonConfig {
             vad_min_speech: 0.25,
             vad_max_speech: 30.0,
             vad_threshold: 0.1, // Lowered for USB camera mic levels
-            // Parakeet-TDT-0.6B-v3 ONNX model path (multilingual, 25 languages)
-            stt_model_path: "/opt/swictation/models/parakeet-tdt-0.6b-v3-onnx".to_string(),
-            stt_tokens_path: "/opt/swictation/models/parakeet-tdt-0.6b-v3-onnx/vocab.txt".to_string(),
+            // Parakeet-TDT-1.1B ONNX model path (converted from .nemo)
+            stt_model_path: "/opt/swictation/models/parakeet-tdt-1.1b-onnx".to_string(),
+            stt_tokens_path: "/opt/swictation/models/parakeet-tdt-1.1b-onnx/vocab.txt".to_string(),
             num_threads: Some(4),
             audio_device_index: None, // Will be set from env var or auto-detected
             hotkeys: HotkeyConfig::default(),
