@@ -1,0 +1,20 @@
+# Swictation QT Tray Requirements
+# ================================
+# Minimal Python dependencies for QT tray launcher on Sway/Wayland
+#
+# IMPORTANT: This is ONLY needed for Sway/Wayland users!
+# - NPM package users: No Python needed (includes pre-compiled Rust binaries)
+# - Windows/macOS users: No Python needed (Tauri tray works natively)
+# - Most Linux users: No Python needed (Tauri tray works on GNOME, KDE, etc.)
+# - Sway/Wayland users: Need this for tray icon compatibility workaround
+#
+# Installation for Sway/Wayland users only:
+#   pip3 install -r requirements-qt-tray.txt
+#
+# System packages may be required:
+#   Ubuntu/Debian: apt install python3-pyside6
+#   Fedora: dnf install python3-pyside6
+#   Arch: pacman -S pyside6
+
+# QT Framework for system tray icon (Sway/Wayland workaround)
+PySide6>=6.8.0
