@@ -1,1 +1,1 @@
-/opt/swictation/rust-crates/target/release/libswictation_vad.rlib: /opt/swictation/rust-crates/swictation-vad/src/error.rs /opt/swictation/rust-crates/swictation-vad/src/lib.rs
+/opt/swictation/rust-crates/target/release/libswictation_vad.rlib: /opt/swictation/rust-crates/swictation-vad/src/error.rs /opt/swictation/rust-crates/swictation-vad/src/lib.rs /opt/swictation/rust-crates/swictation-vad/src/silero_ort.rs
