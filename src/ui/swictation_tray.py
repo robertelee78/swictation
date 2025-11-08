@@ -90,6 +90,11 @@ class SwictationTrayApp(QApplication):
         self.state_timer.timeout.connect(self.check_daemon_state)
         self.state_timer.start(1000)  # Check every second
 
+        # Also check if Tauri process is still alive (for manual closes)
+        self.process_check_timer = QTimer(self)
+        self.process_check_timer.timeout.connect(self.check_tauri_process)
+        self.process_check_timer.start(1000)  # Check every second
+
         print("✓ Swictation tray launcher started (minimal)")
 
     def _load_icon(self, state: str) -> QIcon:
@@ -115,8 +120,8 @@ class SwictationTrayApp(QApplication):
             self.click_timer.start(interval)
 
         elif reason == QSystemTrayIcon.MiddleClick:
-            # Middle-click: show metrics window
-            self.launch_tauri_ui()
+            # Middle-click: toggle metrics window
+            self.toggle_tauri_ui()
 
         elif reason == QSystemTrayIcon.Context:
             # Right-click: handled by event filter for Wayland reliability
@@ -152,6 +157,16 @@ class SwictationTrayApp(QApplication):
             )
 
     @Slot()
+    def check_tauri_process(self):
+        """Check if Tauri process is still alive (handles manual closes)."""
+        if self.tauri_process:
+            retcode = self.tauri_process.poll()
+            if retcode is not None:
+                # Process has terminated
+                print(f"Tauri UI process terminated (exit code: {retcode})")
+                self.tauri_process = None
+
+    @Slot()
     def check_daemon_state(self):
         """Periodically check daemon state for icon updates."""
         try:
@@ -176,6 +191,7 @@ class SwictationTrayApp(QApplication):
     def update_state(self, state: str):
         """Update icon based on state change."""
         if state != self.current_state:
+            old_state = self.current_state
             self.current_state = state
             self.tray_icon.setIcon(self._load_icon(state))
 
@@ -187,7 +203,7 @@ class SwictationTrayApp(QApplication):
                     QSystemTrayIcon.Information,
                     2000
                 )
-            elif self.current_state == "recording" and state == "idle":
+            elif old_state == "recording" and state == "idle":
                 self.tray_icon.showMessage(
                     "Swictation",
                     "Recording stopped",
@@ -203,8 +219,42 @@ class SwictationTrayApp(QApplication):
             menu.popup(QCursor.pos())
 
     @Slot()
+    def toggle_tauri_ui(self):
+        """Toggle the Tauri UI - open if closed, close if open."""
+        try:
+            # Check if Tauri UI is already running
+            if self.tauri_process and self.tauri_process.poll() is None:
+                # Process is still running - close it
+                print(f"Closing Tauri UI (PID: {self.tauri_process.pid})")
+                self.tauri_process.terminate()
+                self.tauri_process = None
+                print("✓ Tauri UI closed")
+            else:
+                # Launch Tauri UI without tray icon (we're already providing the tray)
+                print(f"Launching Tauri UI: {self.tauri_ui_binary}")
+                env = os.environ.copy()
+                env['SWICTATION_NO_TRAY'] = '1'  # Disable Tauri tray icon
+                self.tauri_process = subprocess.Popen(
+                    [self.tauri_ui_binary],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    env=env,
+                    start_new_session=True  # Don't tie to parent process
+                )
+                print(f"✓ Tauri UI launched with PID: {self.tauri_process.pid}")
+        except Exception as e:
+            import traceback
+            print(f"✗ Failed to toggle Tauri UI: {e}")
+            traceback.print_exc()
+            self.tray_icon.showMessage(
+                "Swictation",
+                f"Failed to toggle UI: {e}",
+                QSystemTrayIcon.Warning
+            )
+
+    @Slot()
     def launch_tauri_ui(self):
-        """Launch the Tauri UI if not running, or bring it to focus."""
+        """Launch the Tauri UI (for menu action - always opens, never closes)."""
         try:
             # Check if Tauri UI is already running
             if self.tauri_process and self.tauri_process.poll() is None:
@@ -222,9 +272,11 @@ class SwictationTrayApp(QApplication):
                     env=env,
                     start_new_session=True  # Don't tie to parent process
                 )
-                print("✓ Tauri UI launched (without tray icon)")
+                print(f"✓ Tauri UI launched with PID: {self.tauri_process.pid}")
         except Exception as e:
+            import traceback
             print(f"✗ Failed to launch Tauri UI: {e}")
+            traceback.print_exc()
             self.tray_icon.showMessage(
                 "Swictation",
                 f"Failed to launch UI: {e}",
