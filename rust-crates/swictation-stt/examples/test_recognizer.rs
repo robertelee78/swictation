@@ -5,7 +5,7 @@ use swictation_stt::{Recognizer, DEFAULT_MODEL_PATH};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== STT Recognizer Test ===\n");
 
-    let recognizer = Recognizer::new(DEFAULT_MODEL_PATH)?;
+    let mut recognizer = Recognizer::new(DEFAULT_MODEL_PATH)?;
 
     println!("\n{}", recognizer.model_info());
 
