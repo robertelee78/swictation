@@ -10,12 +10,12 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
-use parakeet_rs::{ParakeetTDT, ExecutionConfig, ExecutionProvider};
+use swictation_stt::Recognizer;
 
 /// Test configuration
 const MODEL_PATH: &str = "/opt/swictation/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8";
 const EXPECTED_SHORT: &str = "Hello world";  // First part of expected text
-const EXPECTED_LONG: &str = "open-source AI community";  // First part of expected text
+const EXPECTED_LONG: &str = "open source AI community";  // First part of expected text (no hyphen)
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -30,17 +30,12 @@ async fn main() -> Result<()> {
     }
     println!("✓ Model found\n");
 
-    // Step 2: Load STT model
-    println!("[ 2/7 ] Loading Parakeet-TDT-0.6B model...");
+    // Step 2: Load STT model with Sherpa-RS
+    println!("[ 2/7 ] Loading Parakeet-TDT-0.6B model with Sherpa-RS...");
     let start = Instant::now();
-    let execution_config = ExecutionConfig {
-        execution_provider: ExecutionProvider::Cpu,
-        intra_threads: 4,
-        inter_threads: 1,
-    };
 
     let stt = Arc::new(Mutex::new(
-        ParakeetTDT::from_pretrained(MODEL_PATH, Some(execution_config))
+        Recognizer::new(MODEL_PATH, false)  // false = CPU for automated testing
             .map_err(|e| anyhow::anyhow!("Failed to load model: {}", e))?
     ));
     println!("✓ Model loaded in {:.2}s\n", start.elapsed().as_secs_f64());
@@ -75,16 +70,16 @@ async fn main() -> Result<()> {
             println!("✓ Converted to WAV");
         }
 
-        // Transcribe
+        // Transcribe with Sherpa-RS
         println!("  Transcribing {}...", wav_path);
         let start = Instant::now();
         let result = stt.lock().unwrap()
-            .transcribe_file(wav_path)
+            .recognize_file(wav_path)
             .map_err(|e| anyhow::anyhow!("Transcription failed: {}", e))?;
         let duration = start.elapsed();
 
         println!("  Result: {}", result.text);
-        println!("  Time: {:.2}s", duration.as_secs_f64());
+        println!("  Time: {:.2}s ({:.2}ms processing)", duration.as_secs_f64(), result.processing_time_ms);
 
         // Verify
         let lowercase_result = result.text.to_lowercase();

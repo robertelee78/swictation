@@ -9,7 +9,7 @@ use chrono::Utc;
 
 use swictation_audio::AudioCapture;
 use swictation_vad::{VadConfig, VadDetector, VadResult};
-use parakeet_rs::{ParakeetTDT, ExecutionConfig, ExecutionProvider, TranscriptionResult};
+use swictation_stt::Recognizer;
 use midstreamer_text_transform::transform;
 use swictation_metrics::{MetricsCollector, SegmentMetrics};
 use swictation_broadcaster::MetricsBroadcaster;
@@ -24,8 +24,8 @@ pub struct Pipeline {
     /// Voice Activity Detection
     vad: Arc<Mutex<VadDetector>>,
 
-    /// Speech-to-Text recognizer using Parakeet-TDT
-    stt: Arc<Mutex<ParakeetTDT>>,
+    /// Speech-to-Text recognizer using Sherpa-RS
+    stt: Arc<Mutex<Recognizer>>,
 
     /// Metrics collector
     metrics: Arc<Mutex<MetricsCollector>>,
@@ -76,32 +76,21 @@ impl Pipeline {
         info!("Initializing STT with {} provider...",
               gpu_provider.as_deref().unwrap_or("CPU"));
 
-        // Use parakeet-rs with Parakeet-TDT model for modern GPU support
-        // parakeet-rs will handle CUDA availability internally
-        let execution_provider = if let Some(ref provider) = gpu_provider {
-            if provider.contains("cuda") || provider.contains("CUDA") {
-                info!("Enabling CUDA acceleration for STT");
-                ExecutionProvider::Cuda
-            } else {
-                ExecutionProvider::Cpu
-            }
-        } else {
-            ExecutionProvider::Cpu
-        };
+        // Determine if GPU should be used
+        let use_gpu = gpu_provider
+            .as_ref()
+            .map(|p| p.contains("cuda") || p.contains("CUDA"))
+            .unwrap_or(false);
 
-        let execution_config = ExecutionConfig {
-            execution_provider,
-            intra_threads: config.num_threads.unwrap_or(4) as usize,
-            inter_threads: 1,
-        };
+        if use_gpu {
+            info!("Enabling CUDA acceleration for STT");
+        }
 
-        // Load Parakeet-TDT model (will auto-download 1.1B model if needed)
-        let stt = ParakeetTDT::from_pretrained(
-            &config.stt_model_path,
-            Some(execution_config)
-        ).map_err(|e| anyhow::anyhow!("Failed to initialize Parakeet-TDT recognizer: {}", e))?;
+        // Load Parakeet-TDT model with Sherpa-RS
+        let stt = Recognizer::new(&config.stt_model_path, use_gpu)
+            .map_err(|e| anyhow::anyhow!("Failed to initialize Sherpa-RS recognizer: {}", e))?;
 
-        info!("✓ Parakeet-TDT model loaded successfully");
+        info!("✓ Sherpa-RS Parakeet-TDT model loaded successfully");
 
         info!("Initializing metrics collector...");
 
@@ -232,17 +221,13 @@ impl Pipeline {
                                 }
                             };
 
-                            // Use parakeet-rs transcribe_samples method
-                            // ParakeetTDT expects Vec<f32>, sample_rate, and channels
-                            let result = stt_lock.transcribe_samples(
-                                speech_samples.clone(),
-                                16000,  // sample_rate
-                                1       // mono audio
-                            ).unwrap_or_else(|e| {
+                            // Use Sherpa-RS recognizer
+                            let result = stt_lock.recognize(&speech_samples).unwrap_or_else(|e| {
                                 eprintln!("STT transcribe error: {}", e);
-                                TranscriptionResult {
+                                swictation_stt::RecognitionResult {
                                     text: String::new(),
-                                    tokens: vec![],
+                                    confidence: 0.0,
+                                    processing_time_ms: 0.0,
                                 }
                             });
                             let text = result.text;

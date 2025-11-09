@@ -1,57 +1,36 @@
-//! Swictation Speech-to-Text
+//! Swictation Speech-to-Text with Sherpa-RS
 //!
-//! Pure Rust STT using ONNX Runtime with Parakeet-TDT-0.6B-V3 model.
+//! Pure Rust STT using sherpa-rs with Parakeet-TDT models.
 //!
 //! ## Features
 //!
-//! - ONNX-based inference (no PyTorch dependency)
-//! - Parakeet-TDT-0.6B-V3 RNN-T model (6.05% WER)
-//! - 640MB INT8 model (fits in 2-3GB VRAM)
-//! - Real-time streaming support
-//! - Pure Rust API (no PyO3)
+//! - Sherpa-ONNX based inference (proven working)
+//! - Parakeet-TDT 0.6B/1.1B model support
+//! - Separate decoder/joiner architecture (native support)
+//! - GPU acceleration via CUDA
+//! - Pure Rust API
 //!
-//! ## Architecture
+//! ## Quick Start
 //!
-//! ```text
-//! Audio (16kHz mono) → Encoder → Decoder → Joiner → Text
-//!        ↓                ↓         ↓         ↓
-//!   From audio crate  ONNX INT8  ONNX INT8  ONNX INT8
+//! ```no_run
+//! use swictation_stt::Recognizer;
+//!
+//! let mut recognizer = Recognizer::new(
+//!     "/opt/swictation/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8",
+//!     true // use GPU
+//! )?;
+//!
+//! let result = recognizer.recognize_file("audio.wav")?;
+//! println!("Transcription: {}", result.text);
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
 pub mod error;
-pub mod features;
-pub mod model;
 pub mod recognizer;
-pub mod tokens;
 
-pub use error::{SttError, Result};
-pub use model::{ModelConfig, ParakeetModel};
+pub use error::{Result, SttError};
 pub use recognizer::{RecognitionResult, Recognizer};
-pub use tokens::TokenDecoder;
 
 /// Default model path
-pub const DEFAULT_MODEL_PATH: &str = "/opt/swictation/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8";
-
-/// Model configuration for Parakeet-TDT-0.6B-V3
-#[derive(Debug, Clone)]
-pub struct SttConfig {
-    /// Path to model directory
-    pub model_path: String,
-    /// Number of threads for ONNX Runtime
-    pub num_threads: usize,
-    /// Use GPU if available
-    pub use_gpu: bool,
-    /// Provider (cpu, cuda, tensorrt)
-    pub provider: String,
-}
-
-impl Default for SttConfig {
-    fn default() -> Self {
-        Self {
-            model_path: DEFAULT_MODEL_PATH.to_string(),
-            num_threads: 4,
-            use_gpu: true,
-            provider: "cpu".to_string(),
-        }
-    }
-}
+pub const DEFAULT_MODEL_PATH: &str =
+    "/opt/swictation/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8";
