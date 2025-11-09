@@ -47,7 +47,8 @@ pub struct DaemonConfig {
     /// VAD maximum speech duration (seconds)
     pub vad_max_speech: f32,
 
-    /// VAD threshold (0.0-1.0)
+    /// VAD threshold (ONNX: 0.001-0.005, NOT PyTorch 0.5!)
+    /// See swictation-vad/ONNX_THRESHOLD_GUIDE.md for details
     pub vad_threshold: f32,
 
     /// STT model path
@@ -75,7 +76,7 @@ impl Default for DaemonConfig {
             vad_min_silence: 0.5,
             vad_min_speech: 0.25,
             vad_max_speech: 30.0,
-            vad_threshold: 0.1, // Lowered for USB camera mic levels
+            vad_threshold: 0.003, // ONNX model threshold (100-200x lower than PyTorch 0.5)
             // Parakeet-TDT-1.1B ONNX model path (converted from .nemo)
             stt_model_path: "/opt/swictation/models/parakeet-tdt-1.1b-onnx".to_string(),
             stt_tokens_path: "/opt/swictation/models/parakeet-tdt-1.1b-onnx/vocab.txt".to_string(),

@@ -467,12 +467,17 @@ Currently, only VAD (Voice Activity Detection) settings are configurable:
 **Available settings:**
 ```toml
 [vad]
-# Speech detection threshold (0.0-1.0)
-# Controls sensitivity for detecting speech vs noise
-# - 0.0 = most sensitive (everything is speech, many false positives)
-# - 0.5 = balanced (recommended default)
-# - 1.0 = most conservative (only confident speech, may miss quiet speech)
-threshold = 0.5
+# Speech detection threshold
+# IMPORTANT: Silero VAD ONNX uses MUCH LOWER thresholds than PyTorch!
+# Valid range for ONNX: 0.0005-0.01 (NOT 0.0-1.0)
+#
+# The ONNX model outputs probabilities ~100-200x lower than PyTorch.
+# DO NOT use PyTorch thresholds (0.5) - speech will never be detected!
+#
+# - 0.001 = most sensitive (catches quiet speech, may have false positives)
+# - 0.003 = balanced (recommended default for ONNX)
+# - 0.005 = conservative (fewer false positives, may miss quiet speech)
+threshold = 0.003
 
 # Silence duration in seconds before processing text
 # How long to wait after speech ends before transcribing
@@ -492,30 +497,32 @@ systemctl --user restart swictation.service
 **Problem: Missing quiet speech or soft words**
 ```toml
 [vad]
-threshold = 0.3  # Lower threshold = more sensitive
+threshold = 0.001  # ONNX: Lower threshold = more sensitive
 silence_duration = 2.0
 ```
 
 **Problem: Too many false triggers from background noise**
 ```toml
 [vad]
-threshold = 0.7  # Higher threshold = less sensitive
+threshold = 0.005  # ONNX: Higher threshold = less sensitive
 silence_duration = 2.0
 ```
 
 **Problem: Sentences getting cut off mid-thought**
 ```toml
 [vad]
-threshold = 0.5
+threshold = 0.003  # Keep balanced ONNX threshold
 silence_duration = 3.0  # Wait longer for complete thoughts
 ```
 
 **Problem: Text takes too long to appear (slow response)**
 ```toml
 [vad]
-threshold = 0.5
+threshold = 0.003  # Keep balanced ONNX threshold
 silence_duration = 1.0  # Faster response, shorter pauses
 ```
+
+**NOTE:** See `/opt/swictation/rust-crates/swictation-vad/ONNX_THRESHOLD_GUIDE.md` for detailed threshold information.
 
 ### What is NOT Configurable
 
