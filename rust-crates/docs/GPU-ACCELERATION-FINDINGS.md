@@ -22,11 +22,13 @@ Comprehensive GPU vs CPU benchmarking reveals that **model quantization type det
 
 ### Performance Comparison
 
-| Model | CPU Time | GPU Time | GPU Speedup | Quality |
-|-------|----------|----------|-------------|---------|
-| **0.6B int8** | 140ms | 537ms | **3.8x SLOWER** ❌ | Perfect ✅ |
-| **0.6B fp16** | 482ms | 389ms | 1.2x faster | **BROKEN** ❌ |
-| **110M fp32** | 67ms | 40ms | **1.67x faster** ✅ | Perfect ✅ |
+| Model | CPU Time | GPU Time (cold) | GPU Time (warm) | GPU Speedup | Quality |
+|-------|----------|-----------------|-----------------|-------------|---------|
+| **0.6B int8** | 141ms | 509ms | 266ms | **1.9x SLOWER** ❌ | Perfect ✅ |
+| **0.6B fp16** | 482ms | - | 389ms | 1.2x faster | **BROKEN** ❌ |
+| **110M fp32** | 66ms | 97ms | **13ms** | **5.1x FASTER** 🚀 | Perfect ✅ |
+
+**CRITICAL**: GPU requires warmup run. After warmup, 110M fp32 achieves **13ms inference** - suitable for real-time dictation!
 
 ## Key Findings
 
@@ -39,15 +41,19 @@ Comprehensive GPU vs CPU benchmarking reveals that **model quantization type det
 
 **Implication**: Never use int8 models with GPU acceleration
 
-### 2. 110M fp32 is Production-Ready
+### 2. 110M fp32 is Production-Ready with Outstanding GPU Performance
 
 **Best characteristics**:
-- **Fastest inference**: 40ms on GPU (vs 67ms CPU)
+- **Fastest inference**: **13ms on GPU after warmup** (vs 66ms CPU) 🚀
+- **5.1x GPU speedup**: Best GPU acceleration of all tested models
 - **Perfect quality**: 100% accurate transcription
 - **Available now**: Pre-converted by sherpa-onnx team
 - **Small size**: 456 MB (vs 640 MB int8, 1.2 GB fp16)
+- **GPU warmup**: First run 97ms (one-time cost), subsequent runs 13ms
 
 **Model path**: `/opt/swictation/models/sherpa-onnx-nemo-parakeet_tdt_transducer_110m-en-36000`
+
+**For daemon use**: With pre-loaded model and one warmup run, achieves consistent 13ms inference suitable for real-time dictation.
 
 ### 3. 0.6B fp16 Has Quality Issues
 
@@ -73,19 +79,23 @@ Since swictation runs as daemon with models pre-loaded:
 
 ```rust
 // Daemon initialization (once)
-let recognizer = Recognizer::new(
+let mut recognizer = Recognizer::new(
     "/opt/swictation/models/sherpa-onnx-nemo-parakeet_tdt_transducer_110m-en-36000",
     true  // Enable GPU
 )?;
 
-// Per-request inference: ~40ms
+// Warmup GPU (one-time, ~97ms)
+let _ = recognizer.recognize_file(warmup_audio_path)?;
+
+// Per-request inference: ~13ms 🚀
 let result = recognizer.recognize_file(audio_path)?;
 ```
 
 **Benefits**:
-- 40ms inference latency (1.67x faster than CPU)
+- **13ms inference latency** after warmup (5.1x faster than CPU!)
 - Perfect transcription quality
 - GPU memory stays resident (no reload overhead)
+- Suitable for real-time dictation with <20ms target
 - Handles concurrent requests efficiently
 
 ### Alternative: CPU with int8 for Lower GPU Memory
