@@ -213,8 +213,9 @@ pub struct VadDetector {
     vad: SileroVadOrt,
     config: VadConfig,
     total_samples_processed: usize,
-    speech_buffer: Vec<f32>,
     is_speaking: bool,
+    // Buffer for incomplete chunks
+    chunk_buffer: Vec<f32>,
 }
 
 impl VadDetector {
@@ -230,16 +231,15 @@ impl VadDetector {
             (config.min_speech_duration * 1000.0) as i32,
             (config.min_silence_duration * 1000.0) as i32,
             config.provider.clone(),
+            config.debug,
         ).map_err(|e| VadError::initialization(format!("Failed to create VAD: {}", e)))?;
-
-        let buffer_capacity = (config.buffer_size_seconds * config.sample_rate as f32) as usize;
 
         Ok(Self {
             vad,
             config,
             total_samples_processed: 0,
-            speech_buffer: Vec::with_capacity(buffer_capacity),
             is_speaking: false,
+            chunk_buffer: Vec::new(),
         })
     }
 
@@ -275,53 +275,65 @@ impl VadDetector {
             return Ok(VadResult::Silence);
         }
 
-        let result = match self.vad.process(samples)
-            .map_err(|e| VadError::processing(format!("VAD processing error: {}", e)))? {
-            Some(speech_samples) => {
-                // Speech detected, add to buffer
-                self.speech_buffer.extend_from_slice(&speech_samples);
-                self.is_speaking = true;
+        let window_size = self.config.window_size as usize;
+        let mut result = VadResult::Silence;
 
-                if self.config.debug {
-                    eprintln!(
-                        "VAD: Speech segment detected, buffer size: {} samples",
-                        self.speech_buffer.len()
-                    );
-                }
+        // Combine buffered samples with new samples
+        let mut all_samples = self.chunk_buffer.clone();
+        all_samples.extend_from_slice(samples);
 
-                // Check if we have enough speech
-                let min_samples = (self.config.min_speech_duration * self.config.sample_rate as f32) as usize;
-                if self.speech_buffer.len() >= min_samples {
-                    let speech = self.speech_buffer.clone();
-                    self.speech_buffer.clear();
+        // Process complete window-sized chunks
+        let complete_chunks = all_samples.len() / window_size;
+        let samples_to_process = complete_chunks * window_size;
 
-                    VadResult::Speech {
-                        start_sample: (self.total_samples_processed - speech.len()) as i32,
-                        samples: speech,
+        for i in 0..complete_chunks {
+            let start = i * window_size;
+            let end = start + window_size;
+            let chunk = &all_samples[start..end];
+
+            // Process this chunk through VAD
+            match self.vad.process(chunk)
+                .map_err(|e| VadError::processing(format!("VAD processing error: {}", e)))? {
+                Some(speech_samples) => {
+                    // Speech segment complete from VAD
+                    self.is_speaking = true;
+
+                    if self.config.debug {
+                        eprintln!(
+                            "VAD: Speech segment detected, {} samples",
+                            speech_samples.len()
+                        );
                     }
-                } else {
-                    VadResult::Silence
+
+                    // Return this speech segment
+                    let start_sample = (self.total_samples_processed.saturating_sub(speech_samples.len())) as i32;
+                    result = VadResult::Speech {
+                        start_sample,
+                        samples: speech_samples,
+                    };
+                    // Don't break - continue processing remaining chunks
+                }
+                None => {
+                    // No complete speech segment yet
+                    // VAD is buffering or no speech detected
                 }
             }
-            None => {
-                // No speech detected
-                if self.is_speaking && !self.speech_buffer.is_empty() {
-                    // Was speaking, now stopped - return buffered speech
-                    let speech = self.speech_buffer.clone();
-                    self.speech_buffer.clear();
-                    self.is_speaking = false;
 
-                    VadResult::Speech {
-                        start_sample: (self.total_samples_processed - speech.len()) as i32,
-                        samples: speech,
-                    }
-                } else {
-                    VadResult::Silence
-                }
+            self.total_samples_processed += window_size;
+        }
+
+        // Save any remaining incomplete chunk for next call
+        self.chunk_buffer.clear();
+        if samples_to_process < all_samples.len() {
+            self.chunk_buffer.extend_from_slice(&all_samples[samples_to_process..]);
+            if self.config.debug {
+                eprintln!(
+                    "VAD: Buffering {} incomplete samples for next call",
+                    self.chunk_buffer.len()
+                );
             }
-        };
+        }
 
-        self.total_samples_processed += samples.len();
         Ok(result)
     }
 
@@ -335,12 +347,28 @@ impl VadDetector {
     /// Flush any remaining audio in the buffer
     ///
     /// Call this at the end of a stream to process any remaining audio.
-    pub fn flush(&mut self) {
-        // Return any remaining buffered speech
-        if !self.speech_buffer.is_empty() {
-            self.speech_buffer.clear();
+    /// Returns any remaining speech segment if available.
+    pub fn flush(&mut self) -> Option<VadResult> {
+        // Get any remaining buffered speech from VAD
+        if let Some(speech_samples) = self.vad.flush() {
+            if self.config.debug {
+                eprintln!(
+                    "VAD: Flushed remaining speech, {} samples",
+                    speech_samples.len()
+                );
+            }
+
+            self.is_speaking = false;
+            let start_sample = (self.total_samples_processed.saturating_sub(speech_samples.len())) as i32;
+
+            Some(VadResult::Speech {
+                start_sample,
+                samples: speech_samples,
+            })
+        } else {
+            self.is_speaking = false;
+            None
         }
-        self.is_speaking = false;
     }
 
     /// Clear the internal buffer
@@ -348,9 +376,9 @@ impl VadDetector {
     /// Call this to reset the VAD state (e.g., between different audio sources).
     pub fn clear(&mut self) {
         self.vad.reset();
-        self.speech_buffer.clear();
         self.is_speaking = false;
         self.total_samples_processed = 0;
+        self.chunk_buffer.clear();
     }
 
     /// Get total samples processed
@@ -419,5 +447,30 @@ mod tests {
         assert_eq!(config.min_speech_duration, 0.2);
         assert_eq!(config.threshold, 0.6);
         assert!(config.debug);
+    }
+
+    #[test]
+    #[ignore]  // Only run when explicitly requested
+    fn test_model_responds_to_input() {
+        // Verify the model actually processes different inputs differently
+        let config = VadConfig::with_model("/opt/swictation/models/silero-vad/silero_vad.onnx")
+            .threshold(0.1)
+            .debug();
+
+        let mut vad = VadDetector::new(config).expect("Failed to create VAD");
+
+        // Test with silence
+        let silence = vec![0.0; 512];
+        vad.process_audio(&silence).expect("Failed");
+
+        // Test with maximum amplitude
+        let loud = vec![0.9; 512];
+        vad.process_audio(&loud).expect("Failed");
+
+        // Test with sine wave
+        let sine: Vec<f32> = (0..512).map(|i| (i as f32 * 0.1).sin() * 0.5).collect();
+        vad.process_audio(&sine).expect("Failed");
+
+        println!("If you see three different probabilities above, the model is working");
     }
 }

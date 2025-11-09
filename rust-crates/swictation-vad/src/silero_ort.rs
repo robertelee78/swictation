@@ -9,7 +9,7 @@ use ort::{
     value::Tensor,
 };
 use std::sync::{Arc, Mutex};
-use ndarray::{Array2, Array3, ArrayView1, ArrayView3};
+use ndarray::{Array2, Array3, ArrayView3};
 
 /// Silero VAD model using direct ONNX Runtime
 pub struct SileroVadOrt {
@@ -20,13 +20,17 @@ pub struct SileroVadOrt {
     min_speech_samples: usize,
     min_silence_samples: usize,
 
-    // State for streaming
-    h: Array3<f32>,
-    c: Array3<f32>,
-    last_sr: i32,
+    // State for streaming (combined RNN state: [2, 1, 128])
+    state: Array3<f32>,
     triggered: bool,
     temp_end: usize,
     current_sample: usize,
+
+    // Speech segment buffering
+    speech_buffer: Vec<f32>,
+
+    // Debug mode
+    debug: bool,
 }
 
 impl SileroVadOrt {
@@ -39,6 +43,7 @@ impl SileroVadOrt {
         min_speech_duration_ms: i32,
         min_silence_duration_ms: i32,
         provider: Option<String>,
+        debug: bool,
     ) -> Result<Self> {
         // Build session with appropriate provider
         let session = if let Some(ref prov) = provider {
@@ -84,9 +89,8 @@ impl SileroVadOrt {
         let min_speech_samples = (min_speech_duration_ms as f32 * sample_rate as f32 / 1000.0) as usize;
         let min_silence_samples = (min_silence_duration_ms as f32 * sample_rate as f32 / 1000.0) as usize;
 
-        // Initialize RNN hidden states (2 layers, 1 batch, 64 hidden units)
-        let h = Array3::<f32>::zeros((2, 1, 64));
-        let c = Array3::<f32>::zeros((2, 1, 64));
+        // Initialize RNN state (2 layers, 1 batch, 128 hidden units)
+        let state = Array3::<f32>::zeros((2, 1, 128));
 
         Ok(Self {
             session: Arc::new(Mutex::new(session)),
@@ -95,12 +99,12 @@ impl SileroVadOrt {
             threshold,
             min_speech_samples,
             min_silence_samples,
-            h,
-            c,
-            last_sr: 0,
+            state,
             triggered: false,
             temp_end: 0,
             current_sample: 0,
+            speech_buffer: Vec::new(),
+            debug,
         })
     }
 
@@ -115,23 +119,36 @@ impl SileroVadOrt {
         }
 
         // Convert audio to ndarray with proper shape (batch_size=1, sequence_len)
+        // CRITICAL: Must use standard (C-contiguous) layout, not Fortran layout
         let input_array = Array2::from_shape_vec((1, audio_chunk.len()), audio_chunk.to_vec())
             .map_err(|e| VadError::processing(format!("Failed to reshape input: {}", e)))?;
+
+        if self.debug && self.current_sample == 0 {
+            eprintln!("VAD Debug:");
+            eprintln!("  input shape: {:?}", input_array.shape());
+            eprintln!("  input is C-contiguous: {}", input_array.is_standard_layout());
+            eprintln!("  input range: [{:.6}, {:.6}]",
+                     input_array.iter().copied().fold(f32::INFINITY, f32::min),
+                     input_array.iter().copied().fold(f32::NEG_INFINITY, f32::max));
+            eprintln!("  state shape: {:?}", self.state.shape());
+            eprintln!("  state is C-contiguous: {}", self.state.is_standard_layout());
+            eprintln!("  sr value: {}", self.sample_rate);
+        }
 
         // Create tensors from arrays for ort 2.0 - need to clone the data since Tensor takes ownership
         let input_tensor = Tensor::from_array(input_array)
             .map_err(|e| VadError::processing(format!("Failed to create input tensor: {}", e)))?;
 
-        let h_tensor = Tensor::from_array(self.h.clone())
-            .map_err(|e| VadError::processing(format!("Failed to create h tensor: {}", e)))?;
+        let state_tensor = Tensor::from_array(self.state.clone())
+            .map_err(|e| VadError::processing(format!("Failed to create state tensor: {}", e)))?;
 
-        let c_tensor = Tensor::from_array(self.c.clone())
-            .map_err(|e| VadError::processing(format!("Failed to create c tensor: {}", e)))?;
-
-        let sr_tensor = Tensor::from_array(([1], vec![self.sample_rate as i64]))
+        // Create sample rate tensor - sherpa-onnx uses shape [1], not scalar []
+        // Even though ONNX model metadata says [], the C++ code uses [1]
+        let sr_array = ndarray::Array1::from(vec![self.sample_rate as i64]);
+        let sr_tensor = Tensor::from_array(sr_array)
             .map_err(|e| VadError::processing(format!("Failed to create sr tensor: {}", e)))?;
 
-        // Run inference using the inputs! macro with named inputs
+        // Run inference using named inputs (order doesn't matter with named inputs)
         let mut session_guard = self.session
             .lock()
             .map_err(|e| VadError::processing(format!("Failed to lock session: {}", e)))?;
@@ -139,50 +156,84 @@ impl SileroVadOrt {
         let outputs = session_guard
             .run(inputs![
                 "input" => input_tensor,
-                "h" => h_tensor,
-                "c" => c_tensor,
+                "state" => state_tensor,
                 "sr" => sr_tensor
             ])
             .map_err(|e| VadError::processing(format!("Failed to run inference: {}", e)))?;
 
-        // Extract speech probability from the first output
-        let output_array: ArrayView1<f32> = outputs["output"]
+        if self.debug && self.current_sample == 0 {
+            eprintln!("  Model returned {} outputs", outputs.len());
+        }
+
+        // Extract speech probability from the output (shape: [batch, 1])
+        let output_array: ndarray::ArrayView2<f32> = outputs["output"]
             .try_extract_array()
             .map_err(|e| VadError::processing(format!("Failed to extract output: {}", e)))?
             .into_dimensionality()
             .map_err(|e| VadError::processing(format!("Failed to reshape output: {}", e)))?;
-        let speech_prob = output_array[0];
+        let speech_prob = output_array[[0, 0]];
 
-        // Extract and update hidden states
-        let hn_array: ArrayView3<f32> = outputs["hn"]
+        if self.debug && self.current_sample == 0 {
+            eprintln!("  Output array shape: {:?}", output_array.shape());
+            eprintln!("  Output array: {:?}", output_array);
+            eprintln!("  Speech probability extracted: {}", speech_prob);
+        }
+
+        // Extract and update state
+        let state_n: ArrayView3<f32> = outputs["stateN"]
             .try_extract_array()
-            .map_err(|e| VadError::processing(format!("Failed to extract hn: {}", e)))?
+            .map_err(|e| VadError::processing(format!("Failed to extract stateN: {}", e)))?
             .into_dimensionality()
-            .map_err(|e| VadError::processing(format!("Failed to reshape hn: {}", e)))?;
+            .map_err(|e| VadError::processing(format!("Failed to reshape stateN: {}", e)))?;
 
-        let cn_array: ArrayView3<f32> = outputs["cn"]
-            .try_extract_array()
-            .map_err(|e| VadError::processing(format!("Failed to extract cn: {}", e)))?
-            .into_dimensionality()
-            .map_err(|e| VadError::processing(format!("Failed to reshape cn: {}", e)))?;
-
-        // Copy hidden state data
-        self.h.assign(&hn_array);
-        self.c.assign(&cn_array);
+        // Copy state data
+        if self.debug && self.current_sample == 0 {
+            eprintln!("  State before update: sum={}", self.state.sum());
+            eprintln!("  State after inference: sum={}", state_n.sum());
+        }
+        self.state.assign(&state_n);
 
         self.current_sample += audio_chunk.len();
 
-        // Simple speech detection logic
+        if self.debug {
+            // Print every chunk between 1-2 seconds where we expect speech (RMS=0.087746 in second 1)
+            let time_s = self.current_sample as f32 / self.sample_rate as f32;
+            if time_s >= 1.0 && time_s <= 2.0 {
+                eprintln!("VAD: t={:.2}s, prob={:.6}, threshold={:.3}", time_s, speech_prob, self.threshold);
+            } else if time_s >= 3.0 && time_s <= 4.5 {
+                eprintln!("VAD: t={:.2}s, prob={:.6}, threshold={:.3}", time_s, speech_prob, self.threshold);
+            } else if self.current_sample % (self.sample_rate as usize) == 0 {
+                eprintln!("VAD: t={:.2}s, prob={:.6}, threshold={:.3}", time_s, speech_prob, self.threshold);
+            }
+        }
+
+        // Improved speech detection with buffering
         if speech_prob >= self.threshold {
+            // Speech detected
             if !self.triggered {
                 self.triggered = true;
                 self.temp_end = self.current_sample;
             }
+            // Add samples to buffer
+            self.speech_buffer.extend_from_slice(audio_chunk);
         } else if self.triggered {
+            // Was speaking, now silence
             if self.current_sample - self.temp_end > self.min_silence_samples {
-                // Speech ended
-                self.triggered = false;
-                return Ok(Some(audio_chunk.to_vec())); // Simplified: return current chunk
+                // Silence duration exceeded threshold - speech segment complete
+                if self.speech_buffer.len() >= self.min_speech_samples {
+                    // Have enough speech samples to return
+                    let speech = self.speech_buffer.clone();
+                    self.speech_buffer.clear();
+                    self.triggered = false;
+                    return Ok(Some(speech));
+                } else {
+                    // Not enough speech, discard (was noise)
+                    self.speech_buffer.clear();
+                    self.triggered = false;
+                }
+            } else {
+                // Still within silence tolerance, keep buffering
+                self.speech_buffer.extend_from_slice(audio_chunk);
             }
         }
 
@@ -191,11 +242,24 @@ impl SileroVadOrt {
 
     /// Reset the VAD state
     pub fn reset(&mut self) {
-        self.h.fill(0.0);
-        self.c.fill(0.0);
-        self.last_sr = 0;
+        self.state.fill(0.0);
         self.triggered = false;
         self.temp_end = 0;
         self.current_sample = 0;
+        self.speech_buffer.clear();
+    }
+
+    /// Flush any remaining buffered speech (call at end of stream)
+    pub fn flush(&mut self) -> Option<Vec<f32>> {
+        if !self.speech_buffer.is_empty() && self.speech_buffer.len() >= self.min_speech_samples {
+            let speech = self.speech_buffer.clone();
+            self.speech_buffer.clear();
+            self.triggered = false;
+            Some(speech)
+        } else {
+            self.speech_buffer.clear();
+            self.triggered = false;
+            None
+        }
     }
 }
