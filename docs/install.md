@@ -142,48 +142,80 @@ python3 -c "import midstreamer_transform; count, msg = midstreamer_transform.get
 
 ---
 
-### Step 5: Install Python Dependencies
 
-Now install the main Python packages (NeMo, PyTorch, etc.):
+### Step 5: Build Rust Daemon
+
+Build the Rust daemon binary with optimizations:
+
+```bash
+cd /opt/swictation/rust-crates
+
+# Build release binary (with optimizations)
+cargo build --release
+
+# Binary will be at: rust-crates/target/release/swictation-daemon
+```
+
+**Build time:** 2-5 minutes (first build downloads dependencies)
+
+**Expected output:**
+```
+   Compiling swictation-audio v0.1.0
+   Compiling swictation-vad v0.1.0
+   Compiling swictation-stt v0.1.0
+   Compiling swictation-daemon v0.1.0
+    Finished release [optimized] target(s)
+```
+
+---
+
+### Step 6: Download ONNX Models
+
+Download the STT models for the Rust daemon:
 
 ```bash
 cd /opt/swictation
 
-# Install all Python dependencies
-pip3 install --break-system-packages -r requirements.txt
+# Download Parakeet-TDT-0.6B ONNX model (~1.1GB)
+./scripts/download_parakeet_0.6b.sh
 ```
 
-**This will take 5-10 minutes** as it downloads large ML packages (~3GB).
+**Models downloaded to:** `/opt/swictation/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/`
 
-**Note:** The `--break-system-packages` flag is required on some distributions that use externally-managed Python environments.
+**Optional: Upgrade to Parakeet-TDT-1.1B (4.3GB, better accuracy)**
 
----
-
-### Step 6: Download STT Model
-
-Download the NVIDIA Canary-1B-Flash model (~1.1GB):
+If you want the larger 1.1B model with improved accuracy:
 
 ```bash
-python3 -c "from nemo.collections.asr.models import EncDecMultiTaskModel; EncDecMultiTaskModel.from_pretrained('nvidia/canary-1b-flash')"
+# Install NeMo toolkit for conversion (one-time only)
+pip3 install --break-system-packages nemo_toolkit[asr]
+
+# Convert 1.1B model to ONNX format
+python3 scripts/convert_parakeet_1.1b_to_onnx.py
 ```
 
-**Expected output:**
-```
-Downloading model from HuggingFace...
-GPU available: True
-GPU: NVIDIA RTX A1000 Laptop GPU
-✓ Model downloaded successfully
-```
-
-**If no GPU detected:**
-```
-GPU available: False
-⚠ No GPU detected - STT will be slower on CPU
-```
+**Note:** The 1.1B model requires ~2.3GB VRAM vs 0.6B's ~1.5GB VRAM.
 
 ---
 
-### Step 7: Install Systemd Service
+### Step 7: Optional Python Dependencies (Sway/Wayland Users Only)
+
+**Skip this step if you're using the Tauri UI** (works on most Linux DEs, macOS, Windows).
+
+**For Sway/Wayland users:** Install Python dependencies for the QT system tray icon:
+
+```bash
+cd /opt/swictation
+
+# Install PySide6 for QT tray (Tauri tray doesn't work on Wayland)
+pip3 install --break-system-packages -r requirements-qt-tray.txt
+```
+
+**Why Python for Sway?** Tauri's system tray implementation has known issues with Wayland compositors. The Python/QT tray provides a reliable fallback that launches the Tauri UI when clicked.
+
+---
+
+### Step 9: Install Systemd Service
 
 Set up the daemon to auto-start with your Sway session:
 
@@ -218,7 +250,7 @@ The install script creates `~/.config/swictation/config.toml` with default setti
 
 ---
 
-### Step 8: Configure Sway Keybinding
+### Step 10: Configure Sway Keybinding
 
 Add the toggle keybinding to your Sway config:
 
@@ -439,7 +471,7 @@ journalctl --user -u swictation.service -n 100
 ```
 
 **Common issues:**
-- Missing dependencies: Reinstall requirements.txt
+- Missing Rust dependencies: Run `cargo build --release` again
 - Model not downloaded: Run Step 6 again
 - Python version too old: Check `python3 --version` (need 3.10+)
 
