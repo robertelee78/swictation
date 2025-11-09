@@ -6,14 +6,14 @@ use anyhow::Result;
 use swictation_stt::Recognizer;
 use std::time::Instant;
 
-// Use int8 model with TensorRT EP for GPU acceleration
-const MODEL_PATH: &str = "/opt/swictation/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8";
+// Use float32 (110M) model for GPU acceleration testing
+const MODEL_PATH: &str = "/opt/swictation/models/sherpa-onnx-nemo-parakeet_tdt_transducer_110m-en-36000";
 const SHORT_AUDIO: &str = "/tmp/en-short.wav";
 const LONG_AUDIO: &str = "/tmp/en-long.wav";
 
 fn main() -> Result<()> {
     println!("═══════════════════════════════════════════════════");
-    println!("  Sherpa-RS CUDA 12 GPU Benchmark");
+    println!("  Sherpa-RS CUDA 12 GPU Benchmark (Float32 110M)");
     println!("═══════════════════════════════════════════════════\n");
 
     // Test GPU

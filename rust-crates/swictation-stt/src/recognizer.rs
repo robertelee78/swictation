@@ -46,25 +46,32 @@ impl Recognizer {
     pub fn new<P: AsRef<Path>>(model_path: P, use_gpu: bool) -> Result<Self> {
         let model_path = model_path.as_ref();
 
-        // Verify model files exist
-        let encoder_path = model_path.join("encoder.int8.onnx");
-        let decoder_path = model_path.join("decoder.int8.onnx");
-        let joiner_path = model_path.join("joiner.int8.onnx");
+        // Auto-detect model quantization format (fp32, fp16, int8)
+        let find_model_file = |base_name: &str| -> Result<std::path::PathBuf> {
+            // Try fp16 first (best for GPU), then fp32, then int8
+            for suffix in ["fp16.onnx", "onnx", "fp32.onnx", "int8.onnx"] {
+                let path = model_path.join(format!("{}.{}", base_name, suffix));
+                if path.exists() {
+                    return Ok(path);
+                }
+            }
+            Err(SttError::model_load(format!(
+                "No {} model file found (tried fp16, fp32, int8 in {})",
+                base_name,
+                model_path.display()
+            )))
+        };
+
+        let encoder_path = find_model_file("encoder")?;
+        let decoder_path = find_model_file("decoder")?;
+        let joiner_path = find_model_file("joiner")?;
         let tokens_path = model_path.join("tokens.txt");
 
-        for (name, path) in [
-            ("encoder", &encoder_path),
-            ("decoder", &decoder_path),
-            ("joiner", &joiner_path),
-            ("tokens", &tokens_path),
-        ] {
-            if !path.exists() {
-                return Err(SttError::model_load(format!(
-                    "Missing {} file: {}",
-                    name,
-                    path.display()
-                )));
-            }
+        if !tokens_path.exists() {
+            return Err(SttError::model_load(format!(
+                "Missing tokens.txt file: {}",
+                tokens_path.display()
+            )));
         }
 
         // Configure sherpa-rs transducer
