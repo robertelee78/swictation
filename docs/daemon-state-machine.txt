@@ -1,0 +1,250 @@
+SWICTATION DAEMON - STATE MACHINE COMPLETE FLOW
+================================================
+
+STATE DIAGRAM (Simplified):
+===========================
+
+                    ┌─────────────────┐
+                    │   DAEMON START  │
+                    └────────┬────────┘
+                             │
+                             ▼
+                    ┌─────────────────┐
+                    │  INITIALIZATION │
+                    │  - Load config  │
+                    │  - Detect GPU   │
+                    │  - Load models  │
+                    │  - Start IPC    │
+                    │  - Init metrics │
+                    └────────┬────────┘
+                             │
+                             ▼
+              ┌──────────────────────────┐
+              │    STATE: IDLE           │  ◄─┐
+              │  - Models in memory      │    │
+              │  - Listening for events  │    │
+              └──────────┬───────────────┘    │
+                         │                     │
+                         │ toggle/hotkey       │ toggle/hotkey
+                         ▼                     │
+              ┌──────────────────────────┐    │
+              │  STATE: RECORDING        │    │
+              │  - Audio capture ON      │    │
+              │  - VAD processing        │    │
+              │  - STT inference         │    │
+              │  - Midstream transform   │    │
+              │  - Text injection        │ ───┘
+              └──────────────────────────┘
+
+
+PIPELINE DATA FLOW:
+==================
+
+Microphone (HW)
+    ↓ PCM audio
+CPAL Callback (audio thread)
+    ↓ mpsc::channel
+Audio Buffer (0.5s chunks)
+    ↓
+VAD Detector (Silero v6 ONNX)
+    ├─ Silence → discard
+    └─ Speech → extract
+        ↓
+STT Engine (Parakeet-TDT 1.1B)
+    ↓ raw text
+Midstream Transform
+    ├─ "comma" → ","
+    ├─ "period" → "."
+    └─ "next window" → "<KEY:super-Right>"
+        ↓
+Metrics Tracking (SQLite)
+    ↓ mpsc::channel
+Text Injector (xdotool/wtype)
+    ↓
+Active Window (any app)
+
+
+HOTKEY FLOW:
+============
+
+X11/Windows/macOS:
+  GlobalHotKeyManager.register()
+      ↓
+  OS catches hotkey
+      ↓
+  Event listener thread
+      ↓
+  mpsc::channel
+      ↓
+  main.rs event loop
+      ↓
+  daemon.toggle()
+
+Sway/Wayland:
+  Sway config: bindsym $mod+D exec "echo toggle | nc -U /tmp/swictation.sock"
+      ↓
+  Unix socket receives JSON
+      ↓
+  IPC handler
+      ↓
+  daemon.toggle()
+
+
+STATE TRANSITION LOGIC:
+=======================
+
+IDLE → RECORDING:
+  1. Create session in MetricsCollector
+  2. Set session_id in Pipeline
+  3. Start audio capture (CPAL stream)
+  4. Spawn VAD/STT processing task
+  5. Broadcast state change (MetricsBroadcaster)
+  6. Return "Recording started (Session #X)"
+
+RECORDING → IDLE:
+  1. Stop audio capture
+  2. Flush VAD (process remaining audio)
+  3. Clear session_id in Pipeline
+  4. End session (calculate WPM, total words)
+  5. Broadcast session metrics
+  6. Broadcast state change
+  7. Return "Recording stopped (X words, Y.Y WPM)"
+
+
+CONCURRENCY MODEL:
+==================
+
+Tokio Runtime (multi-threaded)
+├─ Main Event Loop (tokio::select!)
+│  ├─ Hotkey events (mpsc::channel)
+│  ├─ IPC connections (UnixStream)
+│  └─ Shutdown signals (Ctrl+C)
+│
+├─ Audio Processing Task
+│  ├─ Receive chunks (mpsc::channel)
+│  ├─ VAD lock → process → drop lock
+│  ├─ STT lock → transcribe → drop lock
+│  └─ Send to injection (mpsc::channel)
+│
+├─ Text Injection Task
+│  └─ Receive transcriptions → inject
+│
+├─ Metrics Updater (1s interval)
+│  └─ Broadcast realtime metrics
+│
+└─ Memory Monitor (5s interval)
+   └─ Check RAM/VRAM pressure
+
+
+CRITICAL COMPONENTS:
+====================
+
+1. main.rs
+   - Entry point and event loop
+   - State machine implementation
+   - Background task spawning
+
+2. pipeline.rs ★★★ THE CRITICAL FILE ★★★
+   - Audio → VAD → STT → Transform flow
+   - Lock management (prevents deadlocks)
+   - Metrics tracking per segment
+
+3. hotkey.rs
+   - Cross-platform hotkey support
+   - Display server detection
+   - Event multiplexing
+
+4. text_injection.rs
+   - X11/Wayland text injection
+   - <KEY:> marker processing
+   - Keyboard shortcut support
+
+5. ipc.rs
+   - Unix socket JSON protocol
+   - Toggle/status/quit commands
+
+6. config.rs
+   - TOML configuration
+   - Default values
+   - Auto-creation
+
+7. gpu.rs
+   - GPU provider detection
+   - CUDA/DirectML/CoreML priority
+
+
+PERFORMANCE METRICS:
+====================
+
+Latency (GPU):
+  VAD: 10-20ms
+  STT: 100-500ms
+  Transform: <1ms
+  Total: ~111-521ms
+
+Latency (CPU):
+  VAD: 10-20ms
+  STT: 1-5 seconds
+  Transform: <1ms
+  Total: ~1-5 seconds
+
+Memory:
+  Daemon process: ~500MB
+  Audio buffer: ~160KB
+  VAD model: ~2MB
+  STT model: ~1.2GB
+
+
+CRITICAL FINDINGS:
+==================
+
+✅ STRENGTHS:
+  - Clean 2-state machine
+  - Zero-latency hotkeys (models pre-loaded)
+  - Lock-free audio path (channel-based)
+  - Explicit lock management (no deadlocks)
+  - Graceful degradation
+  - Real-time metrics (1s/5s intervals)
+  - GPU auto-detection
+
+⚠️ IMPROVEMENTS NEEDED:
+  - Bounded channels (prevent memory growth)
+  - Audio backpressure (handle fast speakers)
+  - STT streaming (lower latency)
+  - IPC authentication (security)
+  - Error recovery (retry logic)
+
+
+FILE LOCATIONS:
+===============
+
+Source Code:
+  /opt/swictation/rust-crates/swictation-daemon/src/main.rs
+  /opt/swictation/rust-crates/swictation-daemon/src/pipeline.rs ★
+  /opt/swictation/rust-crates/swictation-daemon/src/hotkey.rs
+  /opt/swictation/rust-crates/swictation-daemon/src/text_injection.rs
+  /opt/swictation/rust-crates/swictation-daemon/src/ipc.rs
+  /opt/swictation/rust-crates/swictation-daemon/src/config.rs
+  /opt/swictation/rust-crates/swictation-daemon/src/gpu.rs
+
+Configuration:
+  ~/.config/swictation/config.toml (Linux)
+  ~/Library/Application Support/com.swictation.daemon/config.toml (macOS)
+  %APPDATA%/Swictation/config.toml (Windows)
+
+Runtime:
+  /tmp/swictation.sock (IPC control)
+  /tmp/swictation_metrics.sock (metrics broadcast)
+  ~/.local/share/swictation/metrics.db (SQLite database)
+
+
+MEMORY KEYS:
+============
+
+  hive/daemon-pipeline/analysis
+  hive/daemon-pipeline/state-machine
+  hive/daemon-pipeline/critical-findings
+
+
+END OF STATE MACHINE FLOW DIAGRAM
+==================================
