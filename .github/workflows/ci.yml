@@ -1,0 +1,175 @@
+name: CI - Rust Build and Test
+
+on:
+  push:
+    branches:
+      - main
+      - rust-migration
+  pull_request:
+    branches:
+      - main
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  test:
+    name: Test Suite
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        submodules: recursive
+
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        components: clippy, rustfmt
+        override: true
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libasound2-dev \
+          libssl-dev \
+          pkg-config \
+          libgtk-3-dev
+
+    - name: Cache Rust dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: |
+          rust-crates -> target
+          external/midstream -> target
+
+    - name: Check formatting
+      working-directory: rust-crates
+      run: cargo fmt --all -- --check
+
+    - name: Run clippy
+      working-directory: rust-crates
+      run: cargo clippy --all-targets --all-features -- -D warnings
+
+    - name: Build all crates
+      working-directory: rust-crates
+      run: cargo build --all --verbose
+
+    - name: Run tests
+      working-directory: rust-crates
+      run: cargo test --all --verbose
+
+    - name: Build daemon (release)
+      working-directory: rust-crates
+      run: cargo build --release --bin swictation-daemon
+
+    - name: Check binary size
+      run: |
+        echo "Daemon binary size:"
+        ls -lh rust-crates/target/release/swictation-daemon
+        du -sh rust-crates/target/release/swictation-daemon
+
+  build-linux:
+    name: Build Linux x86_64
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        submodules: recursive
+
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        override: true
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libasound2-dev \
+          libssl-dev \
+          pkg-config \
+          patchelf
+
+    - name: Cache Rust dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: |
+          rust-crates -> target
+
+    - name: Build daemon
+      working-directory: rust-crates
+      run: |
+        cargo build --release --bin swictation-daemon
+        strip target/release/swictation-daemon
+
+    - name: Upload daemon artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: swictation-daemon-linux-x64
+        path: rust-crates/target/release/swictation-daemon
+        retention-days: 7
+
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        submodules: recursive
+
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        override: true
+
+    - name: Install cargo-audit
+      run: cargo install cargo-audit
+
+    - name: Run security audit
+      working-directory: rust-crates
+      run: cargo audit
+
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        submodules: recursive
+
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        override: true
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libasound2-dev \
+          libssl-dev \
+          pkg-config
+
+    - name: Install tarpaulin
+      run: cargo install cargo-tarpaulin
+
+    - name: Generate coverage
+      working-directory: rust-crates
+      run: cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out Xml
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        files: ./rust-crates/cobertura.xml
+        fail_ci_if_error: false

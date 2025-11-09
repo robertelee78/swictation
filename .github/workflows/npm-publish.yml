@@ -48,6 +48,14 @@ jobs:
           rust-crates -> target
           tauri-ui/src-tauri -> target
 
+    - name: Run tests
+      working-directory: rust-crates
+      run: cargo test --all --verbose
+
+    - name: Run clippy
+      working-directory: rust-crates
+      run: cargo clippy --all-targets --all-features -- -D warnings
+
     - name: Build daemon
       working-directory: rust-crates
       run: |
