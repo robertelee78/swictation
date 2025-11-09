@@ -1225,6 +1225,19 @@ dependencies = [
 
 [[package]]
 name = "ndarray"
+version = "0.15.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "adb12d4e967ec485a5f71c6311fe28158e9d6f4bc4a447b474184d0f91a8fa32"
+dependencies = [
+ "matrixmultiply",
+ "num-complex 0.4.6",
+ "num-integer",
+ "num-traits",
+ "rawpointer",
+]
+
+[[package]]
+name = "ndarray"
 version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "882ed72dce9365842bf196bdeedf5055305f11fc8c03dee7bb0194a6cad34841"
@@ -1585,7 +1598,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fa7e49bd669d32d7bc2a15ec540a527e7764aec722a45467814005725bcd721"
 dependencies = [
  "half",
- "ndarray",
+ "libloading",
+ "ndarray 0.16.1",
  "ort-sys",
  "smallvec 2.0.0-alpha.10",
  "tracing",
@@ -2406,9 +2420,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "approx",
+ "ndarray 0.15.6",
+ "ort",
  "sherpa-rs",
  "thiserror 2.0.17",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -2417,7 +2434,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "hound",
- "ndarray",
+ "ndarray 0.16.1",
  "ort",
  "rubato",
  "thiserror 2.0.17",

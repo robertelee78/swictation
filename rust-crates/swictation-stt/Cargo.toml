@@ -18,6 +18,10 @@ crate-type = ["rlib"]
 # Using git version with sherpa-onnx v1.12.15 for CUDA 12.x + cuDNN 9.x support
 sherpa-rs = { git = "https://github.com/thewh1teagle/sherpa-rs.git", default-features = false, features = ["cuda"] }
 
+# Direct ONNX Runtime for 1.1B model (bypasses sherpa-rs external weights bug)
+ort = { version = "2.0.0-rc.10", features = ["ndarray", "half", "load-dynamic"] }
+ndarray = "0.15"
+
 # Error handling
 thiserror = "2.0"
 anyhow = "1.0"
@@ -27,6 +31,7 @@ tracing = "0.1"
 
 [dev-dependencies]
 approx = "0.5"
+tracing-subscriber = "0.3"
 
 [profile.release]
 opt-level = 3

@@ -27,9 +27,11 @@
 
 pub mod error;
 pub mod recognizer;
+pub mod recognizer_ort; // Direct ONNX Runtime for 1.1B model
 
 pub use error::{Result, SttError};
 pub use recognizer::{RecognitionResult, Recognizer};
+pub use recognizer_ort::OrtRecognizer;
 
 /// Default model path
 pub const DEFAULT_MODEL_PATH: &str =
