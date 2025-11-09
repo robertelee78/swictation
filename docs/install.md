@@ -378,9 +378,10 @@ python3 -c "import sounddevice as sd; print(sd.query_devices())"
 ```
 
 **Test audio capture:**
+The legacy Python audio_capture.py has been replaced by the Rust implementation. To test audio:
 ```bash
-python3 /opt/swictation/src/audio_capture.py 5
-# Should record 5 seconds and print "Recording test successful"
+# Check logs for audio device detection
+journalctl --user -u swictation-daemon -n 50 | grep -i audio
 ```
 
 ### Text Not Appearing (wtype fails)
@@ -445,11 +446,11 @@ journalctl --user -u swictation.service -n 100
 **Try manual start to see full errors:**
 ```bash
 # Stop systemd service
-systemctl --user stop swictation.service
+systemctl --user stop swictation-daemon
 
-# Run manually to see output
-cd /opt/swictation/src
-python3 swictationd.py
+# Run Rust daemon manually to see output
+cd /opt/swictation/rust-crates
+cargo run --release --bin swictation-daemon
 ```
 
 ---
