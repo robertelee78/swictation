@@ -162,8 +162,8 @@ async fn main() -> Result<()> {
 
     info!("✓ Pipeline initialized successfully");
     info!("  - Audio: 16000 Hz, 1 channel");
-    info!("  - VAD: Silero VAD (sherpa-rs)");
-    info!("  - STT: Parakeet-TDT-0.6B-V3 (sherpa-onnx)");
+    info!("  - VAD: Silero VAD v6 (ort/ONNX)");
+    info!("  - STT: Parakeet-TDT-1.1B (parakeet-rs)");
     if let Some(provider) = &gpu_provider {
         info!("  - GPU: {} acceleration enabled", provider);
     }

@@ -135,29 +135,28 @@ impl SileroVadOrt {
             eprintln!("  sr value: {}", self.sample_rate);
         }
 
-        // Create tensors from arrays for ort 2.0 - need to clone the data since Tensor takes ownership
-        let input_tensor = Tensor::from_array(input_array)
-            .map_err(|e| VadError::processing(format!("Failed to create input tensor: {}", e)))?;
+        // Create sample rate array - using arr1 like voice_activity_detector
+        let sr_array = ndarray::arr1::<i64>(&[self.sample_rate as i64]);
 
-        let state_tensor = Tensor::from_array(self.state.clone())
-            .map_err(|e| VadError::processing(format!("Failed to create state tensor: {}", e)))?;
+        // Create tensors from OWNED arrays - ort 2.0.0-rc.10 requires owned, not views
+        // This is different from rc.4 which used views
+        let input_value = Tensor::from_array(input_array)
+            .map_err(|e| VadError::processing(format!("Failed to create input: {}", e)))?;
+        let state_value = Tensor::from_array(self.state.clone())
+            .map_err(|e| VadError::processing(format!("Failed to create state: {}", e)))?;
+        let sr_value = Tensor::from_array(sr_array)
+            .map_err(|e| VadError::processing(format!("Failed to create sr: {}", e)))?;
 
-        // Create sample rate tensor - sherpa-onnx uses shape [1], not scalar []
-        // Even though ONNX model metadata says [], the C++ code uses [1]
-        let sr_array = ndarray::Array1::from(vec![self.sample_rate as i64]);
-        let sr_tensor = Tensor::from_array(sr_array)
-            .map_err(|e| VadError::processing(format!("Failed to create sr tensor: {}", e)))?;
-
-        // Run inference using named inputs (order doesn't matter with named inputs)
+        // Run inference
         let mut session_guard = self.session
             .lock()
             .map_err(|e| VadError::processing(format!("Failed to lock session: {}", e)))?;
 
         let outputs = session_guard
             .run(inputs![
-                "input" => input_tensor,
-                "state" => state_tensor,
-                "sr" => sr_tensor
+                "input" => input_value,
+                "state" => state_value,
+                "sr" => sr_value
             ])
             .map_err(|e| VadError::processing(format!("Failed to run inference: {}", e)))?;
 
