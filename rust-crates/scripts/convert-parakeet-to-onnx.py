@@ -63,28 +63,23 @@ def convert_model(model_name: str, output_dir: str):
 
     # Set export config for TDT models
     if "ctc" in model_name.lower():
+        print("⚙️  Configuring CTC export...")
         asr_model.set_export_config({'decoder_type': 'ctc'})
+        onnx_file = str(output_path / "model.onnx")
     else:
-        # For TDT transducer models, export encoder/decoder/joiner separately
-        print("⚠️  Note: TDT transducer export generates multiple ONNX files")
-        asr_model.set_export_config({
-            'decoder_type': 'rnnt',
-            'encoder': str(output_path / 'encoder.onnx'),
-            'decoder': str(output_path / 'decoder.onnx'),
-            'joiner': str(output_path / 'joiner.onnx'),
-        })
+        # For TDT transducer models, don't use set_export_config
+        # Just export with base filename - NeMo will create encoder/decoder/joiner automatically
+        print("⚠️  Note: TDT transducer export generates encoder.onnx, decoder.onnx, joiner.onnx")
+        onnx_file = str(output_path / "model.onnx")
 
     # Export to ONNX
-    onnx_file = str(output_path / "model.onnx") if "ctc" in model_name.lower() else None
     print(f"📤 Exporting to ONNX: {output_path}")
     try:
-        if onnx_file:
-            asr_model.export(onnx_file)
-        else:
-            # For TDT transducer, export creates encoder/decoder/joiner files
-            asr_model.export(str(output_path / 'model'))
+        asr_model.export(onnx_file)
     except Exception as e:
         print(f"❌ Export failed: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
     # Extract vocabulary tokens
@@ -97,8 +92,13 @@ def convert_model(model_name: str, output_dir: str):
             f.write(f"<blk> {i+1}\n")
         elif hasattr(asr_model, 'tokenizer'):
             vocab = asr_model.tokenizer.vocab
-            for token, idx in sorted(vocab.items(), key=lambda x: x[1]):
-                f.write(f"{token} {idx}\n")
+            # Handle both dict and list vocab formats
+            if isinstance(vocab, dict):
+                for token, idx in sorted(vocab.items(), key=lambda x: x[1]):
+                    f.write(f"{token} {idx}\n")
+            elif isinstance(vocab, list):
+                for idx, token in enumerate(vocab):
+                    f.write(f"{token} {idx}\n")
 
     # Verify files
     print(f"\n✅ Conversion complete!")
