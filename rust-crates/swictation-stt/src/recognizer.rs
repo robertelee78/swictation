@@ -82,7 +82,9 @@ impl Recognizer {
             // Model type for Parakeet-TDT (NeMo transducer)
             model_type: "nemo_transducer".to_string(),
 
-            // GPU provider (sherpa-onnx handles CUDA internally)
+            // GPU provider: CUDA for offline recognition (TensorRT only supports online/streaming)
+            // Note: CUDA EP may not fully utilize int8 quantization on Tensor Cores
+            // but it's the only option for offline (file-based) recognition with GPU
             provider: Some(if use_gpu { "cuda" } else { "cpu" }.to_string()),
 
             debug: false,

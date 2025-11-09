@@ -15,7 +15,8 @@ crate-type = ["rlib"]
 
 [dependencies]
 # Sherpa-RS for Parakeet-TDT inference (supports separate decoder/joiner)
-sherpa-rs = { version = "0.6.8", default-features = false, features = ["cuda"] }
+# Using git version with sherpa-onnx v1.12.15 for CUDA 12.x + cuDNN 9.x support
+sherpa-rs = { git = "https://github.com/thewh1teagle/sherpa-rs.git", default-features = false, features = ["cuda"] }
 
 # Error handling
 thiserror = "2.0"
