@@ -362,6 +362,10 @@ impl OrtRecognizer {
         let mut decoder_out_opt: Option<Array1<f32>> = None;
         let mut last_decoder_token = self.blank_id;
 
+        // STATISTICS for debugging
+        let mut total_blank_predictions = 0;
+        let mut total_nonblank_predictions = 0;
+
         for (chunk_idx, chunk) in chunks.iter().enumerate() {
             eprintln!("\n📦 Processing chunk {}/{}", chunk_idx + 1, chunks.len());
 
@@ -371,9 +375,14 @@ impl OrtRecognizer {
 
             // Decode each frame with greedy search
             // Pass both the decoder_out and token from previous chunk
-            let (chunk_tokens, final_token, final_decoder_out) =
+            let (chunk_tokens, final_token, final_decoder_out, stats) =
                 self.decode_frames_with_state(&encoder_out, decoder_out_opt.take(), last_decoder_token)?;
             eprintln!("   Chunk produced {} tokens (final_token={})", chunk_tokens.len(), final_token);
+            eprintln!("   Chunk stats: {} blank predictions, {} non-blank predictions",
+                     stats.0, stats.1);
+
+            total_blank_predictions += stats.0;
+            total_nonblank_predictions += stats.1;
 
             all_tokens.extend(chunk_tokens);
             last_decoder_token = final_token;  // Carry forward for next chunk
@@ -381,6 +390,9 @@ impl OrtRecognizer {
         }
 
         eprintln!("\n📊 TOTAL: {} tokens from {} chunks", all_tokens.len(), chunks.len());
+        eprintln!("📊 PREDICTIONS: {} blank, {} non-blank ({:.1}% blank)",
+                 total_blank_predictions, total_nonblank_predictions,
+                 100.0 * total_blank_predictions as f32 / (total_blank_predictions + total_nonblank_predictions).max(1) as f32);
 
         // Convert tokens to text
         let text = self.tokens_to_text(&all_tokens);
@@ -400,20 +412,18 @@ impl OrtRecognizer {
         let num_frames = features.nrows();
         let num_features = features.ncols();
 
-        // CRITICAL: Encoder chunk size is FIXED at 80 frames
-        if num_frames != 80 {
-            return Err(SttError::InferenceError(format!(
-                "Encoder expects exactly 80 frames per chunk, got {}",
-                num_frames
-            )));
-        }
+        // NOTE: Encoder can handle variable frame counts (tested with 615 frames successfully in Python)
+        // No need for fixed 80-frame chunks - the model uses dynamic shape inference
+        debug!("Encoder processing {} frames x {} features", num_frames, num_features);
 
-        // Conditionally apply transpose based on detected model format
-        let (shape, audio_data) = if self.transpose_input {
-            // TRANSPOSE FOR 0.6B: (batch, num_features=128, num_frames=80)
-            // Official sherpa-onnx 0.6B models expect features FIRST, then time
+        // CRITICAL FIX: Encoder ALWAYS expects (batch, features, time) format!
+        // The ONNX input signature shows: audio_signal: [batch, 80, time]
+        // This means ALL models expect features dimension FIRST, then time dimension.
+        // The previous logic was INVERTED - causing wrong input shape for 1.1B model!
+        let (shape, audio_data) = {
+            // TRANSPOSE FOR ALL MODELS: (batch, num_features, num_frames)
             // Layout: Row-major transposed - all frames for feature 0, then feature 1, etc.
-            debug!("Using TRANSPOSED input format (0.6B): (batch, features={}, time={})", num_features, num_frames);
+            debug!("Using TRANSPOSED input format: (batch, features={}, time={})", num_features, num_frames);
             let mut data = Vec::with_capacity(batch_size * num_frames * num_features);
             for col_idx in 0..num_features {
                 for row in features.outer_iter() {
@@ -421,13 +431,6 @@ impl OrtRecognizer {
                 }
             }
             (vec![batch_size, num_features, num_frames], data)
-        } else {
-            // NO TRANSPOSE FOR 1.1B: (batch, num_frames=80, num_features)
-            // 1.1B exported models expect time FIRST, then features
-            // Layout: Row-major natural order
-            debug!("Using NATURAL input format (1.1B): (batch, time={}, features={})", num_frames, num_features);
-            let data: Vec<f32> = features.iter().copied().collect();
-            (vec![batch_size, num_frames, num_features], data)
         };
 
         let audio_signal = Tensor::from_array((shape, audio_data.into_boxed_slice()))
@@ -484,13 +487,13 @@ impl OrtRecognizer {
     /// - prev_decoder_out: Decoder output from end of previous chunk (None for first chunk)
     /// - initial_token: Last token from previous chunk (blank_id for first chunk)
     ///
-    /// Returns: (tokens, final_decoder_token, final_decoder_out) for next chunk
+    /// Returns: (tokens, final_decoder_token, final_decoder_out, (blank_count, nonblank_count)) for next chunk
     fn decode_frames_with_state(
         &mut self,
         encoder_out: &Array3<f32>,
         prev_decoder_out: Option<Array1<f32>>,
         initial_token: i64
-    ) -> Result<(Vec<i64>, i64, Array1<f32>)> {
+    ) -> Result<(Vec<i64>, i64, Array1<f32>, (usize, usize))> {
         // Encoder output shape: (batch, encoder_dim, num_frames)
         let _encoder_dim = encoder_out.shape()[1];
         let num_frames = encoder_out.shape()[2];
@@ -500,6 +503,10 @@ impl OrtRecognizer {
         let mut tokens = Vec::new();
         let mut timestamps = Vec::new();
         let mut durations_vec = Vec::new();
+
+        // CRITICAL FIX: Track blank/nonblank statistics (required by function signature)
+        let mut blank_count = 0_usize;
+        let mut nonblank_count = 0_usize;
 
         let max_tokens_per_frame = 5;  // sherpa-onnx uses 5 for TDT
 
@@ -517,6 +524,10 @@ impl OrtRecognizer {
 
         let mut tokens_this_frame = 0;
         let mut t = 0_usize;
+
+        // STATISTICS for debugging
+        let mut blank_count = 0_usize;
+        let mut nonblank_count = 0_usize;
 
         // C++ line 121: Main loop with skip-based advancement
         while t < num_frames {
@@ -554,12 +565,11 @@ impl OrtRecognizer {
                 0
             };
 
-            // Use info! so we can see output even without RUST_LOG=debug
-            if t < 5 || y != blank_id {  // Log first 5 frames and all non-blank emissions
-                info!("Frame {}: token={} ('{}'), blank={}, duration={}, tokens_this_frame={}",
-                    t, y,
-                    if y < self.tokens.len() as i64 { &self.tokens[y as usize] } else { "???" },
-                    blank_id, skip, tokens_this_frame);
+            // TRACK STATISTICS
+            if y == blank_id {
+                blank_count += 1;
+            } else {
+                nonblank_count += 1;
             }
 
             // C++ line 152-165: If non-blank, emit token and update decoder
@@ -569,7 +579,32 @@ impl OrtRecognizer {
                 durations_vec.push(skip);
 
                 // C++ line 157-162: Run decoder IMMEDIATELY with new token
+                let dec_before_min = decoder_out.iter().fold(f32::INFINITY, |a, &b| a.min(b));
+                let dec_before_max = decoder_out.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+                let dec_before_mean = decoder_out.iter().sum::<f32>() / decoder_out.len() as f32;
+
+                debug!("🔄 NON-BLANK token emitted: y={}, vocab_token={}", y,
+                       self.tokens.get(y as usize).unwrap_or(&"<unknown>".to_string()));
+                debug!("   decoder_out BEFORE run_decoder: ({:.3} to {:.3}, mean={:.3})",
+                       dec_before_min, dec_before_max, dec_before_mean);
+
                 decoder_out = self.run_decoder(&[y])?;
+
+                let dec_after_min = decoder_out.iter().fold(f32::INFINITY, |a, &b| a.min(b));
+                let dec_after_max = decoder_out.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+                let dec_after_mean = decoder_out.iter().sum::<f32>() / decoder_out.len() as f32;
+
+                debug!("   decoder_out AFTER run_decoder: ({:.3} to {:.3}, mean={:.3})",
+                       dec_after_min, dec_after_max, dec_after_mean);
+
+                if (dec_after_min - dec_before_min).abs() < 1e-6 &&
+                   (dec_after_max - dec_before_max).abs() < 1e-6 &&
+                   (dec_after_mean - dec_before_mean).abs() < 1e-6 {
+                    debug!("❌ WARNING: decoder_out DID NOT CHANGE after run_decoder! LSTM bug confirmed!");
+                } else {
+                    debug!("✅ decoder_out changed successfully");
+                }
+
                 last_emitted_token = y;  // Track for cross-chunk persistence
 
                 tokens_this_frame += 1;
@@ -594,12 +629,21 @@ impl OrtRecognizer {
                 skip = 1;
             }
 
-            // C++ line 121: Advance by skip amount (for loop: t += skip)
-            t += skip.max(1);  // Ensure we always advance at least 1
+            // CRITICAL FIX: Only advance frame when skip > 0
+            // When we emit a non-blank token with skip=0, we should stay at the same frame
+            // and try to emit more tokens with the updated decoder state
+            // This matches the reference implementation's "Don't advance yet" logic
+            if skip > 0 {
+                t += skip;
+            }
+            // Otherwise stay at same frame to potentially emit more tokens
         }
 
         eprintln!("\n🔍 DECODER OUTPUT:");
         eprintln!("   Decoded {} tokens from {} frames", tokens.len(), num_frames);
+        eprintln!("   Statistics: {} blank predictions, {} non-blank predictions ({:.1}% blank)",
+                 blank_count, nonblank_count,
+                 100.0 * blank_count as f32 / (blank_count + nonblank_count).max(1) as f32);
         if !tokens.is_empty() {
             eprintln!("   First 10 token IDs: {:?}", &tokens[..10.min(tokens.len())]);
             let text_preview: String = tokens[..10.min(tokens.len())].iter()
@@ -617,7 +661,7 @@ impl OrtRecognizer {
         eprintln!("   Final decoder token for next chunk: {}", last_emitted_token);
         eprintln!("   Returning decoder_out for next chunk (shape: {})", decoder_out.len());
 
-        Ok((tokens, last_emitted_token, decoder_out))
+        Ok((tokens, last_emitted_token, decoder_out, (blank_count, nonblank_count)))
     }
 
     /// Run decoder with token history and RNN states
@@ -685,19 +729,39 @@ impl OrtRecognizer {
             .map_err(|e| SttError::InferenceError(format!("Failed to extract decoder output: {}", e)))?;
 
         // Update states for next iteration
+        debug!("🔍 Attempting to extract decoder LSTM states from outputs...");
+        debug!("   outputs.len() = {}", outputs.len());
+
         // outputs[2] is the new state (2, batch, 640)
         if let Ok((state_shape, state_data)) = outputs[2].try_extract_tensor::<f32>() {
+            debug!("✅ Successfully extracted state1: shape={:?}, data_len={}", state_shape, state_data.len());
+            let state_min = state_data.iter().fold(f32::INFINITY, |a, &b| a.min(b));
+            let state_max = state_data.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+            let state_mean = state_data.iter().sum::<f32>() / state_data.len() as f32;
+            debug!("   state1 stats: min={:.3}, max={:.3}, mean={:.3}", state_min, state_max, state_mean);
+
             self.decoder_state1 = Some(Array3::from_shape_vec(
                 (state_shape[0] as usize, state_shape[1] as usize, state_shape[2] as usize),
                 state_data.to_vec(),
             ).unwrap());
+        } else {
+            debug!("❌ FAILED to extract state1 from outputs[2] - LSTM states NOT UPDATING!");
         }
+
         // outputs[3] is the second state (2, batch, 640)
         if let Ok((state_shape, state_data)) = outputs[3].try_extract_tensor::<f32>() {
+            debug!("✅ Successfully extracted state2: shape={:?}, data_len={}", state_shape, state_data.len());
+            let state_min = state_data.iter().fold(f32::INFINITY, |a, &b| a.min(b));
+            let state_max = state_data.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+            let state_mean = state_data.iter().sum::<f32>() / state_data.len() as f32;
+            debug!("   state2 stats: min={:.3}, max={:.3}, mean={:.3}", state_min, state_max, state_mean);
+
             self.decoder_state2 = Some(Array3::from_shape_vec(
                 (state_shape[0] as usize, state_shape[1] as usize, state_shape[2] as usize),
                 state_data.to_vec(),
             ).unwrap());
+        } else {
+            debug!("❌ FAILED to extract state2 from outputs[3] - LSTM states NOT UPDATING!");
         }
 
         // Extract the last timestep: shape is (batch, 640, seq_len), we want (640,)
@@ -716,6 +780,18 @@ impl OrtRecognizer {
 
     /// Run joiner to combine encoder and decoder outputs
     fn run_joiner(&mut self, encoder_out: &Array1<f32>, decoder_out: &Array1<f32>) -> Result<Array1<f32>> {
+        // DEBUG: Check input statistics
+        let enc_min = encoder_out.iter().fold(f32::INFINITY, |a, &b| a.min(b));
+        let enc_max = encoder_out.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+        let enc_mean = encoder_out.iter().sum::<f32>() / encoder_out.len() as f32;
+
+        let dec_min = decoder_out.iter().fold(f32::INFINITY, |a, &b| a.min(b));
+        let dec_max = decoder_out.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+        let dec_mean = decoder_out.iter().sum::<f32>() / decoder_out.len() as f32;
+
+        debug!("Joiner inputs: encoder({:.3} to {:.3}, mean={:.3}), decoder({:.3} to {:.3}, mean={:.3})",
+               enc_min, enc_max, enc_mean, dec_min, dec_max, dec_mean);
+
         // Prepare joiner inputs
         let encoder_input = Tensor::from_array((
             vec![1, encoder_out.len(), 1],  // (batch, 1024, 1)
@@ -745,31 +821,42 @@ impl OrtRecognizer {
         debug!("Joiner output shape: {:?}, data.len()={}", shape, data.len());
 
         // Extract the actual logits: [0, 0, 0, :] gives us the vocab_size dimension
-        let vocab_size = shape[3] as usize;
+        let _vocab_size = shape[3] as usize;
 
         // The logits are ALL the data (since batch=1, frames=1, frames=1, total = vocab_size)
         let logits = Array1::from_vec(data.to_vec());
 
-        // Debug: show first 10 and last 10 logits, plus blank_id logit
+        // COMPREHENSIVE LOGIT ANALYSIS for debugging
+        // Find max and top-10 tokens
+        let mut indexed_logits: Vec<(usize, f32)> = data.iter().enumerate()
+            .map(|(i, &v)| (i, v))
+            .collect();
+        indexed_logits.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+
+        let max_logit = indexed_logits[0].1;
+        let blank_logit = data[self.blank_id as usize];
+        let blank_rank = indexed_logits.iter().position(|(id, _)| *id == self.blank_id as usize).unwrap_or(9999);
+
+        // Calculate softmax probabilities for top tokens
+        let exp_max = max_logit.exp();
+        let sum_exp: f32 = data.iter().map(|&x| (x - max_logit).exp()).sum();
+        let blank_prob = (blank_logit - max_logit).exp() / sum_exp * 100.0;
+
+        debug!("Joiner logits: blank_id={} has logit={:.4} (rank #{}, prob={:.2}%), max_logit={:.4}",
+               self.blank_id, blank_logit, blank_rank + 1, blank_prob, max_logit);
+
         if data.len() >= 10 {
-            debug!("First 10 logits: {:?}", &data[..10]);
-            debug!("Last 10 logits: {:?}", &data[data.len()-10..]);
-            debug!("Logit at blank_id({}): {}", self.blank_id, data[self.blank_id as usize]);
-
-            // Find max and top-5 tokens
-            let mut indexed_logits: Vec<(usize, f32)> = data.iter().enumerate()
-                .map(|(i, &v)| (i, v))
-                .collect();
-            indexed_logits.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-
-            debug!("Top 5 logits:");
-            for (i, &(token_id, logit_val)) in indexed_logits[..5.min(indexed_logits.len())].iter().enumerate() {
+            debug!("Top 10 predictions:");
+            for (i, &(token_id, logit_val)) in indexed_logits[..10.min(indexed_logits.len())].iter().enumerate() {
                 let token_text = if token_id < self.tokens.len() {
                     &self.tokens[token_id]
                 } else {
                     "???"
                 };
-                debug!("  #{}: token={} ('{}'), logit={:.6}", i+1, token_id, token_text, logit_val);
+                let prob = (logit_val - max_logit).exp() / sum_exp * 100.0;
+                let marker = if token_id == self.blank_id as usize { " ← BLANK" } else { "" };
+                debug!("  #{}: token={:4} ('{}'), logit={:8.4}, prob={:6.2}%{}",
+                       i+1, token_id, token_text, logit_val, prob, marker);
             }
         }
 

@@ -26,7 +26,7 @@ pub const N_MEL_FEATURES_1_1B: usize = 80; // Number of mel filters (1.1B model)
 pub const N_FFT: usize = 512;            // FFT size
 pub const HOP_LENGTH: usize = 160;       // 10ms hop at 16kHz
 pub const WIN_LENGTH: usize = 400;       // 25ms window at 16kHz
-pub const CHUNK_FRAMES: usize = 80;      // Frames per encoder chunk
+pub const CHUNK_FRAMES: usize = 10000;    // Frames per encoder chunk (increased to process full audio)
 
 /// Audio processor for Parakeet-TDT models
 pub struct AudioProcessor {
@@ -48,14 +48,15 @@ impl AudioProcessor {
     /// * `n_mel_features` - Number of mel filterbank features (80 for 1.1B, 128 for 0.6B)
     pub fn with_mel_features(n_mel_features: usize) -> Result<Self> {
         // Create mel filterbank
-        // NeMo models use: low_freq=0, high_freq=8000 (or default SR/2)
-        // See sherpa-onnx/csrc/offline-recognizer-transducer-nemo-impl.h:164-165
+        // CRITICAL FIX: Use sherpa-onnx NeMo settings (0 Hz to 7600 Hz)
+        // For non-GigaAM NeMo models, sherpa-onnx uses:
+        //   low_freq = 0, high_freq = -400 (default) = 16000/2 - 400 = 7600 Hz
         let mel_filters = create_mel_filterbank(
             n_mel_features,
             N_FFT,
             SAMPLE_RATE as f32,
-            0.0,     // NeMo models use low_freq=0
-            8000.0,  // NeMo models use high_freq=8000
+            0.0,     // low_freq = 0 for NeMo models
+            7600.0,  // high_freq = -400 = 16000/2 - 400 = 7600 Hz
         );
 
         Ok(Self {
@@ -264,7 +265,22 @@ impl AudioProcessor {
     pub fn extract_mel_features(&mut self, samples: &[f32]) -> Result<Array2<f32>> {
         debug!("Extracting mel-spectrogram from {} samples", samples.len());
 
-        // Apply preemphasis filter (standard for speech recognition)
+        // DEBUG: Check raw audio before normalization
+        let mean: f32 = samples.iter().sum::<f32>() / samples.len() as f32;
+        let rms = (samples.iter().map(|&x| x * x).sum::<f32>() / samples.len() as f32).sqrt();
+        debug!("RAW audio BEFORE normalization:");
+        debug!("  Mean: {:.6}, RMS: {:.6}", mean, rms);
+        debug!("  Min: {:.6}, Max: {:.6}",
+               samples.iter().fold(f32::INFINITY, |a, &b| a.min(b)),
+               samples.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b)));
+
+        // TEST 4: Remove sample normalization (reference parakeet-rs doesn't have this)
+        // The Queen's analysis identified "Extra sample normalization" as a potential problem
+        // Reference implementation: i16 → f32/32768.0 → NO sample normalization → preemphasis
+        // Our old implementation: i16 → f32/32768.0 → sample normalization → preemphasis (WRONG!)
+        debug!("TEST 4: Skipping sample normalization (raw samples only)");
+
+        // Apply preemphasis filter directly to raw samples (like reference implementation)
         let preemphasized = apply_preemphasis(samples, 0.97);
 
         // Compute STFT
@@ -272,6 +288,8 @@ impl AudioProcessor {
         debug!("STFT shape: {:?}", stft.shape());
 
         // Compute power spectrogram
+        // Kaldi fbank default is use_power=True (power spectrum)
+        // This computes |FFT|² = re² + im²
         let power_spec = stft.mapv(|c| c.re * c.re + c.im * c.im);
 
         // Apply mel filterbank
@@ -282,18 +300,43 @@ impl AudioProcessor {
         debug!("Mel spectrogram shape: {:?}", mel_spec.shape());
 
         // Apply log scaling (add small epsilon to avoid log(0))
-        let log_mel = mel_spec.mapv(|x| (x + 1e-10).ln());
+        let mut log_mel = mel_spec.mapv(|x| (x + 1e-10).ln());
 
-        // DEBUG: Check log_mel values before normalization
+        // TEST 1: Add per-feature normalization like reference implementation (parakeet-rs)
+        // Reference: /var/tmp/parakeet-rs/src/audio.rs lines 162-176
+        // This normalizes each mel feature (column) independently to mean=0, std=1
+        // across the time dimension (frames). This is different from audio sample
+        // normalization which happens earlier - this operates on the mel features themselves.
+        debug!("Applying per-feature normalization (mean=0, std=1) across time dimension...");
+
+        let num_frames = log_mel.nrows();
+        let num_features = log_mel.ncols();
+
+        for feat_idx in 0..num_features {
+            let mut column = log_mel.column_mut(feat_idx);
+            let mean: f32 = column.iter().sum::<f32>() / num_frames as f32;
+            let variance: f32 = column.iter()
+                .map(|&x| (x - mean).powi(2))
+                .sum::<f32>() / num_frames as f32;
+            let std = variance.sqrt().max(1e-10);
+
+            for val in column.iter_mut() {
+                *val = (*val - mean) / std;
+            }
+        }
+
+        debug!("Per-feature normalization applied: {} features normalized", num_features);
+
+        // DEBUG: Check log_mel values AFTER per-feature normalization
         if log_mel.nrows() > 0 {
-            debug!("BEFORE normalization - first frame (first 10): {:?}",
+            debug!("AFTER per-feature normalization - first frame (first 10): {:?}",
                    &log_mel.row(0).as_slice().unwrap()[..10.min(log_mel.ncols())]);
             if log_mel.nrows() > 10 {
-                debug!("BEFORE normalization - middle frame {} (first 10): {:?}",
+                debug!("AFTER per-feature normalization - middle frame {} (first 10): {:?}",
                        log_mel.nrows() / 2,
                        &log_mel.row(log_mel.nrows() / 2).as_slice().unwrap()[..10.min(log_mel.ncols())]);
             }
-            debug!("BEFORE normalization - stats: min={:.6}, max={:.6}, mean={:.6}",
+            debug!("AFTER per-feature normalization - stats: min={:.6}, max={:.6}, mean={:.6}",
                    log_mel.iter().fold(f32::INFINITY, |a, &b| a.min(b)),
                    log_mel.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b)),
                    log_mel.mean().unwrap_or(0.0));
@@ -310,32 +353,15 @@ impl AudioProcessor {
             }
         }
 
-        // Normalize features per mel-bin (across time) as expected by NVIDIA NeMo models
-        // Each mel feature gets normalized independently across all frames
-        let mut normalized = log_mel.clone();
+        // TEST 1 IMPLEMENTATION: Per-feature normalization now APPLIED
+        // Testing hypothesis: reference parakeet-rs applies per-feature normalization
+        // This normalizes each mel bin independently across time (mean=0, std=1)
+        // Previous implementation had NO per-feature normalization based on sherpa-onnx investigation
+        // Now testing if adding it matches reference implementation behavior
 
-        for mel_idx in 0..self.n_mel_features {
-            // Get all values for this mel bin across all frames
-            let mel_column = log_mel.column(mel_idx);
-            let mean = mel_column.mean().unwrap_or(0.0);
-            let std = mel_column.std(0.0);  // ddof=0 for population std
-
-            // Normalize this mel bin
-            if std > 1e-8 {
-                for frame_idx in 0..log_mel.nrows() {
-                    normalized[[frame_idx, mel_idx]] = (log_mel[[frame_idx, mel_idx]] - mean) / std;
-                }
-            } else {
-                // If std is too small, just subtract mean
-                for frame_idx in 0..log_mel.nrows() {
-                    normalized[[frame_idx, mel_idx]] = log_mel[[frame_idx, mel_idx]] - mean;
-                }
-            }
-        }
-
-        debug!("Extracted features: shape {:?}, normalized per-feature",
-               normalized.shape());
-        Ok(normalized)
+        debug!("Extracted features: shape {:?} (with per-feature normalization - TEST 1)",
+               log_mel.shape());
+        Ok(log_mel)
     }
 
     /// Compute Short-Time Fourier Transform (STFT)
@@ -343,8 +369,9 @@ impl AudioProcessor {
         let num_frames = (samples.len() - WIN_LENGTH) / HOP_LENGTH + 1;
         let mut stft = Array2::zeros((num_frames, N_FFT / 2 + 1));
 
-        // Create Povey window (NeMo models use Povey, not Hann)
-        // See sherpa-onnx/csrc/features.h:61 - default is "povey"
+        // CRITICAL FIX: Use Povey window for NeMo models
+        // sherpa-onnx uses "povey" window_type for non-GigaAM NeMo models
+        // (GigaAM explicitly sets "hann", but Parakeet-TDT uses default "povey")
         let window = povey_window(WIN_LENGTH);
 
         // Create FFT plan
@@ -382,11 +409,56 @@ impl AudioProcessor {
         Ok(stft)
     }
 
-    /// Split features into chunks of 80 frames for encoder
+    /// Export mel features to CSV for comparison with Python
     ///
-    /// Returns a Vec of 3D arrays with shape (1, 80, 128) suitable for encoder input
+    /// Exports features in format: frame,feature_idx,value
+    /// This allows direct comparison with Python implementation
+    ///
+    /// # Arguments
+    ///
+    /// * `features` - 2D array of mel features (frames x mel_bins)
+    /// * `path` - Output CSV file path
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use swictation_stt::audio::AudioProcessor;
+    ///
+    /// let mut processor = AudioProcessor::new().unwrap();
+    /// let samples = vec![0.0; 16000]; // 1 second of silence
+    /// let features = processor.extract_mel_features(&samples).unwrap();
+    /// processor.export_features_csv(&features, "mel_features.csv").unwrap();
+    /// ```
+    pub fn export_features_csv(&self, features: &Array2<f32>, path: &str) -> Result<()> {
+        use std::fs::File;
+        use std::io::Write;
+
+        let mut file = File::create(path)
+            .map_err(|e| SttError::AudioLoadError(format!("Failed to create CSV: {}", e)))?;
+
+        // Write header
+        writeln!(file, "frame,feature_idx,value")
+            .map_err(|e| SttError::AudioLoadError(format!("Failed to write CSV header: {}", e)))?;
+
+        // Write data: (frame, feature_idx, value)
+        for (frame_idx, frame) in features.axis_iter(ndarray::Axis(0)).enumerate() {
+            for (feat_idx, &value) in frame.iter().enumerate() {
+                writeln!(file, "{},{},{}", frame_idx, feat_idx, value)
+                    .map_err(|e| SttError::AudioLoadError(format!("Failed to write CSV data: {}", e)))?;
+            }
+        }
+
+        info!("Exported {} frames x {} features to {}", features.nrows(), features.ncols(), path);
+        Ok(())
+    }
+
+    /// Split features into chunks for encoder
+    ///
+    /// Returns a Vec of 2D arrays suitable for encoder input.
+    /// Uses the instance's n_mel_features (80 for 1.1B, 128 for 0.6B) for padding.
     pub fn chunk_features(&self, features: &Array2<f32>) -> Vec<Array2<f32>> {
         let total_frames = features.nrows();
+        let n_features = self.n_mel_features;  // Use instance field, not hardcoded constant!
         let mut chunks = Vec::new();
 
         for start in (0..total_frames).step_by(CHUNK_FRAMES) {
@@ -394,8 +466,8 @@ impl AudioProcessor {
             let chunk_size = end - start;
 
             if chunk_size < CHUNK_FRAMES {
-                // Pad last chunk if needed
-                let mut padded = Array2::zeros((CHUNK_FRAMES, N_MEL_FEATURES));
+                // Pad last chunk if needed - use instance's n_mel_features
+                let mut padded = Array2::zeros((CHUNK_FRAMES, n_features));
                 padded
                     .slice_mut(s![..chunk_size, ..])
                     .assign(&features.slice(s![start..end, ..]));
@@ -435,6 +507,39 @@ fn hann_window(window_length: usize) -> Vec<f32> {
             0.5 * (1.0 - factor.cos())
         })
         .collect()
+}
+
+/// Normalize audio samples to have zero mean and unit variance
+///
+/// This matches sherpa-onnx's normalize_samples=True configuration.
+/// CRITICAL: This must be applied BEFORE preemphasis to match sherpa-onnx preprocessing.
+///
+/// Formula: y[n] = (x[n] - mean) / std
+fn normalize_audio_samples(samples: &[f32]) -> Vec<f32> {
+    if samples.is_empty() {
+        return Vec::new();
+    }
+
+    // Compute mean
+    let mean: f32 = samples.iter().sum::<f32>() / samples.len() as f32;
+
+    // Compute standard deviation (population std, ddof=0)
+    let variance: f32 = samples.iter()
+        .map(|&x| (x - mean).powi(2))
+        .sum::<f32>() / samples.len() as f32;
+    let std = variance.sqrt();
+
+    // Normalize: (x - mean) / std
+    if std > 1e-8 {
+        samples.iter()
+            .map(|&x| (x - mean) / std)
+            .collect()
+    } else {
+        // If std is too small, just subtract mean
+        samples.iter()
+            .map(|&x| x - mean)
+            .collect()
+    }
 }
 
 /// Apply preemphasis filter to audio signal
