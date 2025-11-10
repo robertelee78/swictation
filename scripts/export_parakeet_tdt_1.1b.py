@@ -83,8 +83,10 @@ def main():
             f.write(f"{s} {i}\n")
         # Add blank token at the end
         f.write(f"<blk> {i+1}\n")
-    vocab_size = len(asr_model.joint.vocabulary) + 1
-    print(f"  Saved to tokens.txt ({vocab_size} tokens including <blk>)")
+    # CRITICAL: vocab_size should NOT include blank token (sherpa-onnx adds it internally)
+    vocab_size = len(asr_model.joint.vocabulary)
+    print(f"  Saved to tokens.txt ({len(asr_model.joint.vocabulary) + 1} tokens including <blk>)")
+    print(f"  vocab_size (metadata): {vocab_size} (excluding <blk>)")
 
     # Export ONNX models using NeMo's built-in export
     print("\nExporting ONNX models...")
@@ -117,7 +119,7 @@ def main():
         "model_author": "NeMo",
         "url": "https://huggingface.co/nvidia/parakeet-tdt-1.1b",
         "comment": "TDT (Token-and-Duration Transducer) 1.1B model",
-        "feat_dim": 128,  # Mel filterbank features
+        "feat_dim": 80,  # CRITICAL: 1.1B uses 80 mel features, not 128!
     }
 
     print("\n Model metadata:")

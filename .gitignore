@@ -75,7 +75,10 @@ coverage.xml
 *.ckpt
 *.pt
 *.pth
-models/
+# Models directory (except validated 1.1B export)
+models/*
+!models/parakeet-tdt-1.1b/
+!models/parakeet-tdt-1.1b/**
 downloads/
 .cache/
 *.model
