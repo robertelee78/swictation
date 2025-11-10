@@ -102,16 +102,34 @@ impl OrtRecognizer {
             info!("Using CPU execution provider");
         }
 
+        // Helper function to find model file (try .int8.onnx first, then .onnx)
+        let find_model_file = |name: &str| -> std::result::Result<PathBuf, SttError> {
+            let int8_path = model_path.join(format!("{}.int8.onnx", name));
+            if int8_path.exists() {
+                info!("Using INT8 quantized model: {}.int8.onnx", name);
+                return Ok(int8_path);
+            }
+            let onnx_path = model_path.join(format!("{}.onnx", name));
+            if onnx_path.exists() {
+                info!("Using FP32 model: {}.onnx", name);
+                return Ok(onnx_path);
+            }
+            Err(SttError::ModelLoadError(format!(
+                "Could not find {}.onnx or {}.int8.onnx in {:?}",
+                name, name, model_path
+            )))
+        };
+
         // Load the three ONNX models (external weights load automatically!)
-        info!("Loading encoder.onnx...");
-        let encoder_path = model_path.join("encoder.onnx");
+        info!("Loading encoder...");
+        let encoder_path = find_model_file("encoder")?;
         let encoder = session_builder
             .commit_from_file(&encoder_path)
             .map_err(|e| SttError::ModelLoadError(format!("Failed to load encoder: {}", e)))?;
         info!("✓ Encoder loaded (external weights automatically loaded)");
 
-        info!("Loading decoder.onnx...");
-        let decoder_path = model_path.join("decoder.onnx");
+        info!("Loading decoder...");
+        let decoder_path = find_model_file("decoder")?;
         let decoder = Session::builder()
             .map_err(|e| SttError::ModelLoadError(format!("Failed to create decoder session builder: {}", e)))?
             .with_optimization_level(GraphOptimizationLevel::Level3)
@@ -120,8 +138,8 @@ impl OrtRecognizer {
             .map_err(|e| SttError::ModelLoadError(format!("Failed to load decoder: {}", e)))?;
         info!("✓ Decoder loaded");
 
-        info!("Loading joiner.onnx...");
-        let joiner_path = model_path.join("joiner.onnx");
+        info!("Loading joiner...");
+        let joiner_path = find_model_file("joiner")?;
         let joiner = Session::builder()
             .map_err(|e| SttError::ModelLoadError(format!("Failed to create joiner session builder: {}", e)))?
             .with_optimization_level(GraphOptimizationLevel::Level3)
@@ -297,20 +315,37 @@ impl OrtRecognizer {
     }
 
     /// Run encoder on feature chunk
+    ///
+    /// CRITICAL FINDING: Our converted 1.1B model expects (batch, 80, features) WITHOUT transpose!
+    /// - sherpa-onnx C++ uses Transpose12 for THEIR encoder (different conversion)
+    /// - Our ONNX spec shows: ['batch', 80, 'features'] - no transpose needed
+    /// - Encoder outputs (batch, encoder_dim, num_frames)
     fn run_encoder(&mut self, features: &Array2<f32>) -> Result<Array3<f32>> {
         // Prepare input tensors
         let batch_size = 1;
         let num_frames = features.nrows();
         let num_features = features.ncols();
 
-        // audio_signal: (batch=1, num_frames, num_features)
+        // CRITICAL: Encoder chunk size is FIXED at 80 frames
+        if num_frames != 80 {
+            return Err(SttError::InferenceError(format!(
+                "Encoder expects exactly 80 frames per chunk, got {}",
+                num_frames
+            )));
+        }
+
+        // TRANSPOSE FOR OFFICIAL MODELS: (batch, num_features=128, num_frames=80)
+        // Official sherpa-onnx models expect features FIRST, then time
+        // Layout: Row-major transposed - all frames for feature 0, then feature 1, etc.
         let mut audio_data = Vec::with_capacity(batch_size * num_frames * num_features);
-        for row in features.outer_iter() {
-            audio_data.extend(row.iter().copied());
+        for col_idx in 0..num_features {
+            for row in features.outer_iter() {
+                audio_data.push(row[col_idx]);
+            }
         }
 
         let audio_signal = Tensor::from_array((
-            vec![batch_size, num_frames, num_features],
+            vec![batch_size, num_features, num_frames],  // (1, 128, 80) - TRANSPOSED!
             audio_data.into_boxed_slice(),
         ))
         .map_err(|e| SttError::InferenceError(format!("Failed to create audio tensor: {}", e)))?;
@@ -332,7 +367,7 @@ impl OrtRecognizer {
             .try_extract_tensor::<f32>()
             .map_err(|e| SttError::InferenceError(format!("Failed to extract encoder output: {}", e)))?;
 
-        // Convert to ndarray
+        // Convert to ndarray - shape should be (batch, encoder_dim, num_frames)
         let encoder_out = Array3::from_shape_vec(
             (shape[0] as usize, shape[1] as usize, shape[2] as usize),
             data.to_vec(),
@@ -348,62 +383,111 @@ impl OrtRecognizer {
         Ok(encoder_out)
     }
 
-    /// Decode frames using greedy search
+    /// Decode frames using greedy search with TDT duration prediction
+    ///
+    /// Following sherpa-onnx C++ TDT implementation:
+    /// - Process encoder output ONE frame at a time
+    /// - Joiner outputs token logits AND duration logits
+    /// - Use duration prediction for frame skipping
+    /// - Loop until blank or max symbols per frame
     fn decode_frames(&mut self, encoder_out: &Array3<f32>) -> Result<Vec<i64>> {
-        // Encoder output shape: (batch, 1024, num_frames)
+        // Encoder output shape: (batch, encoder_dim, num_frames)
+        let encoder_dim = encoder_out.shape()[1];
         let num_frames = encoder_out.shape()[2];
+        let vocab_size = self.tokens.len();
+        let blank_id = self.blank_id;
+
         let mut tokens = Vec::new();
-        let mut decoder_state: Option<Vec<i64>> = None;
+        let mut frame_indices = Vec::new();
+        let mut durations = Vec::new();
 
-        for frame_idx in 0..num_frames {
-            // Get encoder output for this frame: extract (1024,) from (1, 1024, num_frames)
-            let encoder_frame = encoder_out.slice(s![0, .., frame_idx]).to_owned();
+        // Initialize decoder with blank token
+        let mut decoder_state: Vec<i64> = vec![blank_id];
 
-            // Initialize decoder state on first frame
-            if decoder_state.is_none() {
-                decoder_state = Some(vec![self.blank_id]);
-            }
+        let max_symbols_per_frame = 5;  // sherpa-onnx uses 5
+        let mut t = 0;  // Current frame index
 
-            // Greedy search: keep decoding until we get a blank token
-            let mut symbol_count = 0;
-            const MAX_SYMBOLS_PER_FRAME: usize = 10;  // Safety limit
+        while t < num_frames {
+            let mut symbols_this_frame = 0;
+            let mut skip = 0;
+
+            // Extract single encoder frame: (encoder_dim, 1) reshaped to (1, encoder_dim, 1)
+            let encoder_frame = encoder_out.slice(s![0, .., t]).to_owned();
 
             loop {
-                let state = decoder_state.as_ref().unwrap();
-
                 // Run decoder with current state
-                let decoder_out = self.run_decoder(state)?;
+                let decoder_out = self.run_decoder(&decoder_state)?;
 
-                // Run joiner to get logits
+                // Run joiner to get logits (token + duration)
                 let logits = self.run_joiner(&encoder_frame, &decoder_out)?;
 
-                // Greedy selection: argmax
-                let (max_token, _max_prob) = logits
+                // Split logits into token logits and duration logits
+                // sherpa-onnx C++: const float *token_logits = p_logit;
+                //                 const float *duration_logits = p_logit + vocab_size;
+                let token_logits = &logits.as_slice().unwrap()[0..vocab_size];
+                let duration_logits = &logits.as_slice().unwrap()[vocab_size..];
+
+                // Greedy selection for token
+                let (y, y_logit) = token_logits
                     .iter()
                     .enumerate()
                     .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
                     .unwrap();
+                let y = y as i64;
 
-                let max_token = max_token as i64;
-
-                debug!("Frame {}: token={}, blank_id={}", frame_idx, max_token, self.blank_id);
-
-                if max_token == self.blank_id {
-                    // Blank token - move to next frame
-                    break;
+                // Greedy selection for duration (can be 0)
+                let duration = if !duration_logits.is_empty() {
+                    duration_logits
+                        .iter()
+                        .enumerate()
+                        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+                        .map(|(idx, _)| idx)
+                        .unwrap_or(0)
                 } else {
-                    // Non-blank token - emit it and update state
-                    tokens.push(max_token);
-                    decoder_state = Some(vec![max_token]);
+                    0
+                };
 
-                    symbol_count += 1;
-                    if symbol_count >= MAX_SYMBOLS_PER_FRAME {
-                        debug!("Warning: Max symbols per frame reached at frame {}", frame_idx);
-                        break;
+                debug!("Frame {}: token={} ('{}'), logit={:.4}, blank={}, duration={}",
+                    t, y,
+                    if y < self.tokens.len() as i64 { &self.tokens[y as usize] } else { "???" },
+                    y_logit, blank_id, duration);
+
+                if y != blank_id {
+                    // Non-blank token - emit it
+                    tokens.push(y);
+                    frame_indices.push(t);
+                    durations.push(duration);
+
+                    // Update decoder state to this token
+                    decoder_state = vec![y];
+
+                    symbols_this_frame += 1;
+
+                    // Don't advance frame yet - continue emitting from same frame
+                } else {
+                    // Blank token - advance frame
+                    // Use duration prediction if we emitted tokens
+                    if duration > 0 && !tokens.is_empty() {
+                        skip = duration;
+                    } else {
+                        skip = 1;
                     }
+                    break;
+                }
+
+                // Safety: max symbols per frame reached
+                if symbols_this_frame >= max_symbols_per_frame {
+                    debug!("Max symbols per frame ({}) reached at frame {}", max_symbols_per_frame, t);
+                    skip = 1;
+                    break;
                 }
             }
+
+            // Advance frame by duration skip
+            t += skip.max(1);  // Always advance at least 1 frame
         }
+
+        debug!("Decoded {} tokens with {} frame indices", tokens.len(), frame_indices.len());
 
         Ok(tokens)
     }
@@ -602,8 +686,11 @@ mod tests {
     #[test]
     #[ignore] // Requires model files
     fn test_ort_recognizer_init() {
-        let model_dir = "/opt/swictation/models/sherpa-onnx-nemo-parakeet-tdt-1.1b-converted";
+        let model_dir = "/opt/swictation/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8";
         let recognizer = OrtRecognizer::new(model_dir, false);
+        if let Err(e) = &recognizer {
+            eprintln!("ERROR: {}", e);
+        }
         assert!(recognizer.is_ok());
     }
 }

@@ -3,6 +3,8 @@
 //! This test validates the full pipeline using the speaker-to-microphone loopback.
 //! It plays an MP3 file through speakers and captures it via the microphone,
 //! simulating real-world usage.
+//!
+//! **NOW TESTING ORT IMPLEMENTATION WITH GPU!**
 
 use anyhow::{Context, Result};
 use std::path::Path;
@@ -10,7 +12,7 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
-use swictation_stt::Recognizer;
+use swictation_stt::recognizer_ort::OrtRecognizer;
 
 /// Test configuration
 const MODEL_PATH: &str = "/opt/swictation/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8";
@@ -20,25 +22,26 @@ const EXPECTED_LONG: &str = "open source AI community";  // First part of expect
 #[tokio::main]
 async fn main() -> Result<()> {
     println!("═══════════════════════════════════════════════════");
-    println!("  Swictation 0.6B End-to-End Pipeline Test");
+    println!("  Swictation 0.6B ORT GPU End-to-End Pipeline Test");
     println!("═══════════════════════════════════════════════════\n");
 
     // Step 1: Check model exists
-    println!("[ 1/7 ] Checking Parakeet-TDT-0.6B model...");
+    println!("[ 1/7 ] Checking Parakeet-TDT-0.6B INT8 model...");
     if !Path::new(MODEL_PATH).exists() {
         anyhow::bail!("Model not found at {}", MODEL_PATH);
     }
     println!("✓ Model found\n");
 
-    // Step 2: Load STT model with Sherpa-RS
-    println!("[ 2/7 ] Loading Parakeet-TDT-0.6B model with Sherpa-RS...");
+    // Step 2: Load STT model with ORT (GPU enabled!)
+    println!("[ 2/7 ] Loading Parakeet-TDT-0.6B model with ONNX Runtime (GPU)...");
     let start = Instant::now();
 
     let stt = Arc::new(Mutex::new(
-        Recognizer::new(MODEL_PATH, false)  // false = CPU for automated testing
+        OrtRecognizer::new(MODEL_PATH, true)  // true = GPU enabled!
             .map_err(|e| anyhow::anyhow!("Failed to load model: {}", e))?
     ));
     println!("✓ Model loaded in {:.2}s\n", start.elapsed().as_secs_f64());
+    println!("{}\n", stt.lock().unwrap().model_info());
 
     // Step 3: Test with converted WAV files
     let test_cases = vec![
@@ -70,26 +73,26 @@ async fn main() -> Result<()> {
             println!("✓ Converted to WAV");
         }
 
-        // Transcribe with Sherpa-RS
+        // Transcribe with ORT
         println!("  Transcribing {}...", wav_path);
         let start = Instant::now();
-        let result = stt.lock().unwrap()
+        let result_text = stt.lock().unwrap()
             .recognize_file(wav_path)
             .map_err(|e| anyhow::anyhow!("Transcription failed: {}", e))?;
         let duration = start.elapsed();
 
-        println!("  Result: {}", result.text);
-        println!("  Time: {:.2}s ({:.2}ms processing)", duration.as_secs_f64(), result.processing_time_ms);
+        println!("  Result: {}", result_text);
+        println!("  Time: {:.2}s (GPU accelerated)", duration.as_secs_f64());
 
         // Verify
-        let lowercase_result = result.text.to_lowercase();
+        let lowercase_result = result_text.to_lowercase();
         let lowercase_expected = expected.to_lowercase();
 
         if lowercase_result.contains(&lowercase_expected) {
             println!("✓ {} PASSED - Contains expected text\n", name);
         } else {
-            println!("✗ {} FAILED - Expected '{}' but got '{}'", name, expected, result.text);
-            println!("  Note: Full result: {}\n", result.text);
+            println!("✗ {} FAILED - Expected '{}' but got '{}'", name, expected, result_text);
+            println!("  Note: Full result: {}\n", result_text);
             all_passed = false;
         }
     }

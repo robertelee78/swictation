@@ -250,19 +250,51 @@ impl AudioProcessor {
     pub fn extract_mel_features(&mut self, samples: &[f32]) -> Result<Array2<f32>> {
         debug!("Extracting mel-spectrogram from {} samples", samples.len());
 
+        // Apply preemphasis filter (standard for speech recognition)
+        let preemphasized = apply_preemphasis(samples, 0.97);
+
         // Compute STFT
-        let stft = self.compute_stft(samples)?;
+        let stft = self.compute_stft(&preemphasized)?;
         debug!("STFT shape: {:?}", stft.shape());
 
         // Compute power spectrogram
         let power_spec = stft.mapv(|c| c.re * c.re + c.im * c.im);
 
-        // Apply mel filterbank (power_spec is (frames, freqs), filters is (freqs, mels))
-        let mel_spec = power_spec.dot(&self.mel_filters);
+        // Apply mel filterbank
+        // power_spec is (frames, freqs) = (num_frames, 257)
+        // mel_filters is (n_mels, freqs) = (128, 257)
+        // Result should be (frames, n_mels) = (num_frames, 128)
+        let mel_spec = power_spec.dot(&self.mel_filters.t());
         debug!("Mel spectrogram shape: {:?}", mel_spec.shape());
 
         // Apply log scaling (add small epsilon to avoid log(0))
         let log_mel = mel_spec.mapv(|x| (x + 1e-10).ln());
+
+        // DEBUG: Check log_mel values before normalization
+        if log_mel.nrows() > 0 {
+            debug!("BEFORE normalization - first frame (first 10): {:?}",
+                   &log_mel.row(0).as_slice().unwrap()[..10.min(log_mel.ncols())]);
+            if log_mel.nrows() > 10 {
+                debug!("BEFORE normalization - middle frame {} (first 10): {:?}",
+                       log_mel.nrows() / 2,
+                       &log_mel.row(log_mel.nrows() / 2).as_slice().unwrap()[..10.min(log_mel.ncols())]);
+            }
+            debug!("BEFORE normalization - stats: min={:.6}, max={:.6}, mean={:.6}",
+                   log_mel.iter().fold(f32::INFINITY, |a, &b| a.min(b)),
+                   log_mel.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b)),
+                   log_mel.mean().unwrap_or(0.0));
+
+            // DEBUG: Check mel filterbank to ensure it's not all zeros
+            debug!("Mel filterbank sum: {:.6}, shape: {:?}",
+                   self.mel_filters.sum(),
+                   self.mel_filters.shape());
+
+            // Check which mel bins have non-zero sum (should be ALL of them!)
+            for mel_idx in 0..8 {
+                let row_sum: f32 = self.mel_filters.row(mel_idx).sum();
+                debug!("Mel bin {}: sum={:.6}", mel_idx, row_sum);
+            }
+        }
 
         // Normalize features per mel-bin (across time) as expected by NVIDIA NeMo models
         // Each of the 128 mel features gets normalized independently across all frames
@@ -372,6 +404,26 @@ fn hann_window(window_length: usize) -> Vec<f32> {
         .collect()
 }
 
+/// Apply preemphasis filter to audio signal
+///
+/// Preemphasis emphasizes high-frequency components which improves
+/// speech recognition accuracy. Standard coefficient is ~0.97.
+///
+/// Formula: y[n] = x[n] - coef * x[n-1]
+fn apply_preemphasis(audio: &[f32], coef: f32) -> Vec<f32> {
+    let mut result = Vec::with_capacity(audio.len());
+
+    // First sample remains unchanged
+    result.push(audio[0]);
+
+    // Apply filter to remaining samples
+    for i in 1..audio.len() {
+        result.push(audio[i] - coef * audio[i - 1]);
+    }
+
+    result
+}
+
 /// Convert Hz to mel scale
 fn hz_to_mel(hz: f32) -> f32 {
     2595.0 * (1.0 + hz / 700.0).log10()
@@ -384,7 +436,8 @@ fn mel_to_hz(mel: f32) -> f32 {
 
 /// Create mel filterbank matrix
 ///
-/// Returns a matrix of shape (n_fft/2 + 1, n_mels) where each column is a triangular filter
+/// Returns a matrix of shape (n_mels, n_fft/2 + 1) where each row is a triangular filter
+/// This matches the parakeet-rs implementation which works in frequency space
 fn create_mel_filterbank(
     n_mels: usize,
     n_fft: usize,
@@ -392,9 +445,9 @@ fn create_mel_filterbank(
     fmin: f32,
     fmax: f32,
 ) -> Array2<f32> {
-    let n_freqs = n_fft / 2 + 1;
+    let freq_bins = n_fft / 2 + 1;
 
-    // Create mel-spaced frequencies
+    // Create mel-spaced frequency points (in Hz)
     let mel_min = hz_to_mel(fmin);
     let mel_max = hz_to_mel(fmax);
     let mel_points: Vec<f32> = (0..=n_mels + 1)
@@ -404,36 +457,36 @@ fn create_mel_filterbank(
         })
         .collect();
 
-    // Convert to FFT bin indices
-    let bin_points: Vec<usize> = mel_points
-        .iter()
-        .map(|&freq| ((n_fft + 1) as f32 * freq / sample_rate).floor() as usize)
-        .collect();
+    // Frequency bin width in Hz
+    let freq_bin_width = sample_rate / n_fft as f32;
 
-    // Create filterbank
-    let mut filters = Array2::zeros((n_freqs, n_mels));
+    // Create filterbank: shape (n_mels, freq_bins)
+    let mut filterbank = Array2::zeros((n_mels, freq_bins));
 
-    for m in 0..n_mels {
-        let left = bin_points[m];
-        let center = bin_points[m + 1];
-        let right = bin_points[m + 2];
+    for mel_idx in 0..n_mels {
+        let left = mel_points[mel_idx];
+        let center = mel_points[mel_idx + 1];
+        let right = mel_points[mel_idx + 2];
 
-        // Rising slope
-        for k in left..center {
-            if center != left {
-                filters[[k, m]] = (k - left) as f32 / (center - left) as f32;
+        for freq_idx in 0..freq_bins {
+            let freq = freq_idx as f32 * freq_bin_width;
+
+            // Rising slope: left to center
+            if freq >= left && freq <= center {
+                if center != left {
+                    filterbank[[mel_idx, freq_idx]] = (freq - left) / (center - left);
+                }
             }
-        }
-
-        // Falling slope
-        for k in center..right {
-            if right != center {
-                filters[[k, m]] = (right - k) as f32 / (right - center) as f32;
+            // Falling slope: center to right
+            else if freq > center && freq <= right {
+                if right != center {
+                    filterbank[[mel_idx, freq_idx]] = (right - freq) / (right - center);
+                }
             }
         }
     }
 
-    filters
+    filterbank
 }
 
 #[cfg(test)]
@@ -449,7 +502,7 @@ mod tests {
     #[test]
     fn test_mel_filterbank() {
         let processor = AudioProcessor::new().unwrap();
-        // Verify mel filterbank has correct shape (n_fft/2 + 1, n_mels)
-        assert_eq!(processor.mel_filters.shape(), &[N_FFT / 2 + 1, N_MEL_FEATURES]);
+        // Verify mel filterbank has correct shape (n_mels, n_fft/2 + 1)
+        assert_eq!(processor.mel_filters.shape(), &[N_MEL_FEATURES, N_FFT / 2 + 1]);
     }
 }
