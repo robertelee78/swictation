@@ -180,7 +180,20 @@ impl OrtRecognizer {
             true
         };
 
-        let audio_processor = AudioProcessor::new()?;
+        // Auto-detect mel feature count based on model size
+        // 1.1B model needs 80 mel features, 0.6B model needs 128 mel features
+        let n_mel_features = if model_path.to_string_lossy().contains("1.1b") ||
+                                 model_path.to_string_lossy().contains("1-1b") {
+            use crate::audio::N_MEL_FEATURES_1_1B;
+            info!("Detected 1.1B model - using {} mel features", N_MEL_FEATURES_1_1B);
+            N_MEL_FEATURES_1_1B
+        } else {
+            use crate::audio::N_MEL_FEATURES;
+            info!("Detected 0.6B model or unknown - using {} mel features", N_MEL_FEATURES);
+            N_MEL_FEATURES
+        };
+
+        let audio_processor = AudioProcessor::with_mel_features(n_mel_features)?;
 
         Ok(Self {
             encoder,

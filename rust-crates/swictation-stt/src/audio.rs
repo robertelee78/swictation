@@ -20,8 +20,9 @@ use tracing::{debug, info};
 /// Target sample rate for Parakeet-TDT models
 pub const SAMPLE_RATE: u32 = 16000;
 
-/// Mel-spectrogram parameters for Parakeet-TDT 1.1B
-pub const N_MEL_FEATURES: usize = 128;  // Number of mel filters
+/// Mel-spectrogram parameters for Parakeet-TDT models
+pub const N_MEL_FEATURES: usize = 128;  // Number of mel filters (0.6B model)
+pub const N_MEL_FEATURES_1_1B: usize = 80; // Number of mel filters (1.1B model)
 pub const N_FFT: usize = 512;            // FFT size
 pub const HOP_LENGTH: usize = 160;       // 10ms hop at 16kHz
 pub const WIN_LENGTH: usize = 400;       // 25ms window at 16kHz
@@ -31,16 +32,26 @@ pub const CHUNK_FRAMES: usize = 80;      // Frames per encoder chunk
 pub struct AudioProcessor {
     mel_filters: Array2<f32>,
     fft_planner: FftPlanner<f32>,
+    n_mel_features: usize,
 }
 
 impl AudioProcessor {
     /// Create new audio processor with Parakeet-TDT parameters
     pub fn new() -> Result<Self> {
+        Self::with_mel_features(N_MEL_FEATURES)
+    }
+
+    /// Create audio processor with custom mel feature count
+    ///
+    /// # Arguments
+    ///
+    /// * `n_mel_features` - Number of mel filterbank features (80 for 1.1B, 128 for 0.6B)
+    pub fn with_mel_features(n_mel_features: usize) -> Result<Self> {
         // Create mel filterbank
         // NeMo models use: low_freq=0, high_freq=8000 (or default SR/2)
         // See sherpa-onnx/csrc/offline-recognizer-transducer-nemo-impl.h:164-165
         let mel_filters = create_mel_filterbank(
-            N_MEL_FEATURES,
+            n_mel_features,
             N_FFT,
             SAMPLE_RATE as f32,
             0.0,     // NeMo models use low_freq=0
@@ -50,6 +61,7 @@ impl AudioProcessor {
         Ok(Self {
             mel_filters,
             fft_planner: FftPlanner::new(),
+            n_mel_features,
         })
     }
 
@@ -299,10 +311,10 @@ impl AudioProcessor {
         }
 
         // Normalize features per mel-bin (across time) as expected by NVIDIA NeMo models
-        // Each of the 128 mel features gets normalized independently across all frames
+        // Each mel feature gets normalized independently across all frames
         let mut normalized = log_mel.clone();
 
-        for mel_idx in 0..N_MEL_FEATURES {
+        for mel_idx in 0..self.n_mel_features {
             // Get all values for this mel bin across all frames
             let mel_column = log_mel.column(mel_idx);
             let mean = mel_column.mean().unwrap_or(0.0);
