@@ -25,10 +25,12 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
+pub mod audio; // Audio processing for 1.1B model
 pub mod error;
 pub mod recognizer;
 pub mod recognizer_ort; // Direct ONNX Runtime for 1.1B model
 
+pub use audio::AudioProcessor;
 pub use error::{Result, SttError};
 pub use recognizer::{RecognitionResult, Recognizer};
 pub use recognizer_ort::OrtRecognizer;

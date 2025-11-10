@@ -20,7 +20,12 @@ sherpa-rs = { git = "https://github.com/thewh1teagle/sherpa-rs.git", default-fea
 
 # Direct ONNX Runtime for 1.1B model (bypasses sherpa-rs external weights bug)
 ort = { version = "2.0.0-rc.10", features = ["ndarray", "half", "load-dynamic"] }
-ndarray = "0.15"
+ndarray = "0.16"  # Match ort's ndarray version
+
+# Audio processing for 1.1B model
+rustfft = "6.2"        # FFT computation for mel-spectrogram
+hound = "3.5"          # WAV file reading
+symphonia = { version = "0.5", features = ["mp3"] }  # MP3/FLAC decoding
 
 # Error handling
 thiserror = "2.0"

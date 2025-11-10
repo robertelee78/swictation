@@ -18,6 +18,12 @@ pub enum SttError {
     #[error("Audio processing error: {0}")]
     AudioProcessing(String),
 
+    #[error("Audio loading error: {0}")]
+    AudioLoadError(String),
+
+    #[error("Feature extraction error: {0}")]
+    FeatureExtractionError(String),
+
     #[error("Configuration error: {0}")]
     ConfigError(String),
 

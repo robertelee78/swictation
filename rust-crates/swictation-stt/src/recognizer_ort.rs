@@ -17,10 +17,13 @@
 //! export ORT_DYLIB_PATH=$(python3 -c "import onnxruntime; import os; print(os.path.join(os.path.dirname(onnxruntime.__file__), 'capi/libonnxruntime.so.1.23.2'))")
 //! ```
 
+use crate::audio::AudioProcessor;
 use crate::error::{Result, SttError};
+use ndarray::{s, Array1, Array2, Array3};
 use ort::{
     execution_providers as ep,
     session::{builder::GraphOptimizationLevel, Session},
+    value::Tensor,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -35,6 +38,10 @@ pub struct OrtRecognizer {
     blank_id: i64,
     unk_id: i64,
     model_path: PathBuf,
+    audio_processor: AudioProcessor,
+    // Decoder RNN states (2, batch, 640)
+    decoder_state1: Option<Array3<f32>>,
+    decoder_state2: Option<Array3<f32>>,
 }
 
 impl OrtRecognizer {
@@ -60,12 +67,20 @@ impl OrtRecognizer {
         info!("Loading 1.1B Parakeet-TDT model with direct ONNX Runtime");
         info!("Model directory: {}", model_path.display());
 
-        // Load tokens
+        // Load tokens and find special token IDs
         let tokens = Self::load_tokens(&model_path)?;
-        let blank_id = 0; // Parakeet-TDT uses blank_id=0
-        let unk_id = 2;   // Parakeet-TDT uses unk_id=2
 
-        debug!("Loaded {} tokens (blank={}, unk={})", tokens.len(), blank_id, unk_id);
+        // Find blank token (usually "<blk>")
+        let blank_id = tokens.iter()
+            .position(|t| t == "<blk>" || t == "<blank>")
+            .ok_or_else(|| SttError::ModelLoadError("Could not find <blk> token".to_string()))? as i64;
+
+        // Find unk token (usually "<unk>")
+        let unk_id = tokens.iter()
+            .position(|t| t == "<unk>")
+            .unwrap_or(0) as i64;
+
+        info!("Loaded {} tokens (blank_id={}, unk_id={})", tokens.len(), blank_id, unk_id);
 
         // Configure ONNX Runtime session options
         let mut session_builder = Session::builder()
@@ -115,6 +130,8 @@ impl OrtRecognizer {
             .map_err(|e| SttError::ModelLoadError(format!("Failed to load joiner: {}", e)))?;
         info!("✓ Joiner loaded");
 
+        let audio_processor = AudioProcessor::new()?;
+
         Ok(Self {
             encoder,
             decoder,
@@ -123,10 +140,16 @@ impl OrtRecognizer {
             blank_id,
             unk_id,
             model_path,
+            audio_processor,
+            decoder_state1: None,
+            decoder_state2: None,
         })
     }
 
     /// Load tokens from tokens.txt
+    ///
+    /// Format: "<token_text> <token_id>" per line
+    /// Example: "<blk> 1024"
     fn load_tokens(model_dir: &Path) -> Result<Vec<String>> {
         let tokens_path = model_dir.join("tokens.txt");
         let contents = fs::read_to_string(&tokens_path)
@@ -134,7 +157,19 @@ impl OrtRecognizer {
                 format!("Failed to read tokens.txt: {}", e)
             ))?;
 
-        Ok(contents.lines().map(|s| s.to_string()).collect())
+        // Parse each line as "<token_text> <token_id>" and extract token_text
+        let tokens: Vec<String> = contents
+            .lines()
+            .map(|line| {
+                // Split on whitespace and take first part (token text)
+                line.split_whitespace()
+                    .next()
+                    .unwrap_or("")
+                    .to_string()
+            })
+            .collect();
+
+        Ok(tokens)
     }
 
     /// Test encoder inference with dummy input
@@ -168,6 +203,384 @@ impl OrtRecognizer {
             .map_err(|e| SttError::InferenceError(format!("Encoder inference failed: {}", e)))?;
 
         Ok(format!("✅ Encoder inference successful! Outputs: {}", output_names.join(", ")))
+    }
+
+    /// Recognize speech from audio file
+    ///
+    /// Full implementation with mel-spectrogram extraction and greedy search decoding
+    ///
+    /// # Arguments
+    /// * `audio_path` - Path to audio file (WAV, MP3, FLAC)
+    ///
+    /// # Returns
+    /// Transcribed text
+    pub fn recognize_file<P: AsRef<Path>>(&mut self, audio_path: P) -> Result<String> {
+        info!("Loading audio file: {}", audio_path.as_ref().display());
+
+        // Load and process audio
+        let samples = self.audio_processor.load_audio(&audio_path)?;
+        info!("Loaded {} audio samples", samples.len());
+
+        // Debug: Audio statistics
+        let audio_min = samples.iter().fold(f32::INFINITY, |a, &b| a.min(b));
+        let audio_max = samples.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+        let audio_mean = samples.iter().sum::<f32>() / samples.len() as f32;
+        debug!("Audio stats: min={:.6}, max={:.6}, mean={:.6}", audio_min, audio_max, audio_mean);
+
+        // Extract mel-spectrogram features
+        let features = self.audio_processor.extract_mel_features(&samples)?;
+        info!("Extracted features: {:?}", features.shape());
+
+        // Debug: Mel-spectrogram statistics
+        let features_flat: Vec<f32> = features.iter().copied().collect();
+        let mel_min = features_flat.iter().fold(f32::INFINITY, |a, &b| a.min(b));
+        let mel_max = features_flat.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+        let mel_mean = features_flat.iter().sum::<f32>() / features_flat.len() as f32;
+        debug!("Mel-spectrogram stats: min={:.6}, max={:.6}, mean={:.6}", mel_min, mel_max, mel_mean);
+
+        // Show first and middle frames of mel-spectrogram
+        if features.nrows() > 0 {
+            debug!("First frame (first 10 values): {:?}", &features.row(0).as_slice().unwrap()[..10.min(features.ncols())]);
+
+            // Show middle frame to see if it's different
+            let mid_frame = features.nrows() / 2;
+            if mid_frame > 0 {
+                debug!("Middle frame {} (first 10 values): {:?}", mid_frame, &features.row(mid_frame).as_slice().unwrap()[..10.min(features.ncols())]);
+            }
+
+            // Check if features need normalization (typical for NeMo models)
+            debug!("Note: NVIDIA NeMo models typically expect normalized features (mean=0, std=1)");
+            debug!("Current features are log-mel without normalization");
+        }
+
+        // Chunk features into 80-frame segments
+        let chunks = self.audio_processor.chunk_features(&features);
+        info!("Split into {} chunks of 80 frames", chunks.len());
+
+        // Run greedy search decoder
+        let text = self.greedy_search_decode(&chunks)?;
+
+        Ok(text)
+    }
+
+    /// Greedy search decoder implementation
+    ///
+    /// Implements the transducer decoding loop:
+    /// 1. Encoder processes acoustic features
+    /// 2. Decoder maintains token history state
+    /// 3. Joiner combines encoder/decoder outputs
+    /// 4. Greedy selection picks highest probability token
+    /// 5. Loop until blank or end-of-sequence
+    fn greedy_search_decode(&mut self, chunks: &[Array2<f32>]) -> Result<String> {
+        let mut all_tokens = Vec::new();
+
+        // Reset decoder states at the start
+        self.decoder_state1 = None;
+        self.decoder_state2 = None;
+
+        for (chunk_idx, chunk) in chunks.iter().enumerate() {
+            debug!("Processing chunk {}/{}", chunk_idx + 1, chunks.len());
+
+            // Run encoder
+            let encoder_out = self.run_encoder(chunk)?;
+            debug!("Encoder output shape: {:?}", encoder_out.shape());
+
+            // Decode each frame with greedy search
+            let chunk_tokens = self.decode_frames(&encoder_out)?;
+            all_tokens.extend(chunk_tokens);
+        }
+
+        // Convert tokens to text
+        let text = self.tokens_to_text(&all_tokens);
+
+        Ok(text)
+    }
+
+    /// Run encoder on feature chunk
+    fn run_encoder(&mut self, features: &Array2<f32>) -> Result<Array3<f32>> {
+        // Prepare input tensors
+        let batch_size = 1;
+        let num_frames = features.nrows();
+        let num_features = features.ncols();
+
+        // audio_signal: (batch=1, num_frames, num_features)
+        let mut audio_data = Vec::with_capacity(batch_size * num_frames * num_features);
+        for row in features.outer_iter() {
+            audio_data.extend(row.iter().copied());
+        }
+
+        let audio_signal = Tensor::from_array((
+            vec![batch_size, num_frames, num_features],
+            audio_data.into_boxed_slice(),
+        ))
+        .map_err(|e| SttError::InferenceError(format!("Failed to create audio tensor: {}", e)))?;
+
+        // length: (batch=1,)
+        let length_data = vec![num_frames as i64];
+        let length_tensor = Tensor::from_array((vec![batch_size], length_data.into_boxed_slice()))
+            .map_err(|e| SttError::InferenceError(format!("Failed to create length tensor: {}", e)))?;
+
+        // Run encoder
+        let outputs = self
+            .encoder
+            .run(ort::inputs!["audio_signal" => audio_signal, "length" => length_tensor])
+            .map_err(|e| SttError::InferenceError(format!("Encoder inference failed: {}", e)))?;
+
+        // Extract encoder output (first output is the encoded features)
+        let encoder_out_tensor = &outputs[0];
+        let (shape, data) = encoder_out_tensor
+            .try_extract_tensor::<f32>()
+            .map_err(|e| SttError::InferenceError(format!("Failed to extract encoder output: {}", e)))?;
+
+        // Convert to ndarray
+        let encoder_out = Array3::from_shape_vec(
+            (shape[0] as usize, shape[1] as usize, shape[2] as usize),
+            data.to_vec(),
+        )
+        .map_err(|e| SttError::InferenceError(format!("Failed to reshape encoder output: {}", e)))?;
+
+        // Debug: Encoder output statistics
+        let enc_min = data.iter().fold(f32::INFINITY, |a, &b| a.min(b));
+        let enc_max = data.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+        let enc_mean = data.iter().sum::<f32>() / data.len() as f32;
+        debug!("Encoder output stats: min={:.6}, max={:.6}, mean={:.6}", enc_min, enc_max, enc_mean);
+
+        Ok(encoder_out)
+    }
+
+    /// Decode frames using greedy search
+    fn decode_frames(&mut self, encoder_out: &Array3<f32>) -> Result<Vec<i64>> {
+        // Encoder output shape: (batch, 1024, num_frames)
+        let num_frames = encoder_out.shape()[2];
+        let mut tokens = Vec::new();
+        let mut decoder_state: Option<Vec<i64>> = None;
+
+        for frame_idx in 0..num_frames {
+            // Get encoder output for this frame: extract (1024,) from (1, 1024, num_frames)
+            let encoder_frame = encoder_out.slice(s![0, .., frame_idx]).to_owned();
+
+            // Initialize decoder state on first frame
+            if decoder_state.is_none() {
+                decoder_state = Some(vec![self.blank_id]);
+            }
+
+            // Greedy search: keep decoding until we get a blank token
+            let mut symbol_count = 0;
+            const MAX_SYMBOLS_PER_FRAME: usize = 10;  // Safety limit
+
+            loop {
+                let state = decoder_state.as_ref().unwrap();
+
+                // Run decoder with current state
+                let decoder_out = self.run_decoder(state)?;
+
+                // Run joiner to get logits
+                let logits = self.run_joiner(&encoder_frame, &decoder_out)?;
+
+                // Greedy selection: argmax
+                let (max_token, _max_prob) = logits
+                    .iter()
+                    .enumerate()
+                    .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+                    .unwrap();
+
+                let max_token = max_token as i64;
+
+                debug!("Frame {}: token={}, blank_id={}", frame_idx, max_token, self.blank_id);
+
+                if max_token == self.blank_id {
+                    // Blank token - move to next frame
+                    break;
+                } else {
+                    // Non-blank token - emit it and update state
+                    tokens.push(max_token);
+                    decoder_state = Some(vec![max_token]);
+
+                    symbol_count += 1;
+                    if symbol_count >= MAX_SYMBOLS_PER_FRAME {
+                        debug!("Warning: Max symbols per frame reached at frame {}", frame_idx);
+                        break;
+                    }
+                }
+            }
+        }
+
+        Ok(tokens)
+    }
+
+    /// Run decoder with token history and RNN states
+    ///
+    /// Decoder inputs:
+    /// - targets: (batch, seq_len) - token history (int32)
+    /// - target_length: (batch,) - length of token history (int32)
+    /// - states.1: (2, batch, 640) - RNN state (float32)
+    /// - onnx::Slice_3: (2, 1, 640) - additional state (float32)
+    fn run_decoder(&mut self, tokens: &[i64]) -> Result<Array1<f32>> {
+        let batch_size = 1;
+        let seq_len = tokens.len();
+
+        // Prepare targets tensor: (batch, seq_len) - convert i64 to i32
+        let targets_i32: Vec<i32> = tokens.iter().map(|&t| t as i32).collect();
+        let targets = Tensor::from_array((
+            vec![batch_size, seq_len],
+            targets_i32.into_boxed_slice(),
+        ))
+        .map_err(|e| SttError::InferenceError(format!("Failed to create targets tensor: {}", e)))?;
+
+        // Prepare target_length tensor: (batch,)
+        let target_length = Tensor::from_array((
+            vec![batch_size],
+            vec![seq_len as i32].into_boxed_slice(),
+        ))
+        .map_err(|e| SttError::InferenceError(format!("Failed to create target_length tensor: {}", e)))?;
+
+        // Initialize or reuse decoder states
+        if self.decoder_state1.is_none() {
+            // Initialize states to zeros: (2, batch, 640)
+            self.decoder_state1 = Some(Array3::zeros((2, batch_size, 640)));
+            self.decoder_state2 = Some(Array3::zeros((2, 1, 640)));
+        }
+
+        let state1_data = self.decoder_state1.as_ref().unwrap().as_slice().unwrap().to_vec();
+        let state1 = Tensor::from_array((
+            vec![2, batch_size, 640],
+            state1_data.into_boxed_slice(),
+        ))
+        .map_err(|e| SttError::InferenceError(format!("Failed to create state1 tensor: {}", e)))?;
+
+        let state2_data = self.decoder_state2.as_ref().unwrap().as_slice().unwrap().to_vec();
+        let state2 = Tensor::from_array((
+            vec![2, 1, 640],
+            state2_data.into_boxed_slice(),
+        ))
+        .map_err(|e| SttError::InferenceError(format!("Failed to create state2 tensor: {}", e)))?;
+
+        // Run decoder with all 4 inputs
+        let outputs = self
+            .decoder
+            .run(ort::inputs![
+                "targets" => targets,
+                "target_length" => target_length,
+                "states.1" => state1,
+                "onnx::Slice_3" => state2
+            ])
+            .map_err(|e| SttError::InferenceError(format!("Decoder inference failed: {}", e)))?;
+
+        // Extract decoder output: outputs[0] is the decoder output (batch, 640, seq_len)
+        let decoder_out_tensor = &outputs[0];
+        let (shape, data) = decoder_out_tensor
+            .try_extract_tensor::<f32>()
+            .map_err(|e| SttError::InferenceError(format!("Failed to extract decoder output: {}", e)))?;
+
+        // Update states for next iteration
+        // outputs[2] is the new state (2, batch, 640)
+        if let Ok((state_shape, state_data)) = outputs[2].try_extract_tensor::<f32>() {
+            self.decoder_state1 = Some(Array3::from_shape_vec(
+                (state_shape[0] as usize, state_shape[1] as usize, state_shape[2] as usize),
+                state_data.to_vec(),
+            ).unwrap());
+        }
+        // outputs[3] is the second state (2, batch, 640)
+        if let Ok((state_shape, state_data)) = outputs[3].try_extract_tensor::<f32>() {
+            self.decoder_state2 = Some(Array3::from_shape_vec(
+                (state_shape[0] as usize, state_shape[1] as usize, state_shape[2] as usize),
+                state_data.to_vec(),
+            ).unwrap());
+        }
+
+        // Extract the last timestep: shape is (batch, 640, seq_len), we want (640,)
+        let batch = shape[0] as usize;
+        let hidden_size = shape[1] as usize;
+        let seq = shape[2] as usize;
+
+        // Reshape and extract last frame
+        let decoder_out_3d = Array3::from_shape_vec((batch, hidden_size, seq), data.to_vec())
+            .map_err(|e| SttError::InferenceError(format!("Failed to reshape decoder output: {}", e)))?;
+
+        let last_frame = decoder_out_3d.slice(s![0, .., seq - 1]).to_owned();
+
+        Ok(last_frame)
+    }
+
+    /// Run joiner to combine encoder and decoder outputs
+    fn run_joiner(&mut self, encoder_out: &Array1<f32>, decoder_out: &Array1<f32>) -> Result<Array1<f32>> {
+        // Prepare joiner inputs
+        let encoder_input = Tensor::from_array((
+            vec![1, encoder_out.len(), 1],  // (batch, 1024, 1)
+            encoder_out.to_vec().into_boxed_slice(),
+        ))
+        .map_err(|e| SttError::InferenceError(format!("Failed to create encoder input for joiner: {}", e)))?;
+
+        let decoder_input = Tensor::from_array((
+            vec![1, decoder_out.len(), 1],  // (batch, 640, 1)
+            decoder_out.to_vec().into_boxed_slice(),
+        ))
+        .map_err(|e| SttError::InferenceError(format!("Failed to create decoder input for joiner: {}", e)))?;
+
+        // Run joiner with correct input names
+        let outputs = self
+            .joiner
+            .run(ort::inputs!["encoder_outputs" => encoder_input, "decoder_outputs" => decoder_input])
+            .map_err(|e| SttError::InferenceError(format!("Joiner inference failed: {}", e)))?;
+
+        // Extract logits from 4D tensor (batch, frames, frames, vocab_size)
+        // With inputs (1, 1024, 1) and (1, 640, 1), output is (1, 1, 1, 1030)
+        let logits_tensor = &outputs[0];
+        let (shape, data) = logits_tensor
+            .try_extract_tensor::<f32>()
+            .map_err(|e| SttError::InferenceError(format!("Failed to extract joiner output: {}", e)))?;
+
+        debug!("Joiner output shape: {:?}, data.len()={}", shape, data.len());
+
+        // Extract the actual logits: [0, 0, 0, :] gives us the vocab_size dimension
+        let vocab_size = shape[3] as usize;
+
+        // The logits are ALL the data (since batch=1, frames=1, frames=1, total = vocab_size)
+        let logits = Array1::from_vec(data.to_vec());
+
+        // Debug: show first 10 and last 10 logits, plus blank_id logit
+        if data.len() >= 10 {
+            debug!("First 10 logits: {:?}", &data[..10]);
+            debug!("Last 10 logits: {:?}", &data[data.len()-10..]);
+            debug!("Logit at blank_id({}): {}", self.blank_id, data[self.blank_id as usize]);
+
+            // Find max and top-5 tokens
+            let mut indexed_logits: Vec<(usize, f32)> = data.iter().enumerate()
+                .map(|(i, &v)| (i, v))
+                .collect();
+            indexed_logits.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+
+            debug!("Top 5 logits:");
+            for (i, &(token_id, logit_val)) in indexed_logits[..5.min(indexed_logits.len())].iter().enumerate() {
+                let token_text = if token_id < self.tokens.len() {
+                    &self.tokens[token_id]
+                } else {
+                    "???"
+                };
+                debug!("  #{}: token={} ('{}'), logit={:.6}", i+1, token_id, token_text, logit_val);
+            }
+        }
+
+        Ok(logits)
+    }
+
+    /// Convert token IDs to text
+    fn tokens_to_text(&self, tokens: &[i64]) -> String {
+        tokens
+            .iter()
+            .filter_map(|&token_id| {
+                let idx = token_id as usize;
+                if idx < self.tokens.len() && token_id != self.blank_id && token_id != self.unk_id {
+                    Some(self.tokens[idx].as_str())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("")
+            .replace("▁", " ")  // Replace BPE underscores with spaces
+            .trim()
+            .to_string()
     }
 
     /// Get model information
