@@ -2454,6 +2454,7 @@ dependencies = [
  "ndarray",
  "ort",
  "rubato",
+ "swictation-stt",
  "thiserror 2.0.17",
 ]
 

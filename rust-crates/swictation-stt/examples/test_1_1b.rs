@@ -36,7 +36,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Audio file: {}\n", audio_path);
 
-    let model_dir = "/opt/swictation/models/sherpa-onnx-nemo-parakeet-tdt-1.1b-converted";
+    let model_dir = "/opt/swictation/models/parakeet-tdt-1.1b-corrected";
 
     // Test 1: Load model with GPU
     println!("[TEST 1] Loading 1.1B model with GPU...");

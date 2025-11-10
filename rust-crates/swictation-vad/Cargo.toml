@@ -30,6 +30,8 @@ rubato = "0.15"
 [dev-dependencies]
 # Audio file loading for tests
 hound = "3.5"
+# STT for full pipeline testing
+swictation-stt = { path = "../swictation-stt" }
 
 [profile.release]
 opt-level = 3
