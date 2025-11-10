@@ -19,7 +19,8 @@ crate-type = ["rlib"]
 sherpa-rs = { git = "https://github.com/thewh1teagle/sherpa-rs.git", default-features = false, features = ["cuda"] }
 
 # Direct ONNX Runtime for 1.1B model (bypasses sherpa-rs external weights bug)
-ort = { version = "2.0.0-rc.10", features = ["ndarray", "half", "load-dynamic"] }
+# Using rc.8 which supports ORT 1.21.x (system has 1.21.0)
+ort = { version = "2.0.0-rc.8", features = ["ndarray", "half", "load-dynamic"] }
 ndarray = "0.16"  # Match ort's ndarray version
 
 # Audio processing for 1.1B model

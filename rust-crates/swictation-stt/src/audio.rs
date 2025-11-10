@@ -37,13 +37,14 @@ impl AudioProcessor {
     /// Create new audio processor with Parakeet-TDT parameters
     pub fn new() -> Result<Self> {
         // Create mel filterbank
-        // Match sherpa-onnx defaults: low_freq=20 Hz, high_freq=-400 (means SR/2 - 400)
+        // NeMo models use: low_freq=0, high_freq=8000 (or default SR/2)
+        // See sherpa-onnx/csrc/offline-recognizer-transducer-nemo-impl.h:164-165
         let mel_filters = create_mel_filterbank(
             N_MEL_FEATURES,
             N_FFT,
             SAMPLE_RATE as f32,
-            20.0,  // sherpa-onnx default low_freq
-            (SAMPLE_RATE / 2) as f32 - 400.0,  // sherpa-onnx default high_freq = -400 means SR/2 - 400
+            0.0,     // NeMo models use low_freq=0
+            8000.0,  // NeMo models use high_freq=8000
         );
 
         Ok(Self {
@@ -330,8 +331,9 @@ impl AudioProcessor {
         let num_frames = (samples.len() - WIN_LENGTH) / HOP_LENGTH + 1;
         let mut stft = Array2::zeros((num_frames, N_FFT / 2 + 1));
 
-        // Create Hann window
-        let window = hann_window(WIN_LENGTH);
+        // Create Povey window (NeMo models use Povey, not Hann)
+        // See sherpa-onnx/csrc/features.h:61 - default is "povey"
+        let window = povey_window(WIN_LENGTH);
 
         // Create FFT plan
         let fft = self.fft_planner.plan_fft_forward(N_FFT);
@@ -344,15 +346,16 @@ impl AudioProcessor {
                 break;
             }
 
-            // CRITICAL: Remove DC offset (subtract mean) - sherpa-onnx does this!
-            let frame_slice = &samples[start..end];
-            let frame_mean: f32 = frame_slice.iter().sum::<f32>() / WIN_LENGTH as f32;
+            // NOTE: NeMo models use remove_dc_offset = FALSE
+            // See sherpa-onnx/csrc/offline-recognizer-transducer-nemo-impl.h:167
+            // GigaAM uses remove_dc_offset = false
+            // Standard NeMo models (Parakeet-TDT) also use remove_dc_offset = false
 
             // Apply window and zero-pad to N_FFT
             let mut buffer: Vec<Complex<f32>> = vec![Complex::new(0.0, 0.0); N_FFT];
             for i in 0..WIN_LENGTH {
-                // Subtract DC offset before windowing
-                buffer[i] = Complex::new((samples[start + i] - frame_mean) * window[i], 0.0);
+                // NO DC offset removal for NeMo models!
+                buffer[i] = Complex::new(samples[start + i] * window[i], 0.0);
             }
 
             // Compute FFT
@@ -401,6 +404,18 @@ impl Default for AudioProcessor {
 }
 
 /// Create Hann window for STFT
+/// Povey window (Kaldi-style, used by NeMo models)
+/// Similar to Hamming but with pow(0.5 - 0.5*cos, 0.85) for better frequency resolution
+fn povey_window(window_length: usize) -> Vec<f32> {
+    (0..window_length)
+        .map(|n| {
+            let factor = 2.0 * PI * n as f32 / (window_length - 1) as f32;
+            let base = 0.5 - 0.5 * factor.cos();
+            base.powf(0.85)  // Kaldi's Povey window exponent
+        })
+        .collect()
+}
+
 fn hann_window(window_length: usize) -> Vec<f32> {
     (0..window_length)
         .map(|n| {
