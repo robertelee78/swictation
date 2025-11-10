@@ -304,12 +304,26 @@ impl OrtRecognizer {
             debug!("Current features are log-mel without normalization");
         }
 
-        // Chunk features into 80-frame segments
-        let chunks = self.audio_processor.chunk_features(&features);
-        info!("Split into {} chunks of 80 frames", chunks.len());
+        // Try processing without chunking first (match C++ reference)
+        let text = if features.nrows() <= 80 {
+            // Small file - process in one chunk
+            let chunks = self.audio_processor.chunk_features(&features);
+            info!("Small file: {} chunks of 80 frames", chunks.len());
+            self.greedy_search_decode(&chunks)?
+        } else {
+            // Large file - try processing ALL frames at once (no chunking)
+            info!("Large file: {} frames total - processing all at once (no chunking)", features.nrows());
 
-        // Run greedy search decoder
-        let text = self.greedy_search_decode(&chunks)?;
+            // Pad to multiple of 80 for encoder
+            let padded_rows = ((features.nrows() + 79) / 80) * 80;
+            let mut padded = Array2::zeros((padded_rows, features.ncols()));
+            padded.slice_mut(s![..features.nrows(), ..]).assign(&features);
+
+            // Process all 80-frame chunks in sequence but decode all at once
+            let chunks = self.audio_processor.chunk_features(&padded);
+            info!("Processing {} encoder chunks without decoder reset between chunks", chunks.len());
+            self.greedy_search_decode(&chunks)?
+        };
 
         Ok(text)
     }

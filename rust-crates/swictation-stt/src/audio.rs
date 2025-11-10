@@ -37,12 +37,13 @@ impl AudioProcessor {
     /// Create new audio processor with Parakeet-TDT parameters
     pub fn new() -> Result<Self> {
         // Create mel filterbank
+        // Match sherpa-onnx defaults: low_freq=20 Hz, high_freq=-400 (means SR/2 - 400)
         let mel_filters = create_mel_filterbank(
             N_MEL_FEATURES,
             N_FFT,
             SAMPLE_RATE as f32,
-            0.0,
-            (SAMPLE_RATE / 2) as f32,
+            20.0,  // sherpa-onnx default low_freq
+            (SAMPLE_RATE / 2) as f32 - 400.0,  // sherpa-onnx default high_freq = -400 means SR/2 - 400
         );
 
         Ok(Self {
@@ -343,10 +344,15 @@ impl AudioProcessor {
                 break;
             }
 
+            // CRITICAL: Remove DC offset (subtract mean) - sherpa-onnx does this!
+            let frame_slice = &samples[start..end];
+            let frame_mean: f32 = frame_slice.iter().sum::<f32>() / WIN_LENGTH as f32;
+
             // Apply window and zero-pad to N_FFT
             let mut buffer: Vec<Complex<f32>> = vec![Complex::new(0.0, 0.0); N_FFT];
             for i in 0..WIN_LENGTH {
-                buffer[i] = Complex::new(samples[start + i] * window[i], 0.0);
+                // Subtract DC offset before windowing
+                buffer[i] = Complex::new((samples[start + i] - frame_mean) * window[i], 0.0);
             }
 
             // Compute FFT
