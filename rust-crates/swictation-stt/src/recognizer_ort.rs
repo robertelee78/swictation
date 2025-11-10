@@ -325,21 +325,35 @@ impl OrtRecognizer {
     fn greedy_search_decode(&mut self, chunks: &[Array2<f32>]) -> Result<String> {
         let mut all_tokens = Vec::new();
 
-        // Reset decoder states at the start
+        // Reset decoder states at the start of the FIRST chunk only
         self.decoder_state1 = None;
         self.decoder_state2 = None;
 
+        // Track decoder output across chunks
+        // For first chunk, we'll compute it with blank_id
+        // For subsequent chunks, we'll reuse the decoder_out from previous chunk
+        let mut decoder_out_opt: Option<Array1<f32>> = None;
+        let mut last_decoder_token = self.blank_id;
+
         for (chunk_idx, chunk) in chunks.iter().enumerate() {
-            debug!("Processing chunk {}/{}", chunk_idx + 1, chunks.len());
+            eprintln!("\n📦 Processing chunk {}/{}", chunk_idx + 1, chunks.len());
 
             // Run encoder
             let encoder_out = self.run_encoder(chunk)?;
-            debug!("Encoder output shape: {:?}", encoder_out.shape());
+            eprintln!("   Encoder output shape: {:?}", encoder_out.shape());
 
             // Decode each frame with greedy search
-            let chunk_tokens = self.decode_frames(&encoder_out)?;
+            // Pass both the decoder_out and token from previous chunk
+            let (chunk_tokens, final_token, final_decoder_out) =
+                self.decode_frames_with_state(&encoder_out, decoder_out_opt.take(), last_decoder_token)?;
+            eprintln!("   Chunk produced {} tokens (final_token={})", chunk_tokens.len(), final_token);
+
             all_tokens.extend(chunk_tokens);
+            last_decoder_token = final_token;  // Carry forward for next chunk
+            decoder_out_opt = Some(final_decoder_out);  // Carry forward decoder output
         }
+
+        eprintln!("\n📊 TOTAL: {} tokens from {} chunks", all_tokens.len(), chunks.len());
 
         // Convert tokens to text
         let text = self.tokens_to_text(&all_tokens);
@@ -425,113 +439,158 @@ impl OrtRecognizer {
         Ok(encoder_out)
     }
 
-    /// Decode frames using greedy search with TDT duration prediction
+    /// Decode frames using TDT greedy search with cross-chunk state persistence
     ///
-    /// Following sherpa-onnx C++ TDT implementation:
-    /// - Process encoder output ONE frame at a time
-    /// - Joiner outputs token logits AND duration logits
-    /// - Use duration prediction for frame skipping
-    /// - Loop until blank or max symbols per frame
-    fn decode_frames(&mut self, encoder_out: &Array3<f32>) -> Result<Vec<i64>> {
+    /// **REWRITTEN TO MATCH sherpa-onnx C++ EXACTLY + cross-chunk support**
+    /// Reference: offline-transducer-greedy-search-nemo-decoder.cc::DecodeOneTDT (lines 97-183)
+    ///
+    /// Key differences from previous broken implementation:
+    /// 1. Initialize decoder BEFORE main loop
+    /// 2. Single frame loop (no inner loop!)
+    /// 3. Run joiner ONCE per frame iteration
+    /// 4. Update decoder immediately after emission
+    /// 5. Correct skip logic with multiple conditions
+    /// 6. **NEW**: Accept decoder_out from previous chunk to avoid double-running decoder
+    ///
+    /// Args:
+    /// - encoder_out: Encoder output for this chunk
+    /// - prev_decoder_out: Decoder output from end of previous chunk (None for first chunk)
+    /// - initial_token: Last token from previous chunk (blank_id for first chunk)
+    ///
+    /// Returns: (tokens, final_decoder_token, final_decoder_out) for next chunk
+    fn decode_frames_with_state(
+        &mut self,
+        encoder_out: &Array3<f32>,
+        prev_decoder_out: Option<Array1<f32>>,
+        initial_token: i64
+    ) -> Result<(Vec<i64>, i64, Array1<f32>)> {
         // Encoder output shape: (batch, encoder_dim, num_frames)
-        let encoder_dim = encoder_out.shape()[1];
+        let _encoder_dim = encoder_out.shape()[1];
         let num_frames = encoder_out.shape()[2];
         let vocab_size = self.tokens.len();
         let blank_id = self.blank_id;
 
         let mut tokens = Vec::new();
-        let mut frame_indices = Vec::new();
-        let mut durations = Vec::new();
+        let mut timestamps = Vec::new();
+        let mut durations_vec = Vec::new();
 
-        // Initialize decoder with blank token
-        let mut decoder_state: Vec<i64> = vec![blank_id];
+        let max_tokens_per_frame = 5;  // sherpa-onnx uses 5 for TDT
 
-        let max_symbols_per_frame = 5;  // sherpa-onnx uses 5
-        let mut t = 0;  // Current frame index
+        // C++ line 108-113: Initialize decoder output
+        // If we have decoder_out from previous chunk, reuse it (don't call run_decoder!)
+        // Otherwise, compute it for the first chunk
+        let mut decoder_out = if let Some(prev_out) = prev_decoder_out {
+            eprintln!("   Reusing decoder_out from previous chunk (token={})", initial_token);
+            prev_out
+        } else {
+            eprintln!("   Computing decoder_out for first chunk (token={})", initial_token);
+            self.run_decoder(&[initial_token])?
+        };
+        let mut last_emitted_token = initial_token;  // Track for final return
 
+        let mut tokens_this_frame = 0;
+        let mut t = 0_usize;
+
+        // C++ line 121: Main loop with skip-based advancement
         while t < num_frames {
-            let mut symbols_this_frame = 0;
-            let mut skip = 0;
-
-            // Extract single encoder frame: (encoder_dim, 1) reshaped to (1, encoder_dim, 1)
+            // C++ line 122-124: Extract single encoder frame
             let encoder_frame = encoder_out.slice(s![0, .., t]).to_owned();
 
-            loop {
-                // Run decoder with current state
-                let decoder_out = self.run_decoder(&decoder_state)?;
+            // C++ line 126-127: Run joiner ONCE per frame iteration (NOT in a loop!)
+            let logits = self.run_joiner(&encoder_frame, &decoder_out)?;
 
-                // Run joiner to get logits (token + duration)
-                let logits = self.run_joiner(&encoder_frame, &decoder_out)?;
+            // C++ line 136-141: Split logits into token and duration
+            let logits_slice = logits.as_slice().unwrap();
+            let output_size = logits_slice.len();
+            let num_durations = output_size - vocab_size;
 
-                // Split logits into token logits and duration logits
-                // sherpa-onnx C++: const float *token_logits = p_logit;
-                //                 const float *duration_logits = p_logit + vocab_size;
-                let token_logits = &logits.as_slice().unwrap()[0..vocab_size];
-                let duration_logits = &logits.as_slice().unwrap()[vocab_size..];
+            let token_logits = &logits_slice[0..vocab_size];
+            let duration_logits = &logits_slice[vocab_size..];
 
-                // Greedy selection for token
-                let (y, y_logit) = token_logits
+            // C++ line 143-145: Greedy selection for token
+            let (y, _y_logit) = token_logits
+                .iter()
+                .enumerate()
+                .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+                .unwrap();
+            let y = y as i64;
+
+            // C++ line 148-150: Greedy selection for duration (note: can be 0!)
+            let mut skip = if num_durations > 0 {
+                duration_logits
                     .iter()
                     .enumerate()
                     .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
-                    .unwrap();
-                let y = y as i64;
+                    .map(|(idx, _)| idx)
+                    .unwrap_or(0)
+            } else {
+                0
+            };
 
-                // Greedy selection for duration (can be 0)
-                let duration = if !duration_logits.is_empty() {
-                    duration_logits
-                        .iter()
-                        .enumerate()
-                        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
-                        .map(|(idx, _)| idx)
-                        .unwrap_or(0)
-                } else {
-                    0
-                };
-
-                debug!("Frame {}: token={} ('{}'), logit={:.4}, blank={}, duration={}",
+            // Use info! so we can see output even without RUST_LOG=debug
+            if t < 5 || y != blank_id {  // Log first 5 frames and all non-blank emissions
+                info!("Frame {}: token={} ('{}'), blank={}, duration={}, tokens_this_frame={}",
                     t, y,
                     if y < self.tokens.len() as i64 { &self.tokens[y as usize] } else { "???" },
-                    y_logit, blank_id, duration);
-
-                if y != blank_id {
-                    // Non-blank token - emit it
-                    tokens.push(y);
-                    frame_indices.push(t);
-                    durations.push(duration);
-
-                    // Update decoder state to this token
-                    decoder_state = vec![y];
-
-                    symbols_this_frame += 1;
-
-                    // Don't advance frame yet - continue emitting from same frame
-                } else {
-                    // Blank token - advance frame
-                    // Use duration prediction if we emitted tokens
-                    if duration > 0 && !tokens.is_empty() {
-                        skip = duration;
-                    } else {
-                        skip = 1;
-                    }
-                    break;
-                }
-
-                // Safety: max symbols per frame reached
-                if symbols_this_frame >= max_symbols_per_frame {
-                    debug!("Max symbols per frame ({}) reached at frame {}", max_symbols_per_frame, t);
-                    skip = 1;
-                    break;
-                }
+                    blank_id, skip, tokens_this_frame);
             }
 
-            // Advance frame by duration skip
-            t += skip.max(1);  // Always advance at least 1 frame
+            // C++ line 152-165: If non-blank, emit token and update decoder
+            if y != blank_id {
+                tokens.push(y);
+                timestamps.push(t);
+                durations_vec.push(skip);
+
+                // C++ line 157-162: Run decoder IMMEDIATELY with new token
+                decoder_out = self.run_decoder(&[y])?;
+                last_emitted_token = y;  // Track for cross-chunk persistence
+
+                tokens_this_frame += 1;
+            }
+
+            // C++ line 167-179: Skip logic (multiple conditions!)
+
+            // C++ line 167-169: If duration > 0, reset token counter
+            if skip > 0 {
+                tokens_this_frame = 0;
+            }
+
+            // C++ line 171-174: If max tokens reached, force skip=1
+            if tokens_this_frame >= max_tokens_per_frame {
+                tokens_this_frame = 0;
+                skip = 1;
+            }
+
+            // C++ line 176-179: If blank with skip=0, force skip=1
+            if y == blank_id && skip == 0 {
+                tokens_this_frame = 0;
+                skip = 1;
+            }
+
+            // C++ line 121: Advance by skip amount (for loop: t += skip)
+            t += skip.max(1);  // Ensure we always advance at least 1
         }
 
-        debug!("Decoded {} tokens with {} frame indices", tokens.len(), frame_indices.len());
+        eprintln!("\n🔍 DECODER OUTPUT:");
+        eprintln!("   Decoded {} tokens from {} frames", tokens.len(), num_frames);
+        if !tokens.is_empty() {
+            eprintln!("   First 10 token IDs: {:?}", &tokens[..10.min(tokens.len())]);
+            let text_preview: String = tokens[..10.min(tokens.len())].iter()
+                .map(|&id| {
+                    if id < self.tokens.len() as i64 {
+                        self.tokens[id as usize].clone()
+                    } else {
+                        format!("?{}", id)
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("");
+            eprintln!("   First 10 tokens as text: '{}'", text_preview);
+        }
+        eprintln!("   Final decoder token for next chunk: {}", last_emitted_token);
+        eprintln!("   Returning decoder_out for next chunk (shape: {})", decoder_out.len());
 
-        Ok(tokens)
+        Ok((tokens, last_emitted_token, decoder_out))
     }
 
     /// Run decoder with token history and RNN states
@@ -692,7 +751,11 @@ impl OrtRecognizer {
 
     /// Convert token IDs to text
     fn tokens_to_text(&self, tokens: &[i64]) -> String {
-        tokens
+        eprintln!("\n🔤 TOKENS_TO_TEXT:");
+        eprintln!("   Input: {} tokens", tokens.len());
+        eprintln!("   Token IDs: {:?}", tokens);
+
+        let result = tokens
             .iter()
             .filter_map(|&token_id| {
                 let idx = token_id as usize;
@@ -706,7 +769,10 @@ impl OrtRecognizer {
             .join("")
             .replace("▁", " ")  // Replace BPE underscores with spaces
             .trim()
-            .to_string()
+            .to_string();
+
+        eprintln!("   Output: '{}'", result);
+        result
     }
 
     /// Get model information

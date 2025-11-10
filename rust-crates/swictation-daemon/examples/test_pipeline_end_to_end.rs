@@ -14,8 +14,8 @@ use std::time::{Duration, Instant};
 use tokio::time::sleep;
 use swictation_stt::recognizer_ort::OrtRecognizer;
 
-/// Test configuration - TESTING 1.1B MODEL!
-const MODEL_PATH: &str = "/opt/swictation/models/parakeet-tdt-1.1b-exported";
+/// Test configuration - TESTING 0.6B MODEL (to verify decoder fix)!
+const MODEL_PATH: &str = "/opt/swictation/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3";
 const EXPECTED_SHORT: &str = "Hello world";  // First part of expected text
 const EXPECTED_LONG: &str = "open source AI community";  // First part of expected text (no hyphen)
 
