@@ -14,26 +14,26 @@ use std::time::{Duration, Instant};
 use tokio::time::sleep;
 use swictation_stt::recognizer_ort::OrtRecognizer;
 
-/// Test configuration
-const MODEL_PATH: &str = "/opt/swictation/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8";
+/// Test configuration - TESTING 1.1B MODEL!
+const MODEL_PATH: &str = "/opt/swictation/models/parakeet-tdt-1.1b-exported";
 const EXPECTED_SHORT: &str = "Hello world";  // First part of expected text
 const EXPECTED_LONG: &str = "open source AI community";  // First part of expected text (no hyphen)
 
 #[tokio::main]
 async fn main() -> Result<()> {
     println!("═══════════════════════════════════════════════════");
-    println!("  Swictation 0.6B ORT GPU End-to-End Pipeline Test");
+    println!("  Swictation 1.1B ORT GPU End-to-End Pipeline Test");
     println!("═══════════════════════════════════════════════════\n");
 
     // Step 1: Check model exists
-    println!("[ 1/7 ] Checking Parakeet-TDT-0.6B INT8 model...");
+    println!("[ 1/7 ] Checking Parakeet-TDT-1.1B INT8 model...");
     if !Path::new(MODEL_PATH).exists() {
         anyhow::bail!("Model not found at {}", MODEL_PATH);
     }
     println!("✓ Model found\n");
 
     // Step 2: Load STT model with ORT (GPU enabled!)
-    println!("[ 2/7 ] Loading Parakeet-TDT-0.6B model with ONNX Runtime (GPU)...");
+    println!("[ 2/7 ] Loading Parakeet-TDT-1.1B model with ONNX Runtime (GPU)...");
     let start = Instant::now();
 
     let stt = Arc::new(Mutex::new(

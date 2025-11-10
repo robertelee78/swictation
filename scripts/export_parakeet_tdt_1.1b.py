@@ -51,20 +51,26 @@ def main():
     print("Parakeet-TDT 1.1B ONNX Export (sherpa-onnx method)")
     print("="*80)
 
+    # Force CPU to avoid CUDA kernel compatibility issues with PyTorch 2.4.0
+    print("Using CPU for model loading (avoiding CUDA kernel issues)")
+
     # Check for local .nemo file first, otherwise download from HuggingFace
     nemo_file = Path("./parakeet-tdt-1.1b.nemo")
     if nemo_file.is_file():
         print(f"Loading from local file: {nemo_file}")
         asr_model = nemo_asr.models.ASRModel.restore_from(
-            restore_path=str(nemo_file)
+            restore_path=str(nemo_file),
+            map_location=torch.device('cpu')
         )
     else:
         print("Downloading nvidia/parakeet-tdt-1.1b from HuggingFace...")
         asr_model = nemo_asr.models.ASRModel.from_pretrained(
-            model_name="nvidia/parakeet-tdt-1.1b"
+            model_name="nvidia/parakeet-tdt-1.1b",
+            map_location=torch.device('cpu')
         )
 
     asr_model.eval()
+    asr_model = asr_model.to('cpu')  # Ensure model is on CPU
     print(f"Model loaded successfully")
     print(f"  Encoder: {type(asr_model.encoder).__name__}")
     print(f"  Decoder: {type(asr_model.decoder).__name__}")

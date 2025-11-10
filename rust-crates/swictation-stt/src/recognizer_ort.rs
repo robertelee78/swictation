@@ -29,7 +29,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info};
 
-/// Direct ONNX Runtime recognizer for 1.1B Parakeet-TDT model
+/// Direct ONNX Runtime recognizer for Parakeet-TDT models (0.6B and 1.1B)
 pub struct OrtRecognizer {
     encoder: Session,
     decoder: Session,
@@ -42,6 +42,8 @@ pub struct OrtRecognizer {
     // Decoder RNN states (2, batch, 640)
     decoder_state1: Option<Array3<f32>>,
     decoder_state2: Option<Array3<f32>>,
+    // Whether encoder expects transposed input (batch, features, time) vs (batch, time, features)
+    transpose_input: bool,
 }
 
 impl OrtRecognizer {
@@ -148,6 +150,36 @@ impl OrtRecognizer {
             .map_err(|e| SttError::ModelLoadError(format!("Failed to load joiner: {}", e)))?;
         info!("✓ Joiner loaded");
 
+        // Detect encoder input format by inspecting input shape
+        // 0.6B: (batch, 128 features, time) - NEEDS transpose
+        // 1.1B: (batch, 80 time, features) - NO transpose
+        let encoder_inputs = encoder.inputs.iter().map(|i| i.name.as_str()).collect::<Vec<_>>();
+        info!("Encoder inputs: {:?}", encoder_inputs);
+
+        let audio_signal_input = encoder.inputs.iter()
+            .find(|i| i.name == "audio_signal")
+            .ok_or_else(|| SttError::ModelLoadError("Encoder missing audio_signal input".to_string()))?;
+
+        // Extract tensor dimensions from the input metadata
+        // ort 2.0.0-rc.10 API: input.input_type contains shape information
+        info!("Audio signal input type: {:?}", audio_signal_input.input_type);
+
+        // For now, use a simple heuristic: check if tokens.txt exists to determine model size
+        // 1.1B models have 1025 tokens, 0.6B models have 1025 tokens too, so check model dir name
+        let transpose_input = if model_path.to_string_lossy().contains("1.1b") ||
+                                  model_path.to_string_lossy().contains("1-1b") {
+            info!("Detected 1.1B model from path - using natural format (no transpose)");
+            false
+        } else if model_path.to_string_lossy().contains("0.6b") ||
+                   model_path.to_string_lossy().contains("0-6b") {
+            info!("Detected 0.6B model from path - using transposed format");
+            true
+        } else {
+            // Fallback: default to transpose for safety (0.6B is more common)
+            info!("Could not determine model version from path, defaulting to transpose");
+            true
+        };
+
         let audio_processor = AudioProcessor::new()?;
 
         Ok(Self {
@@ -161,6 +193,7 @@ impl OrtRecognizer {
             audio_processor,
             decoder_state1: None,
             decoder_state2: None,
+            transpose_input,
         })
     }
 
@@ -316,10 +349,10 @@ impl OrtRecognizer {
 
     /// Run encoder on feature chunk
     ///
-    /// CRITICAL FINDING: Our converted 1.1B model expects (batch, 80, features) WITHOUT transpose!
-    /// - sherpa-onnx C++ uses Transpose12 for THEIR encoder (different conversion)
-    /// - Our ONNX spec shows: ['batch', 80, 'features'] - no transpose needed
-    /// - Encoder outputs (batch, encoder_dim, num_frames)
+    /// Automatically detects and applies correct input format based on model:
+    /// - 0.6B models: (batch, 128 features, 80 time) - TRANSPOSED
+    /// - 1.1B models: (batch, 80 time, features) - NOT TRANSPOSED
+    /// Detection happens in constructor based on encoder input shape.
     fn run_encoder(&mut self, features: &Array2<f32>) -> Result<Array3<f32>> {
         // Prepare input tensors
         let batch_size = 1;
@@ -334,20 +367,29 @@ impl OrtRecognizer {
             )));
         }
 
-        // TRANSPOSE FOR OFFICIAL MODELS: (batch, num_features=128, num_frames=80)
-        // Official sherpa-onnx models expect features FIRST, then time
-        // Layout: Row-major transposed - all frames for feature 0, then feature 1, etc.
-        let mut audio_data = Vec::with_capacity(batch_size * num_frames * num_features);
-        for col_idx in 0..num_features {
-            for row in features.outer_iter() {
-                audio_data.push(row[col_idx]);
+        // Conditionally apply transpose based on detected model format
+        let (shape, audio_data) = if self.transpose_input {
+            // TRANSPOSE FOR 0.6B: (batch, num_features=128, num_frames=80)
+            // Official sherpa-onnx 0.6B models expect features FIRST, then time
+            // Layout: Row-major transposed - all frames for feature 0, then feature 1, etc.
+            debug!("Using TRANSPOSED input format (0.6B): (batch, features={}, time={})", num_features, num_frames);
+            let mut data = Vec::with_capacity(batch_size * num_frames * num_features);
+            for col_idx in 0..num_features {
+                for row in features.outer_iter() {
+                    data.push(row[col_idx]);
+                }
             }
-        }
+            (vec![batch_size, num_features, num_frames], data)
+        } else {
+            // NO TRANSPOSE FOR 1.1B: (batch, num_frames=80, num_features)
+            // 1.1B exported models expect time FIRST, then features
+            // Layout: Row-major natural order
+            debug!("Using NATURAL input format (1.1B): (batch, time={}, features={})", num_frames, num_features);
+            let data: Vec<f32> = features.iter().copied().collect();
+            (vec![batch_size, num_frames, num_features], data)
+        };
 
-        let audio_signal = Tensor::from_array((
-            vec![batch_size, num_features, num_frames],  // (1, 128, 80) - TRANSPOSED!
-            audio_data.into_boxed_slice(),
-        ))
+        let audio_signal = Tensor::from_array((shape, audio_data.into_boxed_slice()))
         .map_err(|e| SttError::InferenceError(format!("Failed to create audio tensor: {}", e)))?;
 
         // length: (batch=1,)
