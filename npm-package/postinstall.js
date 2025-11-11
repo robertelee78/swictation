@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 const os = require('os');
+const https = require('https');
 
 // Colors for console output (basic implementation without chalk dependency)
 const colors = {
@@ -139,6 +140,93 @@ function checkDependencies() {
   }
 }
 
+function detectNvidiaGPU() {
+  try {
+    execSync('nvidia-smi', { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function downloadFile(url, dest) {
+  return new Promise((resolve, reject) => {
+    const file = fs.createWriteStream(dest);
+    https.get(url, (response) => {
+      if (response.statusCode === 302 || response.statusCode === 301) {
+        // Follow redirect
+        https.get(response.headers.location, (redirectResponse) => {
+          redirectResponse.pipe(file);
+          file.on('finish', () => {
+            file.close();
+            resolve();
+          });
+        }).on('error', (err) => {
+          fs.unlink(dest, () => {});
+          reject(err);
+        });
+      } else {
+        response.pipe(file);
+        file.on('finish', () => {
+          file.close();
+          resolve();
+        });
+      }
+    }).on('error', (err) => {
+      fs.unlink(dest, () => {});
+      reject(err);
+    });
+  });
+}
+
+async function downloadGPULibraries() {
+  const hasGPU = detectNvidiaGPU();
+
+  if (!hasGPU) {
+    log('cyan', '\nℹ No NVIDIA GPU detected - skipping GPU library download');
+    log('cyan', '  CPU-only mode will be used');
+    return;
+  }
+
+  log('green', '\n✓ NVIDIA GPU detected!');
+  log('cyan', '📦 Downloading GPU acceleration libraries...');
+
+  const version = require('./package.json').version;
+  const releaseUrl = `https://github.com/robertelee78/swictation/releases/download/v${version}/swictation-gpu-libs.tar.gz`;
+  const tmpDir = path.join(os.tmpdir(), 'swictation-gpu-install');
+  const tarPath = path.join(tmpDir, 'gpu-libs.tar.gz');
+  const nativeDir = path.join(__dirname, 'lib', 'native');
+
+  try {
+    // Create temp directory
+    if (!fs.existsSync(tmpDir)) {
+      fs.mkdirSync(tmpDir, { recursive: true });
+    }
+
+    // Download tarball
+    log('cyan', `  Downloading from: ${releaseUrl}`);
+    await downloadFile(releaseUrl, tarPath);
+    log('green', '  ✓ Downloaded GPU libraries');
+
+    // Extract tarball
+    log('cyan', '  Extracting...');
+    execSync(`tar -xzf "${tarPath}" -C "${nativeDir}"`, { stdio: 'inherit' });
+    log('green', '  ✓ Extracted GPU libraries');
+
+    // Cleanup
+    fs.unlinkSync(tarPath);
+    fs.rmdirSync(tmpDir);
+
+    log('green', '✓ GPU acceleration enabled!');
+    log('cyan', '  Your system will use CUDA for faster transcription');
+  } catch (err) {
+    log('yellow', `\n⚠ Failed to download GPU libraries: ${err.message}`);
+    log('cyan', '  Continuing with CPU-only mode');
+    log('cyan', '  You can manually download from:');
+    log('cyan', `  ${releaseUrl}`);
+  }
+}
+
 function showNextSteps() {
   log('green', '\n✨ Swictation installed successfully!');
   log('cyan', '\nNext steps:');
@@ -167,6 +255,7 @@ async function main() {
   checkPlatform();
   ensureBinaryPermissions();
   createDirectories();
+  await downloadGPULibraries();
   checkDependencies();
   showNextSteps();
 }
