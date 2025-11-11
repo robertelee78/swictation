@@ -29,6 +29,30 @@ function checkPlatform() {
     log('yellow', 'Note: Swictation currently only supports x64 architecture');
     process.exit(0);
   }
+
+  // Check GLIBC version
+  try {
+    const glibcVersion = execSync('ldd --version 2>&1 | head -1', { encoding: 'utf8' });
+    const versionMatch = glibcVersion.match(/(\d+)\.(\d+)/);
+    if (versionMatch) {
+      const major = parseInt(versionMatch[1]);
+      const minor = parseInt(versionMatch[2]);
+
+      if (major < 2 || (major === 2 && minor < 39)) {
+        log('red', '\n⚠ INCOMPATIBLE GLIBC VERSION');
+        log('yellow', `Detected GLIBC ${major}.${minor} (need 2.39+)`);
+        log('yellow', 'Swictation requires Ubuntu 24.04 LTS or newer');
+        log('yellow', 'Ubuntu 22.04 is NOT supported due to GLIBC 2.35');
+        log('yellow', '\nSupported distributions:');
+        log('cyan', '  - Ubuntu 24.04 LTS (Noble Numbat) or newer');
+        log('cyan', '  - Debian 13+ (Trixie)');
+        log('cyan', '  - Fedora 39+');
+        log('yellow', '\nInstallation will continue but binaries may not work.');
+      }
+    }
+  } catch (err) {
+    log('yellow', 'Warning: Could not check GLIBC version');
+  }
 }
 
 function ensureBinaryPermissions() {

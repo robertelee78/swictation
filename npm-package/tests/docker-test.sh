@@ -2,7 +2,7 @@
 # Docker-based comprehensive npm package testing
 # Tests installation across multiple distributions and Node.js versions
 
-set -e
+set -eo pipefail
 
 # Colors
 RED='\033[0;31m'
@@ -23,12 +23,12 @@ log_info() {
 
 log_success() {
     echo -e "${GREEN}[✓]${NC} $1"
-    ((PASSED_TESTS++))
+    ((PASSED_TESTS++)) || true
 }
 
 log_error() {
     echo -e "${RED}[✗]${NC} $1"
-    ((FAILED_TESTS++))
+    ((FAILED_TESTS++)) || true
 }
 
 log_section() {
@@ -43,23 +43,23 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGE_DIR="$(dirname "$SCRIPT_DIR")"
 
 # Test configurations: distro:node_version
+# NOTE: Ubuntu 22.04 removed - GLIBC 2.35 too old (need 2.39+)
 TEST_CONFIGS=(
-    "ubuntu:22.04:18"
-    "ubuntu:22.04:20"
-    "ubuntu:22.04:22"
+    "ubuntu:24.04:18"
     "ubuntu:24.04:20"
     "ubuntu:24.04:22"
 )
 
-# Optional: Arch Linux (requires different package manager)
-# "archlinux:latest:22"
+# Future: Test on newer Ubuntu versions
+# "ubuntu:25.04:22"
+# "ubuntu:25.10:22"
 
 run_docker_test() {
     local distro="$1"
     local node_version="$2"
     local test_name="${distro}-node${node_version}"
 
-    ((TOTAL_TESTS++))
+    ((TOTAL_TESTS++)) || true
 
     log_section "Testing: $test_name"
 
@@ -89,8 +89,7 @@ node --version || exit 1
 npm --version || exit 1
 
 # Install package from tarball
-cd /package
-npm install -g . > /dev/null 2>&1 || exit 1
+npm install -g /package.tgz > /dev/null 2>&1 || exit 1
 
 # Verify binaries are installed
 command -v swictation || exit 1
@@ -101,14 +100,17 @@ swictation help > /dev/null 2>&1 || exit 1
 # Test download-models command exists
 swictation download-models 2>&1 | grep -q "hf CLI" || exit 1
 
+# Get actual npm root and check installation
+INSTALL_DIR=$(npm root -g)/swictation
+
 # Verify library bundling
-ls -la /usr/local/lib/node_modules/swictation/lib/native/ || exit 1
+ls -la "$INSTALL_DIR/lib/native/" || exit 1
 
 # Check daemon wrapper exists
-[ -x /usr/local/lib/node_modules/swictation/bin/swictation-daemon ] || exit 1
+[ -x "$INSTALL_DIR/bin/swictation-daemon" ] || exit 1
 
 # Check actual binary exists
-[ -x /usr/local/lib/node_modules/swictation/lib/native/swictation-daemon.bin ] || exit 1
+[ -x "$INSTALL_DIR/lib/native/swictation-daemon.bin" ] || exit 1
 
 echo "ALL TESTS PASSED"
 TESTEOF
@@ -119,7 +121,7 @@ TESTEOF
 
     # Run test in Docker container
     if docker run --rm \
-        -v "$PACKAGE_DIR:/package:ro" \
+        -v "$PACKAGE_DIR/$TARBALL:/package.tgz:ro" \
         -v "$test_script:/test.sh:ro" \
         "$distro" \
         /bin/bash /test.sh > /tmp/docker-test-$test_name.log 2>&1; then
@@ -151,13 +153,25 @@ main() {
         exit 1
     fi
 
+    # Create tarball
+    log_info "Creating package tarball..."
+    cd "$PACKAGE_DIR"
+    npm pack > /dev/null 2>&1
+    TARBALL=$(ls swictation-*.tgz | tail -1)
+
+    if [ ! -f "$TARBALL" ]; then
+        log_error "Failed to create tarball"
+        exit 1
+    fi
+
+    log_success "Created $TARBALL"
+
     log_info "Package directory: $PACKAGE_DIR"
     log_info "Testing ${#TEST_CONFIGS[@]} configurations..."
     echo ""
 
     # Pull base images first
     log_info "Pulling Docker images..."
-    docker pull ubuntu:22.04 > /dev/null 2>&1
     docker pull ubuntu:24.04 > /dev/null 2>&1
     log_success "Docker images ready"
     echo ""
@@ -167,6 +181,9 @@ main() {
         IFS=':' read -r distro version node_version <<< "$config"
         run_docker_test "${distro}:${version}" "$node_version"
     done
+
+    # Cleanup tarball
+    rm -f "$PACKAGE_DIR/$TARBALL"
 
     # Print summary
     log_section "Test Summary"

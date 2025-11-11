@@ -1,7 +1,7 @@
 {
   "name": "swictation",
   "version": "0.1.0",
-  "description": "Voice-to-text dictation system with smart text transformation",
+  "description": "Voice-to-text dictation system with smart text transformation (Ubuntu 24.04+ required)",
   "keywords": [
     "voice-to-text",
     "speech-recognition",
@@ -40,7 +40,7 @@
     "test": "node test.js"
   },
   "engines": {
-    "node": ">=14.0.0"
+    "node": ">=18.0.0"
   },
   "os": [
     "linux"

@@ -52,12 +52,23 @@ npm install -g swictation
 
 ### Currently Supported
 - **OS**: Linux x64
+- **Distribution**: Ubuntu 24.04 LTS or newer (GLIBC 2.39+)
+  - ✅ Ubuntu 24.04 LTS (Noble Numbat)
+  - ✅ Ubuntu 25.10+ (Questing Quetzal)
+  - ✅ Debian 13+ (Trixie)
+  - ✅ Fedora 39+
+  - ❌ Ubuntu 22.04 LTS - NOT supported (GLIBC 2.35 too old)
+- **Node.js**: 18.0.0 or higher
+- **Python**: 3.8+ (for model downloads via HuggingFace CLI)
+- **Storage**: 9.43 GB for AI models
 - **Display Server**: Wayland (Sway/i3-compatible compositors)
-- **GPU**: NVIDIA with 4GB+ VRAM (CUDA 11.8+)
+- **GPU**: NVIDIA with 4GB+ VRAM (CUDA 11.8+) or CPU-only mode
 - **Window Managers**: Sway, i3, Hyprland
 
-### Dependencies
+### Runtime Dependencies
 - **Required**:
+  - GLIBC 2.39+ (Ubuntu 24.04+)
+  - libasound2 (ALSA sound library)
   - systemd (service management)
   - wtype (Wayland text injection)
   - wl-clipboard (Wayland clipboard)

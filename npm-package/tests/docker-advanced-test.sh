@@ -54,9 +54,8 @@ apt-get install -y -qq curl ldd > /dev/null 2>&1 || apt-get install -y -qq curl 
 curl -fsSL https://deb.nodesource.com/setup_NODE_VERSION.x | bash - > /dev/null 2>&1
 apt-get install -y -qq nodejs > /dev/null 2>&1
 
-# Install package
-cd /package
-npm install -g . > /dev/null 2>&1
+# Install package from tarball
+npm install -g /package.tgz > /dev/null 2>&1
 
 # Find installation directory
 INSTALL_DIR="/usr/local/lib/node_modules/swictation"
@@ -95,19 +94,19 @@ LIBTEST
     chmod +x "$test_script"
 
     if docker run --rm \
-        -v "$PACKAGE_DIR:/package:ro" \
+        -v "$PACKAGE_DIR/$TARBALL:/package.tgz:ro" \
         -v "$test_script:/libtest.sh:ro" \
         "$distro" \
         /bin/bash /libtest.sh 2>&1 | tee /tmp/library-test-${distro//[:\/]/-}-node${node_version}.log; then
 
         log_success "Library test passed: ${distro}-node${node_version}"
+        rm -f "$test_script"
         return 0
     else
         log_error "Library test failed: ${distro}-node${node_version}"
+        rm -f "$test_script"
         return 1
     fi
-
-    rm -f "$test_script"
 }
 
 main() {
@@ -119,20 +118,33 @@ main() {
         exit 1
     fi
 
-    log_info "Pulling ubuntu:22.04..."
-    docker pull ubuntu:22.04 > /dev/null 2>&1
+    # Create tarball
+    log_info "Creating package tarball..."
+    cd "$PACKAGE_DIR"
+    npm pack > /dev/null 2>&1
+    TARBALL=$(ls swictation-*.tgz | tail -1)
+
+    if [ ! -f "$TARBALL" ]; then
+        log_error "Failed to create tarball"
+        exit 1
+    fi
+
+    log_info "Pulling ubuntu:24.04..."
+    docker pull ubuntu:24.04 > /dev/null 2>&1
 
     log_info "Running comprehensive library test..."
     echo ""
 
-    if run_library_test "ubuntu:22.04" "20"; then
+    if run_library_test "ubuntu:24.04" "20"; then
+        rm -f "$PACKAGE_DIR/$TARBALL"
         log_section "Success"
         echo -e "${GREEN}✓ Library bundling works correctly${NC}"
         echo "  - All shared libraries resolve"
         echo "  - LD_LIBRARY_PATH wrapper works"
-        echo "  - Binary executes on clean Ubuntu 22.04"
+        echo "  - Binary executes on clean Ubuntu 24.04"
         exit 0
     else
+        rm -f "$PACKAGE_DIR/$TARBALL"
         log_section "Failure"
         echo -e "${RED}✗ Library issues detected${NC}"
         echo "Check log: /tmp/library-test-*.log"
