@@ -199,8 +199,16 @@ impl AudioCapture {
 
                 if score > best_score {
                     best_score = score;
+                    println!("  → New best device: {} (score: {})", name, score);
                     best_device = Some(device);
                 }
+            }
+        }
+
+        // Print final selection
+        if let Some(ref device) = best_device {
+            if let Ok(name) = device.name() {
+                println!("\n✓ Auto-selected audio device: {} (score: {})", name, best_score);
             }
         }
 
@@ -314,7 +322,7 @@ impl AudioCapture {
         let stream_config = StreamConfig {
             channels: source_channels,
             sample_rate: cpal::SampleRate(source_sample_rate),
-            buffer_size: cpal::BufferSize::Fixed(self.config.blocksize as u32),
+            buffer_size: cpal::BufferSize::Default,  // Let ALSA choose optimal buffer size
         };
 
         // Clone Arc references for the callback
