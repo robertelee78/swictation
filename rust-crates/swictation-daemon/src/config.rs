@@ -51,11 +51,15 @@ pub struct DaemonConfig {
     /// See swictation-vad/ONNX_THRESHOLD_GUIDE.md for details
     pub vad_threshold: f32,
 
-    /// STT model path
-    pub stt_model_path: String,
+    /// STT model selection override
+    /// Options: "auto" (VRAM-based), "0.6b-cpu", "0.6b-gpu", "1.1b-gpu"
+    pub stt_model_override: String,
 
-    /// STT tokens path
-    pub stt_tokens_path: String,
+    /// Path to 0.6B model directory (sherpa-rs)
+    pub stt_0_6b_model_path: String,
+
+    /// Path to 1.1B INT8 model directory (ONNX Runtime)
+    pub stt_1_1b_model_path: String,
 
     /// Number of threads for ONNX Runtime
     pub num_threads: Option<i32>,
@@ -77,9 +81,10 @@ impl Default for DaemonConfig {
             vad_min_speech: 0.25,
             vad_max_speech: 30.0,
             vad_threshold: 0.003, // ONNX model threshold (100-200x lower than PyTorch 0.5)
-            // Parakeet-TDT-1.1B ONNX model path (converted from .nemo)
-            stt_model_path: "/opt/swictation/models/parakeet-tdt-1.1b-onnx".to_string(),
-            stt_tokens_path: "/opt/swictation/models/parakeet-tdt-1.1b-onnx/vocab.txt".to_string(),
+            // STT adaptive model selection (auto = VRAM-based)
+            stt_model_override: "auto".to_string(),
+            stt_0_6b_model_path: "/opt/swictation/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-onnx".to_string(),
+            stt_1_1b_model_path: "/opt/swictation/models/parakeet-tdt-1.1b-onnx".to_string(),
             num_threads: Some(4),
             audio_device_index: None, // Will be set from env var or auto-detected
             hotkeys: HotkeyConfig::default(),

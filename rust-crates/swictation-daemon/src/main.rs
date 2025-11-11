@@ -15,8 +15,24 @@ use anyhow::{Context, Result};
 use tracing::{info, error, warn};
 use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc};
+use clap::Parser;
 
 use crate::config::DaemonConfig;
+
+/// Swictation Daemon - Voice-to-Text Pipeline
+#[derive(Parser, Debug)]
+#[command(name = "swictation-daemon")]
+#[command(about = "Voice-to-text dictation daemon with adaptive model selection", long_about = None)]
+struct CliArgs {
+    /// Override STT model selection (bypasses auto-detection)
+    #[arg(long, value_name = "MODEL")]
+    #[arg(value_parser = ["0.6b-cpu", "0.6b-gpu", "1.1b-gpu"])]
+    test_model: Option<String>,
+
+    /// Dry-run: show model selection without loading models
+    #[arg(long)]
+    dry_run: bool,
+}
 use crate::pipeline::Pipeline;
 use crate::gpu::detect_gpu_provider;
 use crate::ipc::{IpcServer, handle_connection as handle_ipc_connection};
@@ -133,6 +149,9 @@ impl Daemon {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Parse CLI arguments
+    let cli = CliArgs::parse();
+
     // Initialize logging
     tracing_subscriber::fmt()
         .with_target(false)
@@ -142,16 +161,65 @@ async fn main() -> Result<()> {
     info!("🎙️ Starting Swictation Daemon v{}", env!("CARGO_PKG_VERSION"));
 
     // Load configuration
-    let config = DaemonConfig::load()
+    let mut config = DaemonConfig::load()
         .context("Failed to load configuration")?;
 
     info!("📋 Configuration loaded from {}", config.config_path.display());
+
+    // Apply CLI overrides
+    if let Some(ref model) = cli.test_model {
+        info!("🧪 CLI override: forcing model '{}'", model);
+        config.stt_model_override = model.clone();
+    }
 
     // Detect GPU provider
     let gpu_provider = detect_gpu_provider();
     match &gpu_provider {
         Some(provider) => info!("🎮 GPU detected: {}", provider),
         None => warn!("⚠️ No GPU detected, using CPU (slower)"),
+    }
+
+    // DRY-RUN MODE: Show model selection and exit
+    if cli.dry_run {
+        info!("🧪 DRY-RUN MODE: Showing model selection without loading");
+
+        let vram_mb = crate::gpu::get_gpu_memory_mb().map(|(total, _free)| total);
+
+        if config.stt_model_override != "auto" {
+            info!("  Override active: {}", config.stt_model_override);
+            match config.stt_model_override.as_str() {
+                "1.1b-gpu" => info!("  Would load: Parakeet-TDT-1.1B-INT8 (GPU, forced)"),
+                "0.6b-gpu" => info!("  Would load: Parakeet-TDT-0.6B (GPU, forced)"),
+                "0.6b-cpu" => info!("  Would load: Parakeet-TDT-0.6B (CPU, forced)"),
+                _ => error!("  Invalid override value!"),
+            }
+        } else {
+            info!("  Mode: auto (VRAM-based)");
+            if let Some(vram) = vram_mb {
+                info!("  Detected: {}MB VRAM", vram);
+                if vram >= 4096 {
+                    info!("  Would load: Parakeet-TDT-1.1B-INT8 (GPU)");
+                    info!("    Path: {}", config.stt_1_1b_model_path);
+                    info!("    Reason: ≥4GB VRAM available");
+                } else if vram >= 1536 {
+                    info!("  Would load: Parakeet-TDT-0.6B (GPU)");
+                    info!("    Path: {}", config.stt_0_6b_model_path);
+                    info!("    Reason: ≥1.5GB VRAM available");
+                } else {
+                    info!("  Would load: Parakeet-TDT-0.6B (CPU)");
+                    info!("    Path: {}", config.stt_0_6b_model_path);
+                    info!("    Reason: <1.5GB VRAM ({}MB), using CPU fallback", vram);
+                }
+            } else {
+                info!("  Detected: No GPU");
+                info!("  Would load: Parakeet-TDT-0.6B (CPU)");
+                info!("    Path: {}", config.stt_0_6b_model_path);
+                info!("    Reason: No NVIDIA GPU detected");
+            }
+        }
+
+        info!("✅ Dry-run complete (no models loaded)");
+        return Ok(());
     }
 
     // Initialize daemon with models loaded
