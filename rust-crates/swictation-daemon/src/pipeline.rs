@@ -69,7 +69,8 @@ impl Pipeline {
             .max_speech(config.vad_max_speech)
             .threshold(config.vad_threshold)
             .provider(gpu_provider.clone())
-            .num_threads(config.num_threads);
+            .num_threads(config.num_threads)
+            .debug();  // Enable VAD debug output for troubleshooting
 
         let vad = VadDetector::new(vad_config)
             .context("Failed to initialize VAD")?;
@@ -456,8 +457,100 @@ impl Pipeline {
         self.is_recording = false;
         self.audio.lock().unwrap().stop()?;
 
-        // Flush remaining audio through VAD
-        self.vad.lock().unwrap().flush();
+        // Flush remaining audio through VAD and process any final speech
+        if let Some(vad_result) = self.vad.lock().unwrap().flush() {
+            if let swictation_vad::VadResult::Speech { samples: speech_samples, .. } = vad_result {
+                info!("Processing flushed speech segment: {} samples", speech_samples.len());
+
+                // Track timing for metrics
+                let segment_start = Instant::now();
+                let vad_latency = segment_start.elapsed().as_millis() as f64;
+
+                // Process through STT (same pattern as start_recording)
+                let stt_start = Instant::now();
+                let mut stt_lock = match self.stt.lock() {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("STT lock error during flush: {}", e);
+                        info!("Recording stopped");
+                        return Ok(());
+                    }
+                };
+
+                let result = stt_lock.recognize(&speech_samples).unwrap_or_else(|e| {
+                    eprintln!("STT transcribe error during flush: {}", e);
+                    swictation_stt::RecognitionResult {
+                        text: String::new(),
+                        confidence: 0.0,
+                        processing_time_ms: 0.0,
+                    }
+                });
+                let text = result.text;
+                let stt_latency = stt_start.elapsed().as_millis() as f64;
+
+                if !text.is_empty() {
+                    // Transform voice commands → symbols (Midstream)
+                    let transform_start = Instant::now();
+                    let transformed = transform(&text);
+                    let transform_latency = transform_start.elapsed().as_micros() as f64;
+
+                    info!("Flushed transcription: {} → {}", text, transformed);
+
+                    // Track segment metrics
+                    let word_count = transformed.split_whitespace().count() as i32;
+                    let char_count = transformed.len() as i32;
+
+                    let current_session_id = *self.session_id.lock().unwrap();
+
+                    if let Some(sid) = current_session_id {
+                        let duration_s = (speech_samples.len() as f64) / 16000.0;
+                        let total_latency_ms = vad_latency + stt_latency + (transform_latency / 1000.0);
+
+                        let segment = SegmentMetrics {
+                            segment_id: None,
+                            session_id: Some(sid),
+                            timestamp: Some(Utc::now()),
+                            duration_s,
+                            words: word_count,
+                            characters: char_count,
+                            text: transformed.clone(),
+                            vad_latency_ms: vad_latency,
+                            audio_save_latency_ms: 0.0,
+                            stt_latency_ms: stt_latency,
+                            transform_latency_us: transform_latency,
+                            injection_latency_ms: 0.0,
+                            total_latency_ms,
+                            transformations_count: if text != transformed { 1 } else { 0 },
+                            keyboard_actions_count: 0,
+                        };
+
+                        if let Err(e) = self.metrics.lock().unwrap().add_segment(segment) {
+                            eprintln!("Failed to add flushed segment metrics: {}", e);
+                        }
+
+                        // Broadcast transcription to UI clients
+                        if let Some(ref broadcaster_ref) = *self.broadcaster.lock().unwrap() {
+                            let wpm = (word_count as f64 / (duration_s / 60.0)).min(300.0);
+                            tokio::spawn({
+                                let broadcaster = broadcaster_ref.clone();
+                                let text_clone = transformed.clone();
+                                async move {
+                                    broadcaster.add_transcription(
+                                        text_clone,
+                                        wpm,
+                                        total_latency_ms,
+                                        word_count,
+                                    ).await;
+                                }
+                            });
+                        }
+                    }
+
+                    // Send through transcription channel
+                    let _ = self.tx.send(Ok(transformed));
+                }
+            }
+        }
 
         info!("Recording stopped");
         Ok(())

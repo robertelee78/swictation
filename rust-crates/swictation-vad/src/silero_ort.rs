@@ -20,8 +20,10 @@ pub struct SileroVadOrt {
     min_speech_samples: usize,
     min_silence_samples: usize,
 
-    // State for streaming (combined RNN state: [2, 1, 128])
-    state: Array3<f32>,
+    // State for streaming - Silero VAD v6 uses LSTM with separate h and c states
+    // Each state is [2 layers, 1 batch, 64 hidden units]
+    h_state: Array3<f32>,  // LSTM hidden state [2, 1, 64]
+    c_state: Array3<f32>,  // LSTM cell state [2, 1, 64]
     triggered: bool,
     temp_end: usize,
     current_sample: usize,
@@ -101,8 +103,9 @@ impl SileroVadOrt {
         let min_speech_samples = (min_speech_duration_ms as f32 * sample_rate as f32 / 1000.0) as usize;
         let min_silence_samples = (min_silence_duration_ms as f32 * sample_rate as f32 / 1000.0) as usize;
 
-        // Initialize RNN state (2 layers, 1 batch, 128 hidden units)
-        let state = Array3::<f32>::zeros((2, 1, 128));
+        // Initialize LSTM states (2 layers, 1 batch, 64 hidden units each)
+        let h_state = Array3::<f32>::zeros((2, 1, 64));
+        let c_state = Array3::<f32>::zeros((2, 1, 64));
 
         Ok(Self {
             session: Arc::new(Mutex::new(session)),
@@ -111,7 +114,8 @@ impl SileroVadOrt {
             threshold,
             min_speech_samples,
             min_silence_samples,
-            state,
+            h_state,
+            c_state,
             triggered: false,
             temp_end: 0,
             current_sample: 0,
@@ -142,33 +146,29 @@ impl SileroVadOrt {
             eprintln!("  input range: [{:.6}, {:.6}]",
                      input_array.iter().copied().fold(f32::INFINITY, f32::min),
                      input_array.iter().copied().fold(f32::NEG_INFINITY, f32::max));
-            eprintln!("  state shape: {:?}", self.state.shape());
-            eprintln!("  state is C-contiguous: {}", self.state.is_standard_layout());
-            eprintln!("  sr value: {}", self.sample_rate);
+            eprintln!("  h_state shape: {:?}", self.h_state.shape());
+            eprintln!("  c_state shape: {:?}", self.c_state.shape());
         }
 
-        // Create sample rate array - using arr1 like voice_activity_detector
-        let sr_array = ndarray::arr1::<i64>(&[self.sample_rate as i64]);
-
         // Create tensors from OWNED arrays - ort 2.0.0-rc.10 requires owned, not views
-        // This is different from rc.4 which used views
+        // Model expects inputs: "x", "h", "c" (NOT "input", "state", "sr")
         let input_value = Tensor::from_array(input_array)
             .map_err(|e| VadError::processing(format!("Failed to create input: {}", e)))?;
-        let state_value = Tensor::from_array(self.state.clone())
-            .map_err(|e| VadError::processing(format!("Failed to create state: {}", e)))?;
-        let sr_value = Tensor::from_array(sr_array)
-            .map_err(|e| VadError::processing(format!("Failed to create sr: {}", e)))?;
+        let h_value = Tensor::from_array(self.h_state.clone())
+            .map_err(|e| VadError::processing(format!("Failed to create h state: {}", e)))?;
+        let c_value = Tensor::from_array(self.c_state.clone())
+            .map_err(|e| VadError::processing(format!("Failed to create c state: {}", e)))?;
 
-        // Run inference
+        // Run inference with correct tensor names
         let mut session_guard = self.session
             .lock()
             .map_err(|e| VadError::processing(format!("Failed to lock session: {}", e)))?;
 
         let outputs = session_guard
             .run(inputs![
-                "input" => input_value,
-                "state" => state_value,
-                "sr" => sr_value
+                "x" => input_value,
+                "h" => h_value,
+                "c" => c_value
             ])
             .map_err(|e| VadError::processing(format!("Failed to run inference: {}", e)))?;
 
@@ -177,32 +177,41 @@ impl SileroVadOrt {
         }
 
         // Extract speech probability from the output (shape: [batch, 1])
-        let output_array: ndarray::ArrayView2<f32> = outputs["output"]
+        // Model outputs: "prob", "new_h", "new_c"
+        let output_array: ndarray::ArrayView2<f32> = outputs["prob"]
             .try_extract_array()
-            .map_err(|e| VadError::processing(format!("Failed to extract output: {}", e)))?
+            .map_err(|e| VadError::processing(format!("Failed to extract prob: {}", e)))?
             .into_dimensionality()
-            .map_err(|e| VadError::processing(format!("Failed to reshape output: {}", e)))?;
+            .map_err(|e| VadError::processing(format!("Failed to reshape prob: {}", e)))?;
         let speech_prob = output_array[[0, 0]];
 
         if self.debug && self.current_sample == 0 {
             eprintln!("  Output array shape: {:?}", output_array.shape());
-            eprintln!("  Output array: {:?}", output_array);
-            eprintln!("  Speech probability extracted: {}", speech_prob);
+            eprintln!("  Speech probability: {}", speech_prob);
         }
 
-        // Extract and update state
-        let state_n: ArrayView3<f32> = outputs["stateN"]
+        // Extract and update LSTM states
+        let new_h: ArrayView3<f32> = outputs["new_h"]
             .try_extract_array()
-            .map_err(|e| VadError::processing(format!("Failed to extract stateN: {}", e)))?
+            .map_err(|e| VadError::processing(format!("Failed to extract new_h: {}", e)))?
             .into_dimensionality()
-            .map_err(|e| VadError::processing(format!("Failed to reshape stateN: {}", e)))?;
+            .map_err(|e| VadError::processing(format!("Failed to reshape new_h: {}", e)))?;
+
+        let new_c: ArrayView3<f32> = outputs["new_c"]
+            .try_extract_array()
+            .map_err(|e| VadError::processing(format!("Failed to extract new_c: {}", e)))?
+            .into_dimensionality()
+            .map_err(|e| VadError::processing(format!("Failed to reshape new_c: {}", e)))?;
 
         // Copy state data
         if self.debug && self.current_sample == 0 {
-            eprintln!("  State before update: sum={}", self.state.sum());
-            eprintln!("  State after inference: sum={}", state_n.sum());
+            eprintln!("  h_state before: sum={}", self.h_state.sum());
+            eprintln!("  c_state before: sum={}", self.c_state.sum());
+            eprintln!("  new_h sum: {}", new_h.sum());
+            eprintln!("  new_c sum: {}", new_c.sum());
         }
-        self.state.assign(&state_n);
+        self.h_state.assign(&new_h);
+        self.c_state.assign(&new_c);
 
         self.current_sample += audio_chunk.len();
 
@@ -223,8 +232,9 @@ impl SileroVadOrt {
             // Speech detected
             if !self.triggered {
                 self.triggered = true;
-                self.temp_end = self.current_sample;
             }
+            // Update temp_end to track the END of speech (last sample where speech was detected)
+            self.temp_end = self.current_sample;
             // Add samples to buffer
             self.speech_buffer.extend_from_slice(audio_chunk);
         } else if self.triggered {
@@ -253,7 +263,8 @@ impl SileroVadOrt {
 
     /// Reset the VAD state
     pub fn reset(&mut self) {
-        self.state.fill(0.0);
+        self.h_state.fill(0.0);
+        self.c_state.fill(0.0);
         self.triggered = false;
         self.temp_end = 0;
         self.current_sample = 0;

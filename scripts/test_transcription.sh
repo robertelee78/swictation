@@ -57,9 +57,9 @@ if [[ ! -f "$WAV_FILE" ]] || [[ "$AUDIO_FILE" -nt "$WAV_FILE" ]]; then
     ffmpeg -i "$AUDIO_FILE" -ar 16000 -ac 1 "$WAV_FILE" -y 2>&1 | tail -1
 fi
 
-# Play through PulseAudio
-echo "Playing audio..."
-paplay "$WAV_FILE" 2>&1 || echo "paplay completed"
+# Play through USB Audio and capture from its monitor (loopback)
+echo "Playing audio to USB Audio (ID 64) for loopback capture..."
+paplay --device=64 "$WAV_FILE" 2>&1 || echo "paplay completed"
 
 echo ""
 echo "Step 4: Wait for VAD to finish processing"
