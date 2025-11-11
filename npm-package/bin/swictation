@@ -51,8 +51,11 @@ function checkBinaries() {
     fs.chmodSync(daemonBinary, '755');
     fs.chmodSync(uiBinary, '755');
   } catch (err) {
-    console.error(chalk.red('Error: Could not set binary permissions'), err);
-    process.exit(1);
+    // Ignore EPERM errors for global installs (binaries already executable)
+    if (err.code !== 'EPERM') {
+      console.error(chalk.red('Error: Could not set binary permissions'), err);
+      process.exit(1);
+    }
   }
 }
 
