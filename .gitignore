@@ -75,10 +75,17 @@ coverage.xml
 *.ckpt
 *.pt
 *.pth
-# Models directory (except validated 1.1B export)
+# Models directory
 models/*
 !models/parakeet-tdt-1.1b/
-!models/parakeet-tdt-1.1b/**
+!models/parakeet-tdt-1.1b/*.md
+!models/parakeet-tdt-1.1b/*.txt
+# Large model files (download from HuggingFace)
+models/parakeet-tdt-1.1b/*.onnx
+models/parakeet-tdt-1.1b/*.weights
+models/parakeet-tdt-1.1b/layers.*
+models/parakeet-tdt-1.1b/onnx__*
+models/parakeet-tdt-1.1b/Constant_*
 downloads/
 .cache/
 *.model
