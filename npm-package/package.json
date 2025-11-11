@@ -1,6 +1,6 @@
 {
   "name": "swictation",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Voice-to-text dictation system with smart text transformation (Ubuntu 24.04+ required)",
   "keywords": [
     "voice-to-text",
