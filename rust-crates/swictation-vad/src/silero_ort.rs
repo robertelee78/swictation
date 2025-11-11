@@ -85,6 +85,18 @@ impl SileroVadOrt {
                 .map_err(|e| VadError::initialization(format!("Failed to load model: {}", e)))?
         };
 
+        // Print model input/output names for debugging
+        println!("=== ONNX Model Metadata ===");
+        println!("Model inputs:");
+        for input in session.inputs.iter() {
+            println!("  - name: '{}' (type: {:?})", input.name, input.input_type);
+        }
+        println!("Model outputs:");
+        for output in session.outputs.iter() {
+            println!("  - name: '{}' (type: {:?})", output.name, output.output_type);
+        }
+        println!("===========================");
+
         // Calculate sample counts from durations
         let min_speech_samples = (min_speech_duration_ms as f32 * sample_rate as f32 / 1000.0) as usize;
         let min_silence_samples = (min_silence_duration_ms as f32 * sample_rate as f32 / 1000.0) as usize;
