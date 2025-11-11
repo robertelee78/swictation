@@ -15,12 +15,12 @@ const MODELS = {
   vad: {
     name: 'Silero VAD v6',
     size: '656 KB',
-    repo: 'snakers4/silero-vad',
+    repo: 'onnx-community/silero-vad',
     targetDir: 'silero-vad',
-    files: ['files/silero_vad.onnx'],
-    // Need to copy silero_vad.onnx from files/ subdirectory
+    files: ['onnx/model.onnx'],
+    // Need to copy model.onnx from onnx/ subdirectory
     postDownload: (modelDir) => {
-      const src = path.join(modelDir, 'files', 'silero_vad.onnx');
+      const src = path.join(modelDir, 'onnx', 'model.onnx');
       const dest = path.join(modelDir, 'silero_vad.onnx');
       if (fs.existsSync(src) && !fs.existsSync(dest)) {
         fs.copyFileSync(src, dest);

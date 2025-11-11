@@ -25,6 +25,7 @@ eggs/
 .eggs/
 lib/
 lib64/
+!npm-package/lib/
 parts/
 sdist/
 var/
