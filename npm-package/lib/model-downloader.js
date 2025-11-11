@@ -124,10 +124,8 @@ class ModelDownloader {
         '--local-dir', targetPath
       ];
 
-      // Add specific files if defined
-      if (model.files && model.files.length > 0) {
-        model.files.forEach(file => args.push('--include', file));
-      }
+      // Note: We don't use --include because it's unreliable with hf CLI
+      // Just download all files from the repository
 
       const proc = spawn('hf', args, {
         stdio: this.verbose ? 'inherit' : 'pipe'
