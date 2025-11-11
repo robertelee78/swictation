@@ -14,18 +14,12 @@ const os = require('os');
 const MODELS = {
   vad: {
     name: 'Silero VAD v6',
-    size: '656 KB',
-    repo: 'onnx-community/silero-vad',
+    size: '629 KB',
+    // Use k2-fsa/sherpa-onnx pre-converted model with correct tensor format
+    // Tensor names: x, h, c → prob, new_h, new_c
+    directUrl: 'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx',
     targetDir: 'silero-vad',
-    files: ['onnx/model.onnx'],
-    // Need to copy model.onnx from onnx/ subdirectory
-    postDownload: (modelDir) => {
-      const src = path.join(modelDir, 'onnx', 'model.onnx');
-      const dest = path.join(modelDir, 'silero_vad.onnx');
-      if (fs.existsSync(src) && !fs.existsSync(dest)) {
-        fs.copyFileSync(src, dest);
-      }
-    }
+    files: ['silero_vad.onnx']
   },
   '0.6b': {
     name: 'Parakeet-TDT 0.6B',
@@ -96,7 +90,7 @@ class ModelDownloader {
   }
 
   /**
-   * Download a specific model using hf CLI
+   * Download a specific model using hf CLI or direct URL
    */
   async downloadModel(modelKey) {
     const model = MODELS[modelKey];
@@ -110,13 +104,66 @@ class ModelDownloader {
       return;
     }
 
+    const targetPath = path.join(this.modelDir, model.targetDir);
+
+    // Handle direct URL downloads (e.g., k2-fsa VAD)
+    if (model.directUrl) {
+      this.log(`\n📦 Downloading ${model.name} (${model.size})...`);
+      this.log(`   URL: ${model.directUrl}`);
+      this.log(`   Destination: ${targetPath}\n`);
+
+      return new Promise((resolve, reject) => {
+        // Create target directory
+        if (!fs.existsSync(targetPath)) {
+          fs.mkdirSync(targetPath, { recursive: true });
+        }
+
+        const filePath = path.join(targetPath, model.files[0]);
+        const proc = spawn('curl', [
+          '-L',  // Follow redirects
+          model.directUrl,
+          '-o', filePath,
+          '--progress-bar'
+        ], {
+          stdio: this.verbose ? 'inherit' : 'pipe'
+        });
+
+        let stderr = '';
+
+        if (!this.verbose) {
+          proc.stdout.on('data', (data) => {
+            process.stdout.write(data);
+          });
+
+          proc.stderr.on('data', (data) => {
+            // curl progress goes to stderr
+            process.stderr.write(data);
+            stderr += data.toString();
+          });
+        }
+
+        proc.on('close', (code) => {
+          if (code !== 0) {
+            reject(new Error(`Download failed with code ${code}\n${stderr}`));
+            return;
+          }
+
+          this.log(`✓ ${model.name} downloaded successfully\n`);
+          resolve();
+        });
+
+        proc.on('error', (err) => {
+          reject(new Error(`Failed to spawn curl: ${err.message}`));
+        });
+      });
+    }
+
+    // Handle HuggingFace CLI downloads
     this.log(`\n📦 Downloading ${model.name} (${model.size})...`);
     this.log(`   Repository: ${model.repo}`);
-    this.log(`   Destination: ${path.join(this.modelDir, model.targetDir)}\n`);
+    this.log(`   Destination: ${targetPath}\n`);
 
     return new Promise((resolve, reject) => {
-      const targetPath = path.join(this.modelDir, model.targetDir);
-
       // Build hf CLI command
       const args = [
         'download',

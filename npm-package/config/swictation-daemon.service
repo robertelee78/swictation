@@ -1,10 +1,12 @@
 [Unit]
 Description=Swictation Voice-to-Text Daemon
 After=graphical-session.target
+# Auto-start UI service when daemon starts
+Wants=swictation-ui.service
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/swictation-daemon
+ExecStart=/usr/local/lib/node_modules/swictation/bin/swictation-daemon
 Restart=on-failure
 RestartSec=5
 

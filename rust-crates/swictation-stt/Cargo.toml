@@ -1,6 +1,6 @@
 [package]
 name = "swictation-stt"
-version = "0.1.0"
+version = "0.2.2"
 edition = "2021"
 description = "Pure Rust speech-to-text with ONNX Runtime and Parakeet-TDT-0.6B-V3"
 license = "Apache-2.0"

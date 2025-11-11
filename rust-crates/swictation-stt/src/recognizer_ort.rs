@@ -122,33 +122,71 @@ impl OrtRecognizer {
             )))
         };
 
+        // CRITICAL FIX: Change to model directory before loading
+        // ONNX Runtime 1.22+ looks for external data files (encoder.weights)
+        // relative to the current working directory, not the .onnx file location
+        let original_dir = std::env::current_dir()
+            .map_err(|e| SttError::ModelLoadError(format!("Failed to get current directory: {}", e)))?;
+
+        std::env::set_current_dir(&model_path)
+            .map_err(|e| SttError::ModelLoadError(format!("Failed to change to model directory {}: {}", model_path.display(), e)))?;
+
+        info!("Changed working directory to {} for model loading", model_path.display());
+
         // Load the three ONNX models (external weights load automatically!)
         info!("Loading encoder...");
         let encoder_path = find_model_file("encoder")?;
         let encoder = session_builder
             .commit_from_file(&encoder_path)
-            .map_err(|e| SttError::ModelLoadError(format!("Failed to load encoder: {}", e)))?;
+            .map_err(|e| {
+                // Restore directory even on error
+                let _ = std::env::set_current_dir(&original_dir);
+                SttError::ModelLoadError(format!("Failed to load encoder: {}", e))
+            })?;
         info!("✓ Encoder loaded (external weights automatically loaded)");
 
         info!("Loading decoder...");
         let decoder_path = find_model_file("decoder")?;
         let decoder = Session::builder()
-            .map_err(|e| SttError::ModelLoadError(format!("Failed to create decoder session builder: {}", e)))?
+            .map_err(|e| {
+                let _ = std::env::set_current_dir(&original_dir);
+                SttError::ModelLoadError(format!("Failed to create decoder session builder: {}", e))
+            })?
             .with_optimization_level(GraphOptimizationLevel::Level3)
-            .map_err(|e| SttError::ModelLoadError(format!("Failed to set decoder optimization: {}", e)))?
+            .map_err(|e| {
+                let _ = std::env::set_current_dir(&original_dir);
+                SttError::ModelLoadError(format!("Failed to set decoder optimization: {}", e))
+            })?
             .commit_from_file(&decoder_path)
-            .map_err(|e| SttError::ModelLoadError(format!("Failed to load decoder: {}", e)))?;
+            .map_err(|e| {
+                let _ = std::env::set_current_dir(&original_dir);
+                SttError::ModelLoadError(format!("Failed to load decoder: {}", e))
+            })?;
         info!("✓ Decoder loaded");
 
         info!("Loading joiner...");
         let joiner_path = find_model_file("joiner")?;
         let joiner = Session::builder()
-            .map_err(|e| SttError::ModelLoadError(format!("Failed to create joiner session builder: {}", e)))?
+            .map_err(|e| {
+                let _ = std::env::set_current_dir(&original_dir);
+                SttError::ModelLoadError(format!("Failed to create joiner session builder: {}", e))
+            })?
             .with_optimization_level(GraphOptimizationLevel::Level3)
-            .map_err(|e| SttError::ModelLoadError(format!("Failed to set joiner optimization: {}", e)))?
+            .map_err(|e| {
+                let _ = std::env::set_current_dir(&original_dir);
+                SttError::ModelLoadError(format!("Failed to set joiner optimization: {}", e))
+            })?
             .commit_from_file(&joiner_path)
-            .map_err(|e| SttError::ModelLoadError(format!("Failed to load joiner: {}", e)))?;
+            .map_err(|e| {
+                let _ = std::env::set_current_dir(&original_dir);
+                SttError::ModelLoadError(format!("Failed to load joiner: {}", e))
+            })?;
         info!("✓ Joiner loaded");
+
+        // Restore original working directory after all models loaded
+        std::env::set_current_dir(&original_dir)
+            .map_err(|e| SttError::ModelLoadError(format!("Failed to restore original directory: {}", e)))?;
+        info!("Restored working directory to {}", original_dir.display());
 
         // Detect encoder input format by inspecting input shape
         // 0.6B: (batch, 128 features, time) - NEEDS transpose

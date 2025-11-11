@@ -1,25 +1,28 @@
 [Unit]
-Description=Swictation UI (Smart Launcher - Qt or Tauri based on environment)
-Documentation=https://github.com/yourusername/swictation
-After=swictation-daemon.service graphical-session.target
+Description=Swictation System Tray UI
+# Start after daemon is ready
+After=swictation-daemon.service
+# Required dependency - UI needs daemon to function
 Requires=swictation-daemon.service
+# Stop when daemon stops
 BindsTo=swictation-daemon.service
-PartOf=graphical-session.target
+# Part of daemon service group
+PartOf=swictation-daemon.service
 
 [Service]
 Type=simple
-ExecStart=/opt/swictation/scripts/launch-swictation-ui.sh
+ExecStart=/usr/local/lib/node_modules/swictation/bin/swictation-ui-launcher
 Restart=on-failure
 RestartSec=5
-StandardOutput=journal
-StandardError=journal
 
-# Environment
-Environment="PYTHONUNBUFFERED=1"
-Environment="PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin"
+# Environment for Wayland/X11
+Environment="WAYLAND_DISPLAY=wayland-1"
+Environment="XDG_RUNTIME_DIR=/run/user/1000"
+Environment="QT_QPA_PLATFORM=wayland"
 
-# Security
-ProtectHome=read-only
+# Resource limits (UI is lightweight)
+MemoryMax=100M
+CPUQuota=10%
 
 [Install]
 WantedBy=default.target

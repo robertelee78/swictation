@@ -1,6 +1,8 @@
 [Unit]
 Description=Swictation Voice-to-Text Daemon
 After=graphical-session.target
+# Auto-start UI service when daemon starts
+Wants=swictation-ui.service
 
 [Service]
 Type=simple

@@ -100,8 +100,27 @@ impl Recognizer {
             ..Default::default()
         };
 
-        // Create recognizer
-        let recognizer = TransducerRecognizer::new(config).map_err(|e| {
+        // CRITICAL FIX: Change to model directory before loading
+        // ONNX Runtime 1.22+ looks for external data files (encoder.weights)
+        // relative to the current working directory, not the .onnx file location
+        let original_dir = std::env::current_dir()
+            .map_err(|e| SttError::model_load(format!("Failed to get current directory: {}", e)))?;
+
+        std::env::set_current_dir(model_path)
+            .map_err(|e| SttError::model_load(format!("Failed to change to model directory {}: {}", model_path.display(), e)))?;
+
+        tracing::info!("Changed working directory to {} for model loading", model_path.display());
+
+        // Create recognizer (will load encoder.weights from current directory)
+        let recognizer_result = TransducerRecognizer::new(config);
+
+        // Restore original working directory
+        std::env::set_current_dir(&original_dir)
+            .map_err(|e| SttError::model_load(format!("Failed to restore original directory: {}", e)))?;
+
+        tracing::info!("Restored working directory to {}", original_dir.display());
+
+        let recognizer = recognizer_result.map_err(|e| {
             SttError::model_load(format!("Failed to create sherpa-rs recognizer: {}", e))
         })?;
 

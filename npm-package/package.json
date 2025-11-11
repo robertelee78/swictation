@@ -1,6 +1,6 @@
 {
   "name": "swictation",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "description": "Voice-to-text dictation system with smart text transformation and NVIDIA GPU acceleration (Ubuntu 24.04+ required)",
   "keywords": [
     "voice-to-text",
@@ -32,6 +32,8 @@
     "bin/",
     "lib/",
     "config/",
+    "src/",
+    "docs/",
     "postinstall.js",
     "README.md"
   ],

@@ -1,6 +1,6 @@
 [package]
 name = "swictation-audio"
-version = "0.1.0"
+version = "0.2.2"
 edition = "2021"
 description = "High-performance audio capture for Swictation with zero-copy buffers"
 license = "Apache-2.0"

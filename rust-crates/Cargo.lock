@@ -2431,7 +2431,7 @@ dependencies = [
 
 [[package]]
 name = "swictation-audio"
-version = "0.1.0"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "approx",
@@ -2447,7 +2447,7 @@ dependencies = [
 
 [[package]]
 name = "swictation-broadcaster"
-version = "0.1.0"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2463,7 +2463,7 @@ dependencies = [
 
 [[package]]
 name = "swictation-daemon"
-version = "0.1.0"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2492,7 +2492,7 @@ dependencies = [
 
 [[package]]
 name = "swictation-metrics"
-version = "0.1.0"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2515,7 +2515,7 @@ dependencies = [
 
 [[package]]
 name = "swictation-stt"
-version = "0.1.0"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "approx",
@@ -2532,7 +2532,7 @@ dependencies = [
 
 [[package]]
 name = "swictation-vad"
-version = "0.1.0"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "hound",
