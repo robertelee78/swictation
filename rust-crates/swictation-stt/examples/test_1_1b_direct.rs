@@ -27,7 +27,7 @@ fn main() -> Result<()> {
     println!("{}", "=".repeat(80));
 
     // Load model
-    let model_path = "/opt/swictation/models/parakeet-tdt-1.1b";
+    let model_path = "/opt/swictation/models/parakeet-tdt-1.1b-onnx";
     println!("\n📦 Loading model from: {}", model_path);
 
     let load_start = Instant::now();
