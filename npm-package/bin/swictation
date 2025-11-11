@@ -278,12 +278,55 @@ async function handleToggle() {
   }
 }
 
+async function handleDownloadModels() {
+  const ModelDownloader = require(path.join(__dirname, '..', 'lib', 'model-downloader.js'));
+
+  // Parse arguments
+  const modelArg = args.find(arg => arg.startsWith('--model='));
+  const modelValue = modelArg ? modelArg.split('=')[1] : 'both';
+  const force = args.includes('--force');
+
+  // Validate model argument
+  const validModels = ['0.6b', '1.1b', 'both'];
+  if (!validModels.includes(modelValue)) {
+    console.error(chalk.red(`Invalid model: ${modelValue}`));
+    console.log(chalk.yellow('Valid options: 0.6b, 1.1b, both'));
+    process.exit(1);
+  }
+
+  // Determine which models to download
+  let modelKeys = [];
+  switch (modelValue) {
+    case '0.6b':
+      modelKeys = ['vad', '0.6b'];
+      console.log(chalk.cyan('Downloading: Silero VAD + Parakeet-TDT 0.6B (CPU-friendly)'));
+      break;
+    case '1.1b':
+      modelKeys = ['vad', '1.1b'];
+      console.log(chalk.cyan('Downloading: Silero VAD + Parakeet-TDT 1.1B (GPU-optimized)'));
+      break;
+    case 'both':
+      modelKeys = ['vad', '0.6b', '1.1b'];
+      console.log(chalk.cyan('Downloading: All models (9.43 GB total)'));
+      break;
+  }
+
+  try {
+    const downloader = new ModelDownloader({ force });
+    await downloader.downloadModels(modelKeys);
+  } catch (err) {
+    console.error(chalk.red('Download failed:'), err.message);
+    process.exit(1);
+  }
+}
+
 function showHelp() {
   console.log(chalk.cyan('Swictation - Voice-to-Text Dictation System'));
   console.log(chalk.gray('─'.repeat(40)));
   console.log('Usage: swictation [command] [options]');
   console.log();
   console.log('Commands:');
+  console.log('  download-models Download AI models from HuggingFace');
   console.log('  start [--ui]    Start the daemon (and optionally the UI)');
   console.log('  stop            Stop the daemon');
   console.log('  status          Show service status');
@@ -291,17 +334,32 @@ function showHelp() {
   console.log('  setup           Configure systemd and hotkeys');
   console.log('  help            Show this help message');
   console.log();
+  console.log('Download Options:');
+  console.log('  --model=0.6b    Download 0.6B model only (2.47 GB, CPU-friendly)');
+  console.log('  --model=1.1b    Download 1.1B model only (6.96 GB, GPU-optimized)');
+  console.log('  --model=both    Download both models (9.43 GB, default)');
+  console.log('  --force         Re-download even if models exist');
+  console.log();
   console.log('Examples:');
-  console.log('  swictation start          # Start the daemon');
-  console.log('  swictation start --ui     # Start daemon and UI');
-  console.log('  swictation toggle         # Toggle recording');
-  console.log('  swictation status         # Check if running');
+  console.log('  swictation download-models              # Download all models');
+  console.log('  swictation download-models --model=0.6b # CPU-friendly only');
+  console.log('  swictation start                        # Start the daemon');
+  console.log('  swictation start --ui                   # Start daemon and UI');
+  console.log('  swictation toggle                       # Toggle recording');
+  console.log('  swictation status                       # Check if running');
   process.exit(0);
 }
 
 // Main entry point
 async function main() {
   checkPlatform();
+
+  // download-models doesn't need binaries to exist yet
+  if (command === 'download-models') {
+    await handleDownloadModels();
+    return;
+  }
+
   checkBinaries();
 
   switch (command) {

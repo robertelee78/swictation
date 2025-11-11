@@ -2,7 +2,41 @@
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::env;
 use std::path::PathBuf;
+
+/// Get default model directory using XDG Base Directory spec
+/// Falls back to ~/.local/share/swictation/models/
+/// Can be overridden with SWICTATION_MODEL_PATH environment variable
+fn get_default_model_dir() -> PathBuf {
+    env::var("SWICTATION_MODEL_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            let home = env::var("HOME").expect("HOME environment variable not set");
+            PathBuf::from(home)
+                .join(".local")
+                .join("share")
+                .join("swictation")
+                .join("models")
+        })
+}
+
+/// Get default path for 0.6B model
+fn get_default_0_6b_model_path() -> PathBuf {
+    get_default_model_dir().join("sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-onnx")
+}
+
+/// Get default path for 1.1B model
+fn get_default_1_1b_model_path() -> PathBuf {
+    get_default_model_dir().join("parakeet-tdt-1.1b-onnx")
+}
+
+/// Get default path for VAD model
+fn get_default_vad_model_path() -> PathBuf {
+    get_default_model_dir()
+        .join("silero-vad")
+        .join("silero_vad.onnx")
+}
 
 /// Hotkey configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,7 +70,7 @@ pub struct DaemonConfig {
     pub socket_path: String,
 
     /// VAD model path
-    pub vad_model_path: String,
+    pub vad_model_path: PathBuf,
 
     /// VAD minimum silence duration (seconds)
     pub vad_min_silence: f32,
@@ -56,10 +90,10 @@ pub struct DaemonConfig {
     pub stt_model_override: String,
 
     /// Path to 0.6B model directory (sherpa-rs)
-    pub stt_0_6b_model_path: String,
+    pub stt_0_6b_model_path: PathBuf,
 
     /// Path to 1.1B INT8 model directory (ONNX Runtime)
-    pub stt_1_1b_model_path: String,
+    pub stt_1_1b_model_path: PathBuf,
 
     /// Number of threads for ONNX Runtime
     pub num_threads: Option<i32>,
@@ -76,15 +110,15 @@ impl Default for DaemonConfig {
         Self {
             config_path: Self::default_config_path(),
             socket_path: "/tmp/swictation.sock".to_string(),
-            vad_model_path: "/opt/swictation/models/silero-vad/silero_vad.onnx".to_string(),
+            vad_model_path: get_default_vad_model_path(),
             vad_min_silence: 0.5,
             vad_min_speech: 0.25,
             vad_max_speech: 30.0,
             vad_threshold: 0.003, // ONNX model threshold (100-200x lower than PyTorch 0.5)
             // STT adaptive model selection (auto = VRAM-based)
             stt_model_override: "auto".to_string(),
-            stt_0_6b_model_path: "/opt/swictation/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-onnx".to_string(),
-            stt_1_1b_model_path: "/opt/swictation/models/parakeet-tdt-1.1b-onnx".to_string(),
+            stt_0_6b_model_path: get_default_0_6b_model_path(),
+            stt_1_1b_model_path: get_default_1_1b_model_path(),
             num_threads: Some(4),
             audio_device_index: None, // Will be set from env var or auto-detected
             hotkeys: HotkeyConfig::default(),

@@ -63,7 +63,7 @@ impl Pipeline {
 
         info!("Initializing VAD with {} provider...",
               gpu_provider.as_deref().unwrap_or("CPU"));
-        let vad_config = VadConfig::with_model(&config.vad_model_path)
+        let vad_config = VadConfig::with_model(config.vad_model_path.display().to_string())
             .min_silence(config.vad_min_silence)
             .min_speech(config.vad_min_speech)
             .max_speech(config.vad_max_speech)
@@ -97,7 +97,7 @@ impl Pipeline {
                     let ort_recognizer = OrtRecognizer::new(&config.stt_1_1b_model_path, true)
                         .map_err(|e| anyhow::anyhow!(
                             "Failed to load 1.1B INT8 model from {}. \
-                            \nError: {}", config.stt_1_1b_model_path, e
+                            \nError: {}", config.stt_1_1b_model_path.display(), e
                         ))?;
                     info!("✓ Parakeet-TDT-1.1B-INT8 loaded successfully (GPU, forced)");
                     SttEngine::Parakeet1_1B(ort_recognizer)
@@ -107,7 +107,7 @@ impl Pipeline {
                     let recognizer = Recognizer::new(&config.stt_0_6b_model_path, true)
                         .map_err(|e| anyhow::anyhow!(
                             "Failed to load 0.6B GPU model from {}. \
-                            \nError: {}", config.stt_0_6b_model_path, e
+                            \nError: {}", config.stt_0_6b_model_path.display(), e
                         ))?;
                     info!("✓ Parakeet-TDT-0.6B loaded successfully (GPU, forced)");
                     SttEngine::Parakeet0_6B(recognizer)
@@ -117,7 +117,7 @@ impl Pipeline {
                     let recognizer = Recognizer::new(&config.stt_0_6b_model_path, false)
                         .map_err(|e| anyhow::anyhow!(
                             "Failed to load 0.6B CPU model from {}. \
-                            \nError: {}", config.stt_0_6b_model_path, e
+                            \nError: {}", config.stt_0_6b_model_path.display(), e
                         ))?;
                     info!("✓ Parakeet-TDT-0.6B loaded successfully (CPU, forced)");
                     SttEngine::Parakeet0_6B(recognizer)
@@ -152,7 +152,7 @@ impl Pipeline {
                         \n  2. Check CUDA/cuDNN installation: nvidia-smi\
                         \n  3. Ensure ONNX Runtime CUDA EP is available\
                         \n  4. Try 0.6B fallback by setting stt_model_override=\"0.6b-gpu\" in config\
-                        \nError: {}", vram, config.stt_1_1b_model_path, e
+                        \nError: {}", vram, config.stt_1_1b_model_path.display(), e
                     ))?;
 
                     info!("✓ Parakeet-TDT-1.1B-INT8 loaded successfully (GPU)");
@@ -171,7 +171,7 @@ impl Pipeline {
                             \n  2. Check CUDA availability: nvidia-smi\
                             \n  3. Verify sherpa-rs CUDA support\
                             \n  4. Try CPU fallback by setting stt_model_override=\"0.6b-cpu\" in config\
-                            \nError: {}", vram, config.stt_0_6b_model_path, e
+                            \nError: {}", vram, config.stt_0_6b_model_path.display(), e
                         ))?;
 
                     info!("✓ Parakeet-TDT-0.6B loaded successfully (GPU)");
@@ -190,7 +190,7 @@ impl Pipeline {
                             \n  1. Verify model files: ls {}\
                             \n  2. Check available RAM (need ~1GB free)\
                             \n  3. Ensure ONNX Runtime CPU EP is available\
-                            \nError: {}", config.stt_0_6b_model_path, e
+                            \nError: {}", config.stt_0_6b_model_path.display(), e
                         ))?;
 
                     info!("✓ Parakeet-TDT-0.6B loaded successfully (CPU)");
@@ -209,7 +209,7 @@ impl Pipeline {
                         \n  1. Verify model files: ls {}\
                         \n  2. Check available RAM (need ~1GB free)\
                         \n  3. Ensure ONNX Runtime CPU EP is available\
-                        \nError: {}", config.stt_0_6b_model_path, e
+                        \nError: {}", config.stt_0_6b_model_path.display(), e
                     ))?;
 
                 info!("✓ Parakeet-TDT-0.6B loaded successfully (CPU)");

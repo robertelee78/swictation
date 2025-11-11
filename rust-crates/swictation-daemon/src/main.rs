@@ -199,21 +199,21 @@ async fn main() -> Result<()> {
                 info!("  Detected: {}MB VRAM", vram);
                 if vram >= 4096 {
                     info!("  Would load: Parakeet-TDT-1.1B-INT8 (GPU)");
-                    info!("    Path: {}", config.stt_1_1b_model_path);
+                    info!("    Path: {}", config.stt_1_1b_model_path.display());
                     info!("    Reason: ≥4GB VRAM available");
                 } else if vram >= 1536 {
                     info!("  Would load: Parakeet-TDT-0.6B (GPU)");
-                    info!("    Path: {}", config.stt_0_6b_model_path);
+                    info!("    Path: {}", config.stt_0_6b_model_path.display());
                     info!("    Reason: ≥1.5GB VRAM available");
                 } else {
                     info!("  Would load: Parakeet-TDT-0.6B (CPU)");
-                    info!("    Path: {}", config.stt_0_6b_model_path);
+                    info!("    Path: {}", config.stt_0_6b_model_path.display());
                     info!("    Reason: <1.5GB VRAM ({}MB), using CPU fallback", vram);
                 }
             } else {
                 info!("  Detected: No GPU");
                 info!("  Would load: Parakeet-TDT-0.6B (CPU)");
-                info!("    Path: {}", config.stt_0_6b_model_path);
+                info!("    Path: {}", config.stt_0_6b_model_path.display());
                 info!("    Reason: No NVIDIA GPU detected");
             }
         }

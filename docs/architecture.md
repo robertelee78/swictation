@@ -13,7 +13,7 @@ Swictation is a **pure Rust daemon** with VAD-triggered automatic transcription.
 │           SWICTATION-DAEMON (Rust Binary)                   │
 │                                                             │
 │   Architecture: VAD-Triggered Streaming Transcription      │
-│   State Machine:  [IDLE] ↔ [RECORDING] ↔ [PROCESSING]     │
+│   State Machine:  [IDLE] ↔ [RECORDING]                     │
 │   Runtime: Tokio async with state machine                  │
 │                                                             │
 │   Control: Global hotkey ($mod+Shift+d)                    │
@@ -50,32 +50,30 @@ struct SwictationDaemon {
    │                                    │ (continuous audio streaming)
    │                                    │ ↓
    │                             [VAD Detection Loop]
-   │                                    │ • Process audio chunks
+   │                                    │ • Process audio chunks in tokio task
    │                                    │ • Detect speech vs silence
-   │                                    │ • Track silence duration (0.8s threshold)
-   │                                    │ • When silence >= 0.8s after speech:
-   │                                    │   → Enter PROCESSING state
+   │                                    │ • Track silence duration (0.5s default)
+   │                                    │ • When silence >= 0.5s after speech:
+   │                                    │   → Transcribe segment (async)
+   │                                    │   → Transform text (MidStream)
+   │                                    │   → Inject via wtype
+   │                                    │   → Clear buffer, continue recording
    │                                    │
-   └─────(hotkey or segment complete)──────[PROCESSING]
-                                                │ • Transcribe segment
-                                                │ • Transform text (MidStream)
-                                                │ • Inject via wtype
-                                                │ • Clear buffer
-                                                └─► Return to RECORDING or IDLE
+   └─────────────(hotkey press again)──────┘
 ```
 
 **States:**
-- `Idle`: Daemon running, not recording
-- `Recording`: Continuously capturing audio, VAD monitoring for silence
-- `Processing`: Transcribing and injecting text segment
+- `Idle`: Daemon running, not recording (waiting for hotkey)
+- `Recording`: Continuously capturing audio, VAD monitoring for silence, transcribing and injecting segments automatically when silence detected (all within this state)
 
 **Key Features:**
-- VAD-triggered automatic segmentation (0.8s silence threshold configurable)
+- VAD-triggered automatic segmentation (0.5s silence threshold configurable via config)
 - Continuous recording with real-time audio callbacks (tokio async)
 - Lock-free ring buffer for audio streaming
 - Global hotkey via global-hotkey crate (cross-platform)
 - Pure Rust - zero Python runtime
 - Graceful shutdown with signal handling
+- Real-time metrics broadcasting via Unix socket (`/tmp/swictation_metrics.sock`)
 
 **Performance (Adaptive Model Selection):**
 - Startup time: 1-3s (model loading + GPU detection)
@@ -579,25 +577,28 @@ $ swictation-daemon --test-model 0.6b-gpu
 
 **Purpose:** Transform voice commands to symbols (future feature)
 
-**Current Status:** Rules reset to 0 (rebuilding for dictation mode)
+**Current Status:** Rules reset to 0 (intentionally awaiting Parakeet-TDT behavior analysis)
 
 **Architecture:**
 ```rust
-// external/midstream/crates/text-transform/
+// external/midstream/crates/text-transform/src/rules.rs
 pub struct TextTransformer {
-    rules: Vec<TransformRule>,  // Currently 0 rules
+    rules: Vec<TransformRule>,  // Currently 0 rules (intentional)
 }
 ```
 
-**Planned Implementation:**
-- **Target:** 30-50 secretary dictation rules
-- **Focus:** Natural language punctuation (NOT programming symbols)
+**Implementation Status:**
+- **Current:** 0 transformation rules (passthrough mode)
+- **Reason:** Waiting for Parakeet-TDT STT output analysis (task 4218691c)
+- **Next Step:** Implement dictation mode (task 3393b914)
+- **Target:** 30-50 secretary dictation rules for natural punctuation
+- **Focus:** Natural language punctuation only (NOT programming symbols)
 - **Examples:** "comma" → ",", "period" → ".", "new paragraph" → "\n\n"
 - **Performance:** ~1μs latency (native Rust)
 
-**Integration:** Direct Rust function calls (no FFI overhead)
+**Integration:** Direct Rust function calls via midstreamer_text_transform crate (no FFI overhead)
 
-See task `4218691c-852d-4a67-ac89-b61bd6b18443` for pattern documentation plan.
+**Why Empty?** Smart engineering - analyze real STT output first, then design rules based on actual model behavior, not assumptions.
 
 ---
 
@@ -660,7 +661,7 @@ echo "Hello, world!" | wl-copy
 3. Audio capture starts (cpal → PipeWire → streaming)
    ↓
 4. ┌─────────────────────────────────────────────────┐
-   │  CONTINUOUS RECORDING LOOP                      │
+   │  CONTINUOUS RECORDING LOOP (within Recording state) │
    │                                                 │
    │  Every audio chunk (real-time):                │
    │    • Accumulate audio in lock-free ring buffer │
@@ -668,24 +669,23 @@ echo "Hello, world!" | wl-copy
    │    • Check speech vs silence (0.003 threshold) │
    │    • Track silence duration                    │
    │                                                 │
-   │  When 0.8s silence detected after speech:      │
+   │  When 0.5s silence detected after speech:      │
    │    • Extract full segment from buffer          │
-   │    • State: RECORDING → PROCESSING             │
-   │    • Extract mel features (80 bins)            │
-   │    • Transcribe with Parakeet-TDT (CPU/GPU) │
-   │    • Transform text (MidStream - future)       │
-   │    • Inject via wtype immediately              │
+   │    • Spawn async task to process segment:      │
+   │      - Extract mel features (80 or 128 bins)   │
+   │      - Transcribe with Parakeet-TDT (CPU/GPU)  │
+   │      - Transform text (MidStream - planned)    │
+   │      - Inject via wtype immediately            │
    │    • Clear buffer, start new segment           │
-   │    • State: PROCESSING → RECORDING             │
-   │    • Continue recording...                     │
+   │    • Continue recording in parallel...         │
    └─────────────────────────────────────────────────┘
    ↓
-5. USER SPEAKS: "This is segment one." [0.8s pause]
-   → VAD detects silence → transcribe → inject
+5. USER SPEAKS: "This is segment one." [0.5s pause]
+   → VAD detects silence → transcribe (async) → inject
    → Text appears: "This is segment one."
    ↓
-6. USER CONTINUES: "And here's segment two." [0.8s pause]
-   → VAD detects silence → transcribe → inject
+6. USER CONTINUES: "And here's segment two." [0.5s pause]
+   → VAD detects silence → transcribe (async) → inject
    → Text appears: "And here's segment two."
    ↓
 7. USER PRESSES $mod+Shift+d AGAIN
@@ -693,6 +693,8 @@ echo "Hello, world!" | wl-copy
 8. Final segment (if any) transcribed and injected
    ↓
 9. Daemon state: RECORDING → IDLE
+   ↓
+10. Session metrics saved (words dictated, WPM, etc.)
 ```
 
 **Key Advantages:**
@@ -710,17 +712,18 @@ echo "Hello, world!" | wl-copy
 
 | Component | Latency | Notes |
 |-----------|---------|-------|
-| VAD Silence Detection | 800ms | Configurable threshold (0.5s-2s) |
+| VAD Silence Detection | 500ms | Configurable (default 0.5s in config.rs:80) |
 | Audio Accumulation | Continuous | Zero overhead (lock-free buffer) |
 | VAD Check per Chunk | <50ms | ONNX Runtime (CPU/GPU) |
 | Mel Feature Extraction | 10-20ms | Pure Rust or sherpa-rs internal |
-| STT Processing (0.6B) | 100-400ms | sherpa-rs (CPU/GPU auto-detect) |
-| STT Processing (1.1B planned) | 150-800ms | Direct ort (CPU/GPU) |
-| Text Transformation | ~1μs | Native Rust (negligible) |
+| STT Processing (0.6B GPU) | 100-150ms | sherpa-rs with CUDA |
+| STT Processing (0.6B CPU) | 200-400ms | sherpa-rs CPU fallback |
+| STT Processing (1.1B GPU) | 150-250ms | Direct ort with INT8 quantization |
+| Text Transformation | ~1μs | Native Rust (currently passthrough) |
 | Text Injection | 10-50ms | wtype latency |
-| **Total (from pause to text)** | **~1.0s** | Dominated by silence threshold |
+| **Total (from pause to text)** | **~0.7-0.9s** | Dominated by silence threshold |
 
-**Key Insight:** Users don't perceive the 0.8s threshold as "lag" because they're pausing naturally.
+**Key Insight:** Users don't perceive the 0.5s threshold as "lag" because they're pausing naturally. This is configurable in config (vad_min_silence).
 
 ### Memory Usage
 
@@ -797,19 +800,20 @@ external/midstream/         # Text transformation (Git submodule)
 
 1. **Single User** - One daemon per user session
 2. **Single GPU** - No multi-GPU support (when using GPU)
-3. **Wayland Only** - wtype limitation (no X11 support)
+3. **Wayland + X11** - wtype (Wayland) and xdotool (X11) supported, auto-detected
 4. **GPU Optional** - Works on CPU, faster with NVIDIA CUDA (AMD ROCm/DirectML planned)
 5. **English Only** - Model supports multilingual but not exposed
+6. **Text Transformation** - Currently 0 rules (intentional, awaiting STT analysis)
 
 ### Future Improvements
 
-1. **AMD GPU Support** - ROCm execution provider (sherpa-rs + ort backend)
-2. **DirectML** - Windows GPU acceleration
-3. **CoreML/Metal** - macOS Apple Silicon support
-4. **Configurable VAD Threshold** - UI for silence duration adjustment
+1. **Text Transformation Rules** - Implement 30-50 secretary dictation patterns (task 3393b914)
+2. **AMD GPU Support** - ROCm execution provider (sherpa-rs + ort backend)
+3. **DirectML** - Windows GPU acceleration
+4. **CoreML/Metal** - macOS Apple Silicon support
 5. **Multi-language** - Expose Parakeet's multilingual capabilities
 6. **Custom Models** - Support for other ONNX STT models
-7. **Voice Commands** - Rebuild text transformation rules (30-50 dictation patterns)
+7. **IPC Authentication** - Add authentication to metrics Unix socket (security)
 
 ---
 

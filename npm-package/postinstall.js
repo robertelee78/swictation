@@ -36,9 +36,10 @@ function ensureBinaryPermissions() {
   const daemonBinary = path.join(binDir, 'swictation-daemon');
   const uiBinary = path.join(binDir, 'swictation-ui');
   const cliBinary = path.join(binDir, 'swictation');
+  const daemonBin = path.join(__dirname, 'lib', 'native', 'swictation-daemon.bin');
 
   // Make sure all binaries are executable
-  const binaries = [daemonBinary, uiBinary, cliBinary];
+  const binaries = [daemonBinary, uiBinary, cliBinary, daemonBin];
 
   for (const binary of binaries) {
     if (fs.existsSync(binary)) {
@@ -56,6 +57,7 @@ function createDirectories() {
   const dirs = [
     path.join(os.homedir(), '.config', 'swictation'),
     path.join(os.homedir(), '.local', 'share', 'swictation'),
+    path.join(os.homedir(), '.local', 'share', 'swictation', 'models'),
     path.join(os.homedir(), '.cache', 'swictation')
   ];
 
@@ -80,7 +82,8 @@ function checkDependencies() {
     { name: 'systemctl', type: 'optional', package: 'systemd' },
     { name: 'nc', type: 'optional', package: 'netcat' },
     { name: 'wtype', type: 'optional', package: 'wtype (for Wayland)' },
-    { name: 'xdotool', type: 'optional', package: 'xdotool (for X11)' }
+    { name: 'xdotool', type: 'optional', package: 'xdotool (for X11)' },
+    { name: 'hf', type: 'optional', package: 'huggingface_hub[cli] (pip install huggingface_hub[cli])' }
   ];
 
   for (const tool of tools) {
@@ -115,13 +118,17 @@ function checkDependencies() {
 function showNextSteps() {
   log('green', '\n✨ Swictation installed successfully!');
   log('cyan', '\nNext steps:');
-  console.log('  1. Run initial setup:');
+  console.log('  1. Download AI models (9.43 GB):');
+  log('cyan', '     pip install "huggingface_hub[cli]"  # Required for model downloads');
+  log('cyan', '     swictation download-models');
+  console.log('');
+  console.log('  2. Run initial setup:');
   log('cyan', '     swictation setup');
   console.log('');
-  console.log('  2. Start the service:');
+  console.log('  3. Start the service:');
   log('cyan', '     swictation start');
   console.log('');
-  console.log('  3. Toggle recording with:');
+  console.log('  4. Toggle recording with:');
   log('cyan', '     swictation toggle');
   console.log('');
   console.log('For more information:');
