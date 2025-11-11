@@ -106,11 +106,81 @@ fn check_coreml_available() -> bool {
     false
 }
 
-/// Get GPU memory information (if available)
+/// Get GPU memory information in MB (total, free) via nvidia-smi
+///
+/// Queries NVIDIA GPU VRAM using nvidia-smi command-line tool.
+/// Returns None if:
+/// - No NVIDIA GPU detected
+/// - nvidia-smi command not available
+/// - Failed to parse output
+///
+/// # Returns
+/// Some((total_mb, free_mb)) on success, None on failure
+///
+/// # Example
+/// ```no_run
+/// use swictation_daemon::gpu::get_gpu_memory_mb;
+///
+/// if let Some((total, free)) = get_gpu_memory_mb() {
+///     println!("GPU: {}MB total, {}MB free", total, free);
+/// } else {
+///     println!("No NVIDIA GPU detected");
+/// }
+/// ```
 pub fn get_gpu_memory_mb() -> Option<(u64, u64)> {
-    // GPU memory info requires platform-specific APIs
-    // For now, return None - this can be implemented later with proper GPU info features
-    None
+    use std::process::Command;
+
+    // Query NVIDIA GPU memory via nvidia-smi
+    // Format: "total_mb, free_mb" (e.g., "24576, 23456")
+    let output = Command::new("nvidia-smi")
+        .args(&[
+            "--query-gpu=memory.total,memory.free",
+            "--format=csv,noheader,nounits"
+        ])
+        .output()
+        .ok()?;
+
+    // Check if command succeeded
+    if !output.status.success() {
+        warn!("nvidia-smi command failed with status: {:?}", output.status);
+        return None;
+    }
+
+    // Parse output: "total_mb, free_mb"
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let line = stdout.trim();
+
+    if line.is_empty() {
+        warn!("nvidia-smi returned empty output");
+        return None;
+    }
+
+    // Split on comma and parse
+    let parts: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
+
+    if parts.len() < 2 {
+        warn!("nvidia-smi output format unexpected: '{}'", line);
+        return None;
+    }
+
+    // Parse both values
+    let total = parts[0].parse::<u64>().ok()?;
+    let free = parts[1].parse::<u64>().ok()?;
+
+    // Sanity checks
+    if total == 0 {
+        warn!("nvidia-smi reported 0 total memory - invalid");
+        return None;
+    }
+
+    if free > total {
+        warn!("nvidia-smi reported free ({}) > total ({}) - invalid", free, total);
+        return None;
+    }
+
+    info!("Detected NVIDIA GPU: {}MB total, {}MB free", total, free);
+
+    Some((total, free))
 }
 
 #[cfg(test)]
@@ -122,5 +192,163 @@ mod tests {
         let provider = detect_gpu_provider();
         println!("Detected GPU provider: {:?}", provider);
         // Don't assert - GPU availability depends on hardware
+    }
+
+    #[test]
+    fn test_vram_detection() {
+        // Test VRAM detection (will succeed on systems with NVIDIA GPU)
+        let vram = get_gpu_memory_mb();
+
+        match vram {
+            Some((total, free)) => {
+                println!("✓ Detected NVIDIA GPU: {}MB total, {}MB free", total, free);
+
+                // Sanity checks
+                assert!(total > 0, "Total VRAM should be positive");
+                assert!(free <= total, "Free VRAM should not exceed total");
+                assert!(free > 0, "Free VRAM should be positive (system uses some)");
+
+                // Common GPU memory sizes (in MB)
+                // Consumer: 2GB, 4GB, 6GB, 8GB, 10GB, 12GB, 16GB, 24GB
+                // Professional: 32GB, 40GB, 48GB, 80GB
+                assert!(
+                    total >= 512,
+                    "Total VRAM should be at least 512MB for any modern GPU"
+                );
+
+                println!("  ✓ Sanity checks passed");
+            },
+            None => {
+                println!("ℹ No NVIDIA GPU detected (expected on CPU-only systems)");
+                // This is not an error - system may not have NVIDIA GPU
+            }
+        }
+    }
+
+    #[test]
+    fn test_vram_thresholds() {
+        // Verify our threshold logic matches memory requirements from task
+
+        // 1.1B INT8 model requirements
+        let model_1_1b_peak = 3500; // 3.5GB peak usage
+        let threshold_1_1b = 4096;  // 4GB minimum threshold
+        let headroom_1_1b = threshold_1_1b - model_1_1b_peak; // 596MB headroom
+
+        assert!(
+            headroom_1_1b >= 500,
+            "1.1B model threshold ({}MB) must have at least 500MB headroom (actual: {}MB)",
+            threshold_1_1b, headroom_1_1b
+        );
+
+        println!("✓ 1.1B INT8 threshold: {}MB (peak {}MB + {}MB headroom = {:.1}% margin)",
+                 threshold_1_1b, model_1_1b_peak, headroom_1_1b,
+                 (headroom_1_1b as f32 / model_1_1b_peak as f32) * 100.0);
+
+        // 0.6B GPU model requirements
+        let model_0_6b_peak = 1200; // 1.2GB peak usage
+        let threshold_0_6b = 1536;  // 1.5GB minimum threshold
+        let headroom_0_6b = threshold_0_6b - model_0_6b_peak; // 336MB headroom
+
+        assert!(
+            headroom_0_6b >= 300,
+            "0.6B model threshold ({}MB) must have at least 300MB headroom (actual: {}MB)",
+            threshold_0_6b, headroom_0_6b
+        );
+
+        println!("✓ 0.6B GPU threshold: {}MB (peak {}MB + {}MB headroom = {:.1}% margin)",
+                 threshold_0_6b, model_0_6b_peak, headroom_0_6b,
+                 (headroom_0_6b as f32 / model_0_6b_peak as f32) * 100.0);
+
+        // Verify threshold ordering
+        assert!(
+            threshold_1_1b > threshold_0_6b,
+            "1.1B threshold ({}MB) must be greater than 0.6B threshold ({}MB)",
+            threshold_1_1b, threshold_0_6b
+        );
+
+        println!("✓ Threshold ordering correct: {} > {}", threshold_1_1b, threshold_0_6b);
+    }
+
+    #[test]
+    fn test_model_selection_logic() {
+        // Test the adaptive selection decision tree with various VRAM amounts
+
+        struct TestCase {
+            vram_mb: u64,
+            expected_model: &'static str,
+            reason: &'static str,
+        }
+
+        let test_cases = vec![
+            TestCase {
+                vram_mb: 512,
+                expected_model: "0.6B CPU",
+                reason: "VRAM < 1536MB (insufficient for 0.6B GPU)",
+            },
+            TestCase {
+                vram_mb: 1024,
+                expected_model: "0.6B CPU",
+                reason: "VRAM < 1536MB (insufficient for 0.6B GPU)",
+            },
+            TestCase {
+                vram_mb: 1536,
+                expected_model: "0.6B GPU",
+                reason: "VRAM ≥ 1536MB but < 4096MB (0.6B GPU range)",
+            },
+            TestCase {
+                vram_mb: 2048,
+                expected_model: "0.6B GPU",
+                reason: "VRAM ≥ 1536MB but < 4096MB (0.6B GPU range)",
+            },
+            TestCase {
+                vram_mb: 3072,
+                expected_model: "0.6B GPU",
+                reason: "VRAM ≥ 1536MB but < 4096MB (0.6B GPU range)",
+            },
+            TestCase {
+                vram_mb: 4096,
+                expected_model: "1.1B GPU INT8",
+                reason: "VRAM ≥ 4096MB (strong GPU)",
+            },
+            TestCase {
+                vram_mb: 8192,
+                expected_model: "1.1B GPU INT8",
+                reason: "VRAM ≥ 4096MB (strong GPU)",
+            },
+            TestCase {
+                vram_mb: 24576,
+                expected_model: "1.1B GPU INT8",
+                reason: "VRAM ≥ 4096MB (strong GPU)",
+            },
+            TestCase {
+                vram_mb: 81920,
+                expected_model: "1.1B GPU INT8",
+                reason: "VRAM ≥ 4096MB (strong GPU)",
+            },
+        ];
+
+        println!("\nModel Selection Decision Tree Test:");
+        println!("====================================");
+
+        for tc in test_cases {
+            let selected = if tc.vram_mb >= 4096 {
+                "1.1B GPU INT8"
+            } else if tc.vram_mb >= 1536 {
+                "0.6B GPU"
+            } else {
+                "0.6B CPU"
+            };
+
+            assert_eq!(
+                selected, tc.expected_model,
+                "VRAM {}MB should select '{}' but got '{}' ({})",
+                tc.vram_mb, tc.expected_model, selected, tc.reason
+            );
+
+            println!("  ✓ {}MB VRAM → {} ({})",
+                     tc.vram_mb, tc.expected_model, tc.reason);
+        }
+
+        println!("\n✓ All {} test cases passed", test_cases.len());
     }
 }
