@@ -4,17 +4,18 @@ use anyhow::{Context, Result};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::sync::mpsc;
-use tracing::info;
+use tracing::{info, warn};
 use chrono::Utc;
 
 use swictation_audio::AudioCapture;
 use swictation_vad::{VadConfig, VadDetector, VadResult};
-use swictation_stt::Recognizer;
+use swictation_stt::{SttEngine, Recognizer, OrtRecognizer};
 use midstreamer_text_transform::transform;
 use swictation_metrics::{MetricsCollector, SegmentMetrics};
 use swictation_broadcaster::MetricsBroadcaster;
 
 use crate::config::DaemonConfig;
+use crate::gpu::get_gpu_memory_mb;
 
 /// Pipeline state
 pub struct Pipeline {
@@ -24,8 +25,8 @@ pub struct Pipeline {
     /// Voice Activity Detection
     vad: Arc<Mutex<VadDetector>>,
 
-    /// Speech-to-Text recognizer using Sherpa-RS
-    stt: Arc<Mutex<Recognizer>>,
+    /// Speech-to-Text engine (adaptive: 1.1B GPU / 0.6B GPU / 0.6B CPU)
+    stt: Arc<Mutex<SttEngine>>,
 
     /// Metrics collector
     metrics: Arc<Mutex<MetricsCollector>>,
@@ -73,24 +74,106 @@ impl Pipeline {
         let vad = VadDetector::new(vad_config)
             .context("Failed to initialize VAD")?;
 
-        info!("Initializing STT with {} provider...",
-              gpu_provider.as_deref().unwrap_or("CPU"));
+        // ADAPTIVE MODEL SELECTION based on GPU VRAM availability
+        // Decision tree:
+        //   ≥4GB VRAM → 1.1B INT8 GPU (peak 3.5GB + 596MB headroom)
+        //   ≥1.5GB VRAM → 0.6B GPU (peak 1.2GB + 336MB headroom)
+        //   <1.5GB or no GPU → 0.6B CPU fallback
 
-        // Determine if GPU should be used
-        let use_gpu = gpu_provider
-            .as_ref()
-            .map(|p| p.contains("cuda") || p.contains("CUDA"))
-            .unwrap_or(false);
+        info!("Detecting GPU memory for adaptive model selection...");
+        let vram_mb = get_gpu_memory_mb().map(|(total, _free)| total);
 
-        if use_gpu {
-            info!("Enabling CUDA acceleration for STT");
+        let stt = if let Some(vram) = vram_mb {
+            info!("Detected GPU with {}MB VRAM", vram);
+
+            if vram >= 4096 {
+                // High VRAM: Use 1.1B INT8 model for best quality (5.77% WER)
+                info!("✓ Sufficient VRAM for 1.1B INT8 model (requires ≥4GB)");
+                info!("  Loading Parakeet-TDT-1.1B-INT8 via ONNX Runtime...");
+
+                let ort_recognizer = OrtRecognizer::new(
+                    "/opt/swictation/models/parakeet-tdt-1.1b-onnx",
+                    true // GPU enabled
+                ).map_err(|e| anyhow::anyhow!(
+                    "Failed to load 1.1B INT8 model despite {}MB VRAM. \
+                    \nTroubleshooting:\
+                    \n  1. Verify model files exist: ls /opt/swictation/models/parakeet-tdt-1.1b-onnx/\
+                    \n  2. Check CUDA/cuDNN installation: nvidia-smi\
+                    \n  3. Ensure ONNX Runtime CUDA EP is available\
+                    \n  4. Try 0.6B fallback by setting stt_model_override=\"0.6b-gpu\" in config\
+                    \nError: {}", vram, e
+                ))?;
+
+                info!("✓ Parakeet-TDT-1.1B-INT8 loaded successfully (GPU)");
+                SttEngine::Parakeet1_1B(ort_recognizer)
+
+            } else if vram >= 1536 {
+                // Moderate VRAM: Use 0.6B GPU for good quality (7-8% WER)
+                info!("✓ Sufficient VRAM for 0.6B GPU model (requires ≥1.5GB)");
+                info!("  Loading Parakeet-TDT-0.6B via sherpa-rs (GPU)...");
+
+                let recognizer = Recognizer::new(&config.stt_model_path, true)
+                    .map_err(|e| anyhow::anyhow!(
+                        "Failed to load 0.6B GPU model despite {}MB VRAM. \
+                        \nTroubleshooting:\
+                        \n  1. Verify model files: ls {}\
+                        \n  2. Check CUDA availability: nvidia-smi\
+                        \n  3. Verify sherpa-rs CUDA support\
+                        \n  4. Try CPU fallback by setting stt_model_override=\"0.6b-cpu\" in config\
+                        \nError: {}", vram, config.stt_model_path, e
+                    ))?;
+
+                info!("✓ Parakeet-TDT-0.6B loaded successfully (GPU)");
+                SttEngine::Parakeet0_6B(recognizer)
+
+            } else {
+                // Low VRAM: Fall back to CPU
+                warn!("⚠️  Only {}MB VRAM available (need ≥1.5GB for GPU)", vram);
+                warn!("  Falling back to CPU mode (slower but functional)");
+                info!("  Loading Parakeet-TDT-0.6B via sherpa-rs (CPU)...");
+
+                let recognizer = Recognizer::new(&config.stt_model_path, false)
+                    .map_err(|e| anyhow::anyhow!(
+                        "Failed to load 0.6B CPU model. \
+                        \nTroubleshooting:\
+                        \n  1. Verify model files: ls {}\
+                        \n  2. Check available RAM (need ~1GB free)\
+                        \n  3. Ensure ONNX Runtime CPU EP is available\
+                        \nError: {}", config.stt_model_path, e
+                    ))?;
+
+                info!("✓ Parakeet-TDT-0.6B loaded successfully (CPU)");
+                SttEngine::Parakeet0_6B(recognizer)
+            }
+        } else {
+            // No GPU detected: Fall back to CPU
+            warn!("⚠️  No GPU detected (nvidia-smi failed or no NVIDIA GPU)");
+            warn!("  Falling back to CPU mode (slower but functional)");
+            info!("  Loading Parakeet-TDT-0.6B via sherpa-rs (CPU)...");
+
+            let recognizer = Recognizer::new(&config.stt_model_path, false)
+                .map_err(|e| anyhow::anyhow!(
+                    "Failed to load 0.6B CPU model. \
+                    \nTroubleshooting:\
+                    \n  1. Verify model files: ls {}\
+                    \n  2. Check available RAM (need ~1GB free)\
+                    \n  3. Ensure ONNX Runtime CPU EP is available\
+                    \nError: {}", config.stt_model_path, e
+                ))?;
+
+            info!("✓ Parakeet-TDT-0.6B loaded successfully (CPU)");
+            SttEngine::Parakeet0_6B(recognizer)
+        };
+
+        // Log final configuration
+        info!("📊 STT Engine: {} ({}, {})",
+              stt.model_name(),
+              stt.model_size(),
+              stt.backend());
+
+        if stt.vram_required_mb() > 0 {
+            info!("   Minimum VRAM: {}MB", stt.vram_required_mb());
         }
-
-        // Load Parakeet-TDT model with Sherpa-RS
-        let stt = Recognizer::new(&config.stt_model_path, use_gpu)
-            .map_err(|e| anyhow::anyhow!("Failed to initialize Sherpa-RS recognizer: {}", e))?;
-
-        info!("✓ Sherpa-RS Parakeet-TDT model loaded successfully");
 
         info!("Initializing metrics collector...");
 
