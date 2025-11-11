@@ -1,16 +1,16 @@
-# Swictation
+# Swictation CLI
 
-Voice-to-text dictation system with smart text transformation, powered by Whisper and written in Rust.
+Command-line interface for managing the Swictation voice dictation daemon.
 
 ## Features
 
-- 🎤 **Real-time voice transcription** using OpenAI Whisper
-- 🔄 **Smart text transformation** - automatically converts spoken punctuation
-- ⚡ **Low latency** - optimized Rust implementation
-- 🖥️ **Cross-platform** - works on X11 and Wayland
-- 🎯 **Hotkey support** - toggle recording with Super+Shift+D
-- 📊 **Real-time metrics** - WPM, latency, and resource usage
-- 🎨 **Modern UI** - Tauri-based interface with system tray integration
+- 🎤 **Real-time voice transcription** using Parakeet-TDT-1.1B (NVIDIA)
+- 🔄 **Smart text transformation** - MidStream library for voice commands
+- ⚡ **Low latency** - Pure Rust implementation with CUDA acceleration
+- 🖥️ **Wayland native** - wtype text injection for Sway/Wayland
+- 🎯 **Hotkey support** - toggle recording with $mod+Shift+D
+- 📊 **Real-time metrics** - WPM, latency, GPU/CPU usage
+- 🦀 **Pure Rust daemon** - Zero Python runtime dependencies
 
 ## Installation
 
@@ -52,31 +52,34 @@ npm install -g swictation
 
 ### Currently Supported
 - **OS**: Linux x64
-- **Display Server**: X11 or Wayland
-- **Window Managers**: Sway, i3, GNOME, KDE
+- **Display Server**: Wayland (Sway/i3-compatible compositors)
+- **GPU**: NVIDIA with 4GB+ VRAM (CUDA 11.8+)
+- **Window Managers**: Sway, i3, Hyprland
 
 ### Dependencies
-- **Required**: systemd (for service management)
+- **Required**:
+  - systemd (service management)
+  - wtype (Wayland text injection)
+  - wl-clipboard (Wayland clipboard)
+  - PipeWire or PulseAudio (audio capture)
 - **Optional**:
-  - `wtype` - For text injection on Wayland
-  - `xdotool` - For text injection on X11
-  - `netcat (nc)` - For command-line control
+  - netcat (nc) - For socket-based control
 
 ### Install Dependencies
 
 **Ubuntu/Debian**:
 ```bash
-sudo apt install wtype xdotool netcat-openbsd
+sudo apt install wtype wl-clipboard pipewire netcat-openbsd
 ```
 
 **Arch Linux**:
 ```bash
-sudo pacman -S wtype xdotool gnu-netcat
+sudo pacman -S wtype wl-clipboard pipewire gnu-netcat
 ```
 
 **Fedora**:
 ```bash
-sudo dnf install wtype xdotool nmap-ncat
+sudo dnf install wtype wl-clipboard pipewire nmap-ncat
 ```
 
 ## Configuration
@@ -124,17 +127,18 @@ arecord -d 5 test.wav && aplay test.wav
 ```
 
 ### Text not being typed
-- **Wayland**: Install `wtype` package
-- **X11**: Install `xdotool` package
+- **Wayland**: Ensure `wtype` is installed and compositor supports input injection
+- Check logs: `journalctl --user -u swictation-daemon -f`
 
 ## Platform Support
 
 | Platform | Status | Notes |
 |----------|--------|-------|
-| Linux x64 | ✅ Supported | Full functionality |
-| Linux ARM | 🚧 Coming soon | Raspberry Pi support planned |
-| macOS | 🚧 Coming soon | M1/M2 and Intel |
-| Windows | 🚧 Coming soon | Windows 10/11 |
+| Linux x64 + NVIDIA GPU | ✅ Supported | Full functionality with CUDA |
+| Linux AMD GPU | 🚧 Planned | ROCm support |
+| macOS (Apple Silicon/Intel) | 🚧 Planned | CoreML/Metal execution providers |
+| Windows + NVIDIA | 🚧 Planned | CUDA support |
+| Windows + AMD/Intel | 🚧 Planned | DirectML execution provider |
 
 ## Development
 

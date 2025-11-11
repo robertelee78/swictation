@@ -55,7 +55,7 @@ systemctl --user start swictation-daemon
 swaymsg reload
 ```
 
-**See [docs/install.md](docs/install.md) for complete step-by-step instructions.**
+**See systemd service setup above for installation.**
 
 ### Your First Recording
 
@@ -250,7 +250,7 @@ SWICTATION TYPES: def hello_world():
 ```
 
 ⚡ **Rust Performance:** 266 transformation rules, ~1µs latency
-📖 **Full Command Reference:** [docs/voice-commands.md](docs/voice-commands.md)
+📖 **Full Command Reference:** See `external/midstream/` documentation
 
 ---
 
@@ -282,8 +282,6 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ---
 
 ## **Installation** 📦
-
-See **[docs/install.md](docs/install.md)** for complete installation guide.
 
 **Quick Build:**
 ```bash
@@ -319,16 +317,11 @@ The **QT system tray** (`tauri-ui/`) is **optional** and only needed for visual 
 
 ### Python Files in Repo
 
-The `src/*.py` files are **legacy artifacts** from the Python implementation. They are **NOT used** by the current Rust daemon.
+The `src/` directory contains:
+- `config_loader.py` - Configuration utilities
+- `swictation_cli.py` - CLI tools
 
-**Current execution:**
-```bash
-# systemd service runs:
-/opt/swictation/rust-crates/target/release/swictation-daemon
-
-# NOT:
-# python3 /opt/swictation/src/swictationd.py  # (deprecated)
-```
+The main daemon is the Rust binary at `/opt/swictation/rust-crates/target/release/swictation-daemon`.
 
 ---
 
@@ -422,17 +415,15 @@ Check VAD threshold - ONNX models use 0.001-0.005, **NOT** PyTorch 0.5!
 threshold = 0.003  # Lower for more sensitive detection
 ```
 
-📖 **Full Troubleshooting:** [docs/troubleshooting.md](docs/troubleshooting.md)
+📖 **Check logs:** `journalctl --user -u swictation-daemon -f`
 
 ---
 
 ## **Documentation** 📚
 
-- **[Installation Guide](docs/install.md)** - Complete setup instructions
-- **[Architecture](docs/architecture.md)** - System design and components
-- **[Voice Commands](docs/voice-commands.md)** - Coding command reference
-- **[Troubleshooting](docs/troubleshooting.md)** - Common issues and solutions
 - **[ONNX Threshold Guide](rust-crates/swictation-vad/ONNX_THRESHOLD_GUIDE.md)** - VAD tuning details
+- **[Tauri UI Architecture](tauri-ui/docs/ARCHITECTURE.md)** - UI system design
+- **[MidStream Transform](external/midstream/)** - Voice command library
 
 ---
 

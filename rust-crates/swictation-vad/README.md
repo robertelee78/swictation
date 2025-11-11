@@ -1,15 +1,15 @@
 # swictation-vad
 
-Voice Activity Detection (VAD) for Swictation using Silero VAD via sherpa-rs.
+Voice Activity Detection (VAD) for Swictation using Silero VAD v6 via ort (ONNX Runtime).
 
 ## Features
 
-- ✅ **Pure Rust** - Zero Python dependency, uses sherpa-rs (official sherpa-onnx bindings)
+- ✅ **Pure Rust** - Zero Python dependency, uses ort 2.0.0-rc.10 (direct ONNX Runtime bindings)
 - ✅ **20MB memory** - 96% reduction from 500MB+ PyTorch runtime
 - ✅ **<10ms latency** - 5x faster than PyTorch implementation (~50ms)
-- ✅ **475-512x real-time** - Extremely fast processing
-- ✅ **Battle-tested** - Uses Silero VAD, production-proven model
-- ✅ **CPU-only** - ONNX Runtime optimizations, no GPU required
+- ✅ **Silero VAD v6** - August 2024 release, 16% better on noisy data
+- ✅ **CUDA acceleration** - GPU support via ONNX Runtime execution providers
+- ✅ **~150x faster** than sherpa-rs for VAD operations
 
 ## Performance Comparison
 
@@ -36,11 +36,11 @@ Voice Activity Detection (VAD) for Swictation using Silero VAD via sherpa-rs.
 ```rust
 use swictation_vad::{VadConfig, VadDetector, VadResult};
 
-// Configure VAD
+// Configure VAD - IMPORTANT: ONNX threshold is 0.001-0.005, NOT 0.5!
 let config = VadConfig::with_model("/path/to/silero_vad.onnx")
     .min_silence(0.5)
     .min_speech(0.25)
-    .threshold(0.5);
+    .threshold(0.003);  // ONNX threshold (0.001-0.005)
 
 // Create detector
 let mut vad = VadDetector::new(config)?;
@@ -65,7 +65,7 @@ VadConfig::with_model("silero_vad.onnx")
     .min_silence(0.5)      // Minimum silence duration (seconds)
     .min_speech(0.25)      // Minimum speech duration (seconds)
     .max_speech(30.0)      // Maximum speech segment (seconds)
-    .threshold(0.5)        // Speech probability threshold (0.0-1.0)
+    .threshold(0.003)      // ONNX threshold (0.001-0.005, NOT 0.5!)
     .buffer_size(60.0)     // Audio buffer size (seconds)
     .debug()               // Enable debug logging
 ```
@@ -75,7 +75,7 @@ VadConfig::with_model("silero_vad.onnx")
 - **min_silence_duration**: Silence shorter than this is ignored (default: 0.5s)
 - **min_speech_duration**: Speech shorter than this is filtered (default: 0.25s)
 - **max_speech_duration**: Segments longer are split (default: 30.0s)
-- **threshold**: Speech probability 0.0-1.0, higher = stricter (default: 0.5)
+- **threshold**: ONNX probability 0.001-0.005 (default: 0.003). See ONNX_THRESHOLD_GUIDE.md for details.
 
 ## Model
 
