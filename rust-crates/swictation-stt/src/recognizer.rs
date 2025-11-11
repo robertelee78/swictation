@@ -23,6 +23,8 @@ pub struct Recognizer {
     recognizer: TransducerRecognizer,
     /// Sample rate (always 16000 for Parakeet-TDT)
     sample_rate: u32,
+    /// Whether GPU acceleration is enabled
+    use_gpu: bool,
 }
 
 impl Recognizer {
@@ -112,6 +114,7 @@ impl Recognizer {
         Ok(Self {
             recognizer,
             sample_rate: 16_000u32,
+            use_gpu,
         })
     }
 
@@ -207,6 +210,11 @@ impl Recognizer {
     /// Get sample rate
     pub fn sample_rate(&self) -> u32 {
         self.sample_rate
+    }
+
+    /// Check if GPU acceleration is enabled
+    pub fn is_gpu(&self) -> bool {
+        self.use_gpu
     }
 }
 

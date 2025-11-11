@@ -26,11 +26,13 @@
 //! ```
 
 pub mod audio; // Audio processing for 1.1B model
+pub mod engine; // Unified STT engine interface
 pub mod error;
 pub mod recognizer;
 pub mod recognizer_ort; // Direct ONNX Runtime for 1.1B model
 
 pub use audio::AudioProcessor;
+pub use engine::SttEngine; // Unified STT engine enum
 pub use error::{Result, SttError};
 pub use recognizer::{RecognitionResult, Recognizer};
 pub use recognizer_ort::OrtRecognizer;

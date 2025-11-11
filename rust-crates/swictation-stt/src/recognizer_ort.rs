@@ -341,6 +341,70 @@ impl OrtRecognizer {
         Ok(text)
     }
 
+    /// Recognize speech from audio samples (16kHz mono f32)
+    ///
+    /// This method processes raw audio samples directly, which is useful for
+    /// streaming/pipeline applications where audio is already loaded in memory.
+    ///
+    /// # Arguments
+    /// * `samples` - Audio samples at 16kHz, mono, f32 format
+    ///
+    /// # Returns
+    /// Transcribed text
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use swictation_stt::OrtRecognizer;
+    /// # let mut recognizer = OrtRecognizer::new("model_path", true)?;
+    /// let samples: Vec<f32> = vec![0.0; 16000]; // 1 second of audio
+    /// let text = recognizer.recognize_samples(&samples)?;
+    /// println!("Transcription: {}", text);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn recognize_samples(&mut self, samples: &[f32]) -> Result<String> {
+        info!("Processing {} audio samples", samples.len());
+
+        // Debug: Audio statistics
+        let audio_min = samples.iter().fold(f32::INFINITY, |a, &b| a.min(b));
+        let audio_max = samples.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+        let audio_mean = samples.iter().sum::<f32>() / samples.len() as f32;
+        debug!("Audio stats: min={:.6}, max={:.6}, mean={:.6}", audio_min, audio_max, audio_mean);
+
+        // Extract mel-spectrogram features
+        let features = self.audio_processor.extract_mel_features(samples)?;
+        info!("Extracted features: {:?}", features.shape());
+
+        // Debug: Mel-spectrogram statistics
+        let features_flat: Vec<f32> = features.iter().copied().collect();
+        let mel_min = features_flat.iter().fold(f32::INFINITY, |a, &b| a.min(b));
+        let mel_max = features_flat.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+        let mel_mean = features_flat.iter().sum::<f32>() / features_flat.len() as f32;
+        debug!("Mel-spectrogram stats: min={:.6}, max={:.6}, mean={:.6}", mel_min, mel_max, mel_mean);
+
+        // Process frames (chunking handled internally)
+        let text = if features.nrows() <= 80 {
+            // Small audio - process in one chunk
+            let chunks = self.audio_processor.chunk_features(&features);
+            info!("Small audio: {} chunks of 80 frames", chunks.len());
+            self.greedy_search_decode(&chunks)?
+        } else {
+            // Large audio - chunk and process
+            info!("Large audio: {} frames total - chunking", features.nrows());
+
+            // Pad to multiple of 80 for encoder
+            let padded_rows = ((features.nrows() + 79) / 80) * 80;
+            let mut padded = Array2::zeros((padded_rows, features.ncols()));
+            padded.slice_mut(s![..features.nrows(), ..]).assign(&features);
+
+            // Process all 80-frame chunks
+            let chunks = self.audio_processor.chunk_features(&padded);
+            info!("Processing {} encoder chunks", chunks.len());
+            self.greedy_search_decode(&chunks)?
+        };
+
+        Ok(text)
+    }
+
     /// Greedy search decoder implementation
     ///
     /// Implements the transducer decoding loop:
