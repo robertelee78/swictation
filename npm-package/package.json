@@ -1,7 +1,7 @@
 {
   "name": "swictation",
-  "version": "0.1.4",
-  "description": "Voice-to-text dictation system with smart text transformation (Ubuntu 24.04+ required)",
+  "version": "0.2.0",
+  "description": "Voice-to-text dictation system with smart text transformation and NVIDIA GPU acceleration (Ubuntu 24.04+ required)",
   "keywords": [
     "voice-to-text",
     "speech-recognition",

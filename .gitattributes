@@ -1,1 +1,2 @@
 # No LFS tracking needed - models are on HuggingFace
+npm-package/lib/native/libonnxruntime_providers_cuda.so filter=lfs diff=lfs merge=lfs -text

@@ -11,9 +11,11 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.so
+!npm-package/lib/native/*.so
 
 # C extensions
 *.so
+!npm-package/lib/native/*.so
 
 # Distribution / packaging
 .Python

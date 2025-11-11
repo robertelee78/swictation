@@ -1,16 +1,28 @@
 [Unit]
-Description=Swictation Voice Dictation Daemon
-After=pulseaudio.service
-Wants=swictation-ui.service
+Description=Swictation Voice-to-Text Daemon
+After=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=/opt/swictation/rust-crates/target/release/swictation-daemon
+ExecStart=/usr/local/lib/node_modules/swictation/bin/swictation-daemon
 Restart=on-failure
 RestartSec=5
-Environment="LD_LIBRARY_PATH=%h/.cache/sherpa-rs/x86_64-unknown-linux-gnu/cd22ee337e205674536643d2bc86e984fbbbf9c5c52743c4df6fc8d8dd17371b/sherpa-onnx-v1.12.9-linux-x64-shared/lib:%h/.cache/ort.pyke.io/dfbin/x86_64-unknown-linux-gnu/ED1716DE95974BF47AB0223CA33734A0B5A5D09A181225D0E8ED62D070AEA893/onnxruntime/lib"
-StandardOutput=journal
-StandardError=journal
+
+# Environment
+Environment="RUST_LOG=info"
+
+# Resource limits
+MemoryMax=500M
+CPUQuota=50%
+
+# Security hardening
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/tmp
+ReadWritePaths=%h/.local/share/swictation
+ReadWritePaths=%h/.cache/swictation
+ReadWritePaths=%h/.config/swictation
 
 [Install]
 WantedBy=default.target
