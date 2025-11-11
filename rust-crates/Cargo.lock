@@ -2470,6 +2470,7 @@ dependencies = [
  "clap",
  "dirs",
  "global-hotkey",
+ "hound",
  "metal",
  "midstreamer-text-transform",
  "serde",

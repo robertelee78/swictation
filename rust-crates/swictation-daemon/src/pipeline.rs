@@ -462,6 +462,12 @@ impl Pipeline {
             if let swictation_vad::VadResult::Speech { samples: speech_samples, .. } = vad_result {
                 info!("Processing flushed speech segment: {} samples", speech_samples.len());
 
+                // DEBUG: Save flushed audio to file for analysis
+                match save_audio_debug(&speech_samples, "/tmp/swictation_flushed_audio.wav") {
+                    Ok(()) => eprintln!("DEBUG: Saved flushed audio to /tmp/swictation_flushed_audio.wav"),
+                    Err(e) => eprintln!("DEBUG: Failed to save audio: {}", e),
+                }
+
                 // Track timing for metrics
                 let segment_start = Instant::now();
                 let vad_latency = segment_start.elapsed().as_millis() as f64;
@@ -598,5 +604,28 @@ impl Pipeline {
     pub fn set_broadcaster(&self, broadcaster: Arc<MetricsBroadcaster>) {
         *self.broadcaster.lock().unwrap() = Some(broadcaster);
     }
+}
+
+/// DEBUG: Save audio samples to WAV file for analysis
+fn save_audio_debug(samples: &[f32], path: &str) -> Result<()> {
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: 16000,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+
+    let mut writer = hound::WavWriter::create(path, spec)
+        .map_err(|e| anyhow::anyhow!("Failed to create WAV file: {}", e))?;
+
+    for &sample in samples {
+        let sample_i16 = (sample * 32767.0).clamp(-32768.0, 32767.0) as i16;
+        writer.write_sample(sample_i16)
+            .map_err(|e| anyhow::anyhow!("Failed to write sample: {}", e))?;
+    }
+
+    writer.finalize()
+        .map_err(|e| anyhow::anyhow!("Failed to finalize WAV: {}", e))?;
+    Ok(())
 }
 
