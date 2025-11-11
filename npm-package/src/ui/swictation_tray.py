@@ -55,7 +55,7 @@ class SwictationTrayApp(QApplication):
         self.tauri_process = None
         # Default to npm package binary location, can be overridden with SWICTATION_UI_BINARY
         self.tauri_ui_binary = os.environ.get('SWICTATION_UI_BINARY',
-                                             str(Path(__file__).parent.parent / "bin" / "swictation-ui"))
+                                             str(Path(__file__).parent.parent.parent / "bin" / "swictation-ui"))
 
         # Click debounce timer (prevent single-click from interfering with double-click)
         self.click_timer = QTimer(self)

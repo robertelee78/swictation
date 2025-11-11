@@ -17,14 +17,14 @@ Environment="RUST_LOG=info"
 MemoryMax=500M
 CPUQuota=50%
 
-# Security hardening
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=/tmp
-ReadWritePaths=%h/.local/share/swictation
-ReadWritePaths=%h/.cache/swictation
-ReadWritePaths=%h/.config/swictation
+# Security hardening (relaxed for USB device access)
+#PrivateTmp=true
+#ProtectSystem=strict
+#ProtectHome=read-only
+#ReadWritePaths=/tmp
+#ReadWritePaths=%h/.local/share/swictation
+#ReadWritePaths=%h/.cache/swictation
+#ReadWritePaths=%h/.config/swictation
 
 [Install]
 WantedBy=default.target
