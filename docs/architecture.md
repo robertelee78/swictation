@@ -179,144 +179,399 @@ impl VadDetector {
 
 ### 4. Speech-to-Text Engine (Parakeet-TDT)
 
-**Adaptive Model Selection:** Runtime selection based on available GPU VRAM at startup
+**Adaptive Model Selection:** Intelligent runtime selection based on GPU VRAM at daemon startup
 
-**Purpose:** Best-quality STT within available hardware constraints
+**Purpose:** Maximize transcription quality within hardware constraints
 
-**Available Architectures:**
-
-**1.1B Model (High-end GPUs):**
+**Unified Interface (SttEngine):**
 ```rust
-pub struct OrtRecognizer {
-    encoder: Session,          // Direct ort 2.0.0-rc.8
-    decoder: Session,
-    joiner: Session,
-    audio_processor: AudioProcessor,
-    decoder_state1: Array3<f32>,  // LSTM states
-    decoder_state2: Array3<f32>,
+// Enum dispatch pattern - consistent API across model implementations
+// Location: rust-crates/swictation-stt/src/engine.rs
+pub enum SttEngine {
+    Parakeet0_6B(Recognizer),      // sherpa-rs (GPU or CPU)
+    Parakeet1_1B(OrtRecognizer),   // Direct ONNX Runtime (GPU only, INT8)
+}
+
+impl SttEngine {
+    /// Recognize speech from audio samples (16kHz, mono, f32)
+    pub fn recognize(&mut self, audio: &[f32]) -> Result<RecognitionResult>;
+
+    /// Get model name for logging/metrics
+    /// Returns: "Parakeet-TDT-0.6B" or "Parakeet-TDT-1.1B-INT8"
+    pub fn model_name(&self) -> &str;
+
+    /// Get model size identifier
+    /// Returns: "0.6B" or "1.1B-INT8"
+    pub fn model_size(&self) -> &str;
+
+    /// Get backend type
+    /// Returns: "GPU" or "CPU"
+    pub fn backend(&self) -> &str;
+
+    /// Get minimum VRAM required in MB
+    /// Returns: 4096 (1.1B), 1536 (0.6B GPU), or 0 (0.6B CPU)
+    pub fn vram_required_mb(&self) -> u64;
 }
 ```
 
-**0.6B Model (Low-end GPUs / CPU):**
+**Two Model Implementations:**
+
+**1.1B INT8 Model (High-end GPUs):**
 ```rust
+// Location: rust-crates/swictation-stt/src/recognizer_ort.rs
+pub struct OrtRecognizer {
+    encoder: Session,              // ONNX Runtime session
+    decoder: Session,              // LSTM decoder with stateful RNN
+    joiner: Session,               // Token predictor
+    tokens: Vec<String>,           // 1025 tokens (BPE vocabulary)
+    blank_id: i64,                 // Blank token (1024)
+    audio_processor: AudioProcessor,  // 80 mel bins
+    decoder_state1: Option<Array3<f32>>,  // LSTM state (2, batch, 640)
+    decoder_state2: Option<Array3<f32>>,  // LSTM state (2, 1, 640)
+}
+
+impl OrtRecognizer {
+    /// Create from model directory with encoder.int8.onnx, decoder.int8.onnx, joiner.int8.onnx
+    pub fn new<P: AsRef<Path>>(model_dir: P, use_gpu: bool) -> Result<Self>;
+
+    /// Recognize from audio samples (used by pipeline)
+    pub fn recognize_samples(&mut self, samples: &[f32]) -> Result<String>;
+
+    /// Recognize from audio file (WAV/MP3/FLAC)
+    pub fn recognize_file<P: AsRef<Path>>(&mut self, path: P) -> Result<String>;
+}
+```
+
+**0.6B Model (Moderate GPUs / CPU):**
+```rust
+// Location: rust-crates/swictation-stt/src/recognizer.rs
 pub struct Recognizer {
     recognizer: TransducerRecognizer,  // sherpa-rs wrapper
     sample_rate: u32,                  // 16000 Hz
+    use_gpu: bool,                     // GPU or CPU mode
+}
+
+impl Recognizer {
+    /// Create from model directory with encoder.onnx, decoder.onnx, joiner.onnx, tokens.txt
+    pub fn new<P: AsRef<Path>>(model_path: P, use_gpu: bool) -> Result<Self>;
+
+    /// Recognize speech from audio samples
+    pub fn recognize(&mut self, audio: &[f32]) -> Result<RecognitionResult>;
+
+    /// Recognize from audio file
+    pub fn recognize_file<P: AsRef<Path>>(&mut self, path: P) -> Result<RecognitionResult>;
+
+    /// Check if GPU acceleration is enabled
+    pub fn is_gpu(&self) -> bool;
 }
 ```
 
 **Model Characteristics:**
 
-| Feature | 0.6B | 1.1B |
-|---------|------|------|
+| Feature | 0.6B | 1.1B INT8 |
+|---------|------|-----------|
 | Type | RNN-T Transducer | RNN-T Transducer |
 | Vocabulary | 1024 tokens | 1025 tokens |
 | Mel Features | 128 bins | 80 bins |
-| Quantization | INT8 | FP32/FP16/INT8 |
-| Library | sherpa-rs | Direct ort |
-| WER | ~7-8% | 5.77% |
-| VRAM Required | ~800MB | ~2.2GB |
+| Quantization | FP32/FP16/INT8 | INT8 only |
+| Library | sherpa-rs | Direct ort 2.0.0-rc.10 |
+| WER | ~7-8% | 5.77% (best quality) |
+| Peak VRAM | ~1.2GB | ~3.5GB |
+| **Min VRAM Threshold** | **1536MB (1.5GB)** | **4096MB (4GB)** |
+| Headroom | 336MB (28%) | 596MB (17%) |
+| Latency (GPU) | 100-150ms | 150-250ms |
+| Latency (CPU) | 200-400ms | N/A (GPU only) |
 
-**Adaptive Model Selection at Startup:**
+**VRAM Headroom Rationale:**
+- **1.1B:** 4096MB threshold for 3.5GB peak = 596MB headroom (17%) for other GPU processes
+- **0.6B GPU:** 1536MB threshold for 1.2GB peak = 336MB headroom (28%) for other GPU processes
+- **0.6B CPU:** No VRAM required, uses ~960MB system RAM
+
+**Adaptive Model Selection Decision Tree:**
+
+```
+                    START: Daemon initialization
+                              │
+                              ▼
+                    ┌──────────────────────┐
+                    │ config.stt_model_    │
+                    │ override != "auto"?  │
+                    └──────────────────────┘
+                         │           │
+                      YES│           │NO
+                         ▼           ▼
+               ┌────────────┐   ┌────────────────┐
+               │ CLI/Config │   │ detect_gpu()   │
+               │  Override  │   │ get_gpu_vram() │
+               └────────────┘   └────────────────┘
+                    │                    │
+          ┌─────────┼─────────┐         │
+          │         │         │         │
+      "1.1b-gpu" "0.6b-gpu" "0.6b-cpu" │
+          │         │         │         │
+          │         │         │         ▼
+          │         │         │    ┌──────────────┐
+          │         │         │    │ VRAM ≥ 4GB?  │
+          │         │         │    └──────────────┘
+          │         │         │      YES│    │NO
+          │         │         │         │    │
+          │         │         │         │    ▼
+          │         │         │         │  ┌───────────────┐
+          │         │         │         │  │ VRAM ≥ 1.5GB? │
+          │         │         │         │  └───────────────┘
+          │         │         │         │    YES│    │NO
+          │         │         │         │       │    │
+          ▼         ▼         ▼         ▼       ▼    ▼
+    ┌─────────┬─────────┬─────────┬─────────┬──────┬──────┐
+    │ 1.1B    │ 0.6B    │ 0.6B    │ 1.1B    │ 0.6B │ 0.6B │
+    │ INT8    │ sherpa  │ sherpa  │ INT8    │sherpa│sherpa│
+    │ GPU     │ GPU     │ CPU     │ GPU     │ GPU  │ CPU  │
+    │ FORCED  │ FORCED  │ FORCED  │ AUTO    │ AUTO │ AUTO │
+    └─────────┴─────────┴─────────┴─────────┴──────┴──────┘
+```
+
+**Actual Implementation (pipeline.rs lines 77-227):**
+
 ```rust
-// Daemon auto-detects GPU and selects best model (src/gpu.rs):
-let gpu_provider = detect_gpu_provider();
-let gpu_vram_mb = get_gpu_memory_mb();
+// Location: rust-crates/swictation-daemon/src/pipeline.rs
+// ADAPTIVE MODEL SELECTION based on GPU VRAM availability
+//
+// Decision tree:
+//   ≥4GB VRAM → 1.1B INT8 GPU (peak 3.5GB + 596MB headroom = 17%)
+//   ≥1.5GB VRAM → 0.6B GPU (peak 1.2GB + 336MB headroom = 28%)
+//   <1.5GB or no GPU → 0.6B CPU fallback
+//
+// Config override: stt_model_override can force a specific model:
+//   "auto" = VRAM-based selection (default)
+//   "0.6b-cpu" = Force 0.6B CPU
+//   "0.6b-gpu" = Force 0.6B GPU
+//   "1.1b-gpu" = Force 1.1B GPU
 
-let (model_path, recognizer) = match gpu_vram_mb {
-    Some(vram) if vram >= 4096 => {
-        // Strong GPU (5GB+ VRAM) → 1.1B model with OrtRecognizer
-        info!("Strong GPU detected ({}MB VRAM) - using 1.1B model", vram);
-        let recognizer = OrtRecognizer::new(
-            "/opt/swictation/models/parakeet-tdt-1.1b",
-            true  // GPU
-        )?;
-        ("1.1B", Box::new(recognizer))
-    },
-    Some(vram) if vram >= 1024 => {
-        // Weak GPU (3-4GB VRAM) → Try 0.6B with GPU, fallback to CPU
-        info!("Weak GPU detected ({}MB VRAM) - trying 0.6B with GPU", vram);
-        let recognizer = Recognizer::new(
-            "/opt/swictation/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8",
-            true  // GPU
-        ).unwrap_or_else(|e| {
-            warn!("GPU failed: {}, falling back to CPU", e);
-            Recognizer::new(model_path, false).unwrap()
-        });
-        ("0.6B", Box::new(recognizer))
-    },
-    _ => {
-        // No GPU or insufficient VRAM → 0.6B with CPU
-        info!("No GPU or insufficient VRAM - using 0.6B CPU");
-        let recognizer = Recognizer::new(
-            "/opt/swictation/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8",
-            false  // CPU
-        )?;
-        ("0.6B CPU", Box::new(recognizer))
+let stt = if config.stt_model_override != "auto" {
+    // MANUAL OVERRIDE: User specified exact model
+    info!("STT model override active: {}", config.stt_model_override);
+
+    match config.stt_model_override.as_str() {
+        "1.1b-gpu" => {
+            info!("  Loading Parakeet-TDT-1.1B-INT8 via ONNX Runtime (forced)...");
+            let ort_recognizer = OrtRecognizer::new(&config.stt_1_1b_model_path, true)?;
+            info!("✓ Parakeet-TDT-1.1B-INT8 loaded successfully (GPU, forced)");
+            SttEngine::Parakeet1_1B(ort_recognizer)
+        }
+        "0.6b-gpu" => {
+            info!("  Loading Parakeet-TDT-0.6B via sherpa-rs (GPU, forced)...");
+            let recognizer = Recognizer::new(&config.stt_0_6b_model_path, true)?;
+            info!("✓ Parakeet-TDT-0.6B loaded successfully (GPU, forced)");
+            SttEngine::Parakeet0_6B(recognizer)
+        }
+        "0.6b-cpu" => {
+            info!("  Loading Parakeet-TDT-0.6B via sherpa-rs (CPU, forced)...");
+            let recognizer = Recognizer::new(&config.stt_0_6b_model_path, false)?;
+            info!("✓ Parakeet-TDT-0.6B loaded successfully (CPU, forced)");
+            SttEngine::Parakeet0_6B(recognizer)
+        }
+        _ => {
+            return Err(anyhow::anyhow!(
+                "Invalid stt_model_override: '{}'. \
+                Valid options: 'auto', '0.6b-cpu', '0.6b-gpu', '1.1b-gpu'",
+                config.stt_model_override
+            ));
+        }
+    }
+} else {
+    // AUTO MODE: VRAM-based adaptive selection
+    info!("STT model selection: auto (VRAM-based)");
+    let vram_mb = get_gpu_memory_mb().map(|(total, _free)| total);
+
+    if let Some(vram) = vram_mb {
+        info!("Detected GPU with {}MB VRAM", vram);
+
+        if vram >= 4096 {
+            // High VRAM: Use 1.1B INT8 model for best quality (5.77% WER)
+            info!("✓ Sufficient VRAM for 1.1B INT8 model (requires ≥4GB)");
+            let ort_recognizer = OrtRecognizer::new(&config.stt_1_1b_model_path, true)?;
+            info!("✓ Parakeet-TDT-1.1B-INT8 loaded successfully (GPU)");
+            SttEngine::Parakeet1_1B(ort_recognizer)
+
+        } else if vram >= 1536 {
+            // Moderate VRAM: Use 0.6B GPU for good quality (7-8% WER)
+            info!("✓ Sufficient VRAM for 0.6B GPU model (requires ≥1.5GB)");
+            let recognizer = Recognizer::new(&config.stt_0_6b_model_path, true)?;
+            info!("✓ Parakeet-TDT-0.6B loaded successfully (GPU)");
+            SttEngine::Parakeet0_6B(recognizer)
+
+        } else {
+            // Low VRAM: Fall back to CPU
+            warn!("⚠️  Only {}MB VRAM available (need ≥1.5GB for GPU)", vram);
+            warn!("  Falling back to CPU mode (slower but functional)");
+            let recognizer = Recognizer::new(&config.stt_0_6b_model_path, false)?;
+            info!("✓ Parakeet-TDT-0.6B loaded successfully (CPU)");
+            SttEngine::Parakeet0_6B(recognizer)
+        }
+    } else {
+        // No GPU detected: Fall back to CPU
+        warn!("⚠️  No GPU detected (nvidia-smi failed or no NVIDIA GPU)");
+        let recognizer = Recognizer::new(&config.stt_0_6b_model_path, false)?;
+        info!("✓ Parakeet-TDT-0.6B loaded successfully (CPU)");
+        SttEngine::Parakeet0_6B(recognizer)
     }
 };
+
+// Log final configuration
+info!("📊 STT Engine: {} ({}, {})",
+      stt.model_name(),
+      stt.model_size(),
+      stt.backend());
+
+if stt.vram_required_mb() > 0 {
+    info!("   Minimum VRAM: {}MB", stt.vram_required_mb());
+}
 ```
 
-**Performance by Configuration:**
+**Configuration Override System:**
 
-| Configuration | Latency | Memory | WER | Use Case |
-|---------------|---------|--------|-----|----------|
-| **1.1B GPU** | 150-250ms | 2.2GB VRAM | 5.77% | Strong GPU (RTX 3060+, A1000+) |
-| **0.6B GPU** | 100-150ms | 800MB VRAM | 7-8% | Weak GPU (RTX 2060, 1660) |
-| **0.6B CPU** | 200-400ms | 960MB RAM | 7-8% | No GPU or fallback |
+**Config File (config.toml):**
+```toml
+# Location: ~/.config/swictation/config.toml
 
-**Note:** 1.1B model is **GPU-only** (no CPU fallback due to high latency)
+# STT model selection override
+# Options: "auto" (VRAM-based), "0.6b-cpu", "0.6b-gpu", "1.1b-gpu"
+stt_model_override = "auto"
 
-**Audio Processing Pipeline (0.6B - sherpa-rs):**
+# Path to 0.6B model directory (sherpa-rs)
+stt_0_6b_model_path = "/opt/swictation/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-onnx"
+
+# Path to 1.1B INT8 model directory (ONNX Runtime)
+stt_1_1b_model_path = "/opt/swictation/models/parakeet-tdt-1.1b-onnx"
+```
+
+**CLI Flags (Testing):**
+```bash
+# Dry-run mode: Show model selection without loading
+$ swictation-daemon --dry-run
+🧪 DRY-RUN MODE: Showing model selection without loading
+  Mode: auto (VRAM-based)
+  Detected: 97887MB VRAM
+  Would load: Parakeet-TDT-1.1B-INT8 (GPU)
+    Path: /opt/swictation/models/parakeet-tdt-1.1b-onnx
+    Reason: ≥4GB VRAM available
+✅ Dry-run complete (no models loaded)
+
+# Force specific model for testing
+$ swictation-daemon --test-model 0.6b-cpu
+🧪 CLI override: forcing model '0.6b-cpu'
+✓ Parakeet-TDT-0.6B loaded successfully (CPU, forced)
+
+$ swictation-daemon --test-model 0.6b-gpu
+🧪 CLI override: forcing model '0.6b-gpu'
+✓ Parakeet-TDT-0.6B loaded successfully (GPU, forced)
+
+$ swictation-daemon --test-model 1.1b-gpu
+🧪 CLI override: forcing model '1.1b-gpu'
+✓ Parakeet-TDT-1.1B-INT8 loaded successfully (GPU, forced)
+```
+
+**CLI Implementation:**
 ```rust
-// Used for: Weak GPU or CPU fallback
-let mut recognizer = Recognizer::new(
-    "/opt/swictation/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8",
-    use_gpu
-)?;
+// Location: rust-crates/swictation-daemon/src/main.rs lines 22-35
+use clap::Parser;
 
-let result = recognizer.recognize(&audio_samples)?;
-// sherpa-rs handles all preprocessing internally:
-// - Mel-spectrogram extraction (128 bins)
-// - Feature normalization
-// - Encoder/decoder/joiner inference
-// - Greedy search decoding
+#[derive(Parser, Debug)]
+#[command(name = "swictation-daemon")]
+#[command(about = "Voice-to-text dictation daemon with adaptive model selection")]
+struct CliArgs {
+    /// Override STT model selection (bypasses auto-detection)
+    #[arg(long, value_name = "MODEL")]
+    #[arg(value_parser = ["0.6b-cpu", "0.6b-gpu", "1.1b-gpu"])]
+    test_model: Option<String>,
 
-println!("{}", result.text);
+    /// Dry-run: show model selection without loading models
+    #[arg(long)]
+    dry_run: bool,
+}
 ```
 
-**Audio Processing Pipeline (1.1B - direct ort):**
-```rust
-// Used for: Strong GPU (5GB+ VRAM)
-let mut recognizer = OrtRecognizer::new(
-    "/opt/swictation/models/parakeet-tdt-1.1b",
-    true  // GPU-only
-)?;
+**Troubleshooting Guide:**
 
-let text = recognizer.recognize_file("audio.wav")?;
-// OrtRecognizer handles:
-// - Audio loading (WAV/MP3/FLAC via symphonia)
-// - Mel-spectrogram extraction (80 bins)
-// - Encoder inference with dynamic shapes
-// - TDT greedy search with LSTM state persistence
-// - Token-to-text conversion
+**1.1B Model Load Failure (despite sufficient VRAM):**
+```
+Error: Failed to load 1.1B INT8 model despite 97887MB VRAM.
+
+Troubleshooting:
+  1. Verify model files exist: ls /opt/swictation/models/parakeet-tdt-1.1b-onnx
+  2. Check CUDA/cuDNN installation: nvidia-smi
+  3. Ensure ONNX Runtime CUDA EP is available
+  4. Try 0.6B fallback by setting stt_model_override="0.6b-gpu" in config
 ```
 
-**Implementation Status:**
+**0.6B GPU Model Load Failure (despite sufficient VRAM):**
+```
+Error: Failed to load 0.6B GPU model despite 8192MB VRAM.
 
-✅ **Implemented - Adaptive Selection:**
-- Runtime model selection based on GPU VRAM
-- Strong GPU (5GB+) → 1.1B with OrtRecognizer
-- Weak GPU (3-4GB) → 0.6B with sherpa-rs GPU
-- No GPU → 0.6B with sherpa-rs CPU
-- Automatic fallback on GPU allocation failure
+Troubleshooting:
+  1. Verify model files: ls /opt/swictation/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-onnx
+  2. Check CUDA availability: nvidia-smi
+  3. Verify sherpa-rs CUDA support
+  4. Try CPU fallback by setting stt_model_override="0.6b-cpu" in config
+```
+
+**0.6B CPU Model Load Failure:**
+```
+Error: Failed to load 0.6B CPU model.
+
+Troubleshooting:
+  1. Verify model files: ls /opt/swictation/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-onnx
+  2. Check available RAM (need ~1GB free)
+  3. Ensure ONNX Runtime CPU EP is available
+```
+
+**Usage Examples:**
+
+**Example 1: Auto-detection (recommended):**
+```bash
+$ swictation-daemon
+🎙️ Starting Swictation Daemon v0.1.0
+📋 Configuration loaded from /home/user/.config/swictation/config.toml
+🎮 GPU detected: CUDA
+STT model selection: auto (VRAM-based)
+Detected GPU with 97887MB VRAM
+✓ Sufficient VRAM for 1.1B INT8 model (requires ≥4GB)
+  Loading Parakeet-TDT-1.1B-INT8 via ONNX Runtime...
+✓ Parakeet-TDT-1.1B-INT8 loaded successfully (GPU)
+📊 STT Engine: Parakeet-TDT-1.1B-INT8 (1.1B-INT8, GPU)
+   Minimum VRAM: 4096MB
+🚀 Swictation daemon ready!
+```
+
+**Example 2: Force CPU mode (low-end hardware):**
+```toml
+# Edit ~/.config/swictation/config.toml
+stt_model_override = "0.6b-cpu"
+```
+```bash
+$ swictation-daemon
+STT model override active: 0.6b-cpu
+  Loading Parakeet-TDT-0.6B via sherpa-rs (CPU, forced)...
+✓ Parakeet-TDT-0.6B loaded successfully (CPU, forced)
+📊 STT Engine: Parakeet-TDT-0.6B (0.6B, CPU)
+```
+
+**Example 3: Quick testing without config edits:**
+```bash
+$ swictation-daemon --test-model 0.6b-gpu
+🧪 CLI override: forcing model '0.6b-gpu'
+✓ Parakeet-TDT-0.6B loaded successfully (GPU, forced)
+```
 
 **Key Files:**
-- `rust-crates/swictation-stt/src/recognizer.rs` - 0.6B with sherpa-rs (weak GPU / CPU)
-- `rust-crates/swictation-stt/src/recognizer_ort.rs` - 1.1B with direct ort (strong GPU only)
-- `rust-crates/swictation-stt/src/audio.rs` - Mel feature extraction (for 1.1B)
-- `rust-crates/swictation-daemon/src/pipeline.rs` - Adaptive model selection logic
-- `rust-crates/swictation-daemon/src/gpu.rs` - GPU detection + VRAM checking
+- `rust-crates/swictation-stt/src/engine.rs` - Unified SttEngine interface
+- `rust-crates/swictation-stt/src/recognizer.rs` - 0.6B with sherpa-rs (GPU/CPU)
+- `rust-crates/swictation-stt/src/recognizer_ort.rs` - 1.1B with direct ort (GPU only)
+- `rust-crates/swictation-stt/src/audio.rs` - Mel feature extraction (80 bins for 1.1B)
+- `rust-crates/swictation-daemon/src/pipeline.rs` - Adaptive selection logic (lines 77-227)
+- `rust-crates/swictation-daemon/src/gpu.rs` - GPU detection + VRAM measurement
+- `rust-crates/swictation-daemon/src/config.rs` - Configuration management (lines 54-62)
+- `rust-crates/swictation-daemon/src/main.rs` - CLI argument parsing (lines 22-35, 169-222)
 
 ---
 
