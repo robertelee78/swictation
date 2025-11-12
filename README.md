@@ -16,25 +16,48 @@
 
 - ✅ **NVIDIA GPU** with 4GB+ VRAM (RTX A1000/3050/4060 or better)
   - Uses ~2.2GB VRAM typical, ~3.5GB peak with FP16 optimization
-- ✅ **Linux** with Sway/Wayland compositor
-- ✅ **Rust** toolchain (latest stable)
-- ✅ **System tools:** wtype, wl-clipboard
+- ✅ **Linux** with Sway/Wayland compositor (Ubuntu 24.04+ recommended)
+- ✅ **Node.js** 18+ (for npm installation)
+- ✅ **System tools:** wtype, wl-clipboard, CUDA 11.8+
 
 ```bash
+# Install system dependencies (Ubuntu/Debian 24.04+)
+sudo apt install wtype wl-clipboard pipewire nvidia-cuda-toolkit
+
 # Install system dependencies (Arch/Manjaro)
-sudo pacman -S wtype wl-clipboard pipewire
-
-# Install system dependencies (Ubuntu/Debian)
-sudo apt install wtype wl-clipboard pipewire
-
-# Install Rust toolchain (if not already installed)
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source ~/.cargo/env
+sudo pacman -S wtype wl-clipboard pipewire cuda
 ```
 
-### Installation
+### Installation (Recommended: npm)
+
+**Easiest method - installs pre-built binaries:**
 
 ```bash
+# Install globally (gets latest version)
+npm install -g swictation
+
+# The postinstall script will:
+# - Detect your GPU and recommend optimal AI model
+# - Install systemd services automatically
+# - Configure Sway/i3 hotkeys
+# - Download required AI models (~1.5GB)
+
+# Start the daemon
+systemctl --user start swictation-daemon
+
+# Check status
+systemctl --user status swictation-daemon
+```
+
+### Installation (Manual Build)
+
+**For developers or if you want to build from source:**
+
+```bash
+# Install Rust toolchain
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source ~/.cargo/env
+
 # Clone with submodules
 git clone --recurse-submodules https://github.com/robertelee78/swictation.git /opt/swictation
 cd /opt/swictation
@@ -50,12 +73,10 @@ systemctl --user daemon-reload
 systemctl --user enable swictation-daemon
 systemctl --user start swictation-daemon
 
-# Setup Sway hotkey
+# Setup Sway hotkey (automatic for npm install)
 ./scripts/setup-sway.sh
 swaymsg reload
 ```
-
-**See systemd service setup above for installation.**
 
 ### Your First Recording
 
@@ -283,13 +304,32 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 ## **Installation** 📦
 
-**Quick Build:**
+### Recommended: npm Package
+
 ```bash
-cd /opt/swictation/rust-crates
+npm install -g swictation
+```
+
+**What it does:**
+- ✅ Installs pre-compiled Rust binaries (no build required)
+- ✅ Auto-detects GPU and recommends optimal model (1.1B or 0.6B)
+- ✅ Downloads AI models (~1.5GB total)
+- ✅ Sets up systemd services automatically
+- ✅ Configures Sway/i3 hotkeys
+- ✅ Creates config at `~/.config/swictation/config.toml`
+
+### Alternative: Build from Source
+
+```bash
+# Clone repository
+git clone --recurse-submodules https://github.com/robertelee78/swictation.git
+cd swictation/rust-crates
+
+# Build (requires Rust toolchain)
 cargo build --release
 
 # Binary location:
-# /opt/swictation/rust-crates/target/release/swictation-daemon
+# ./target/release/swictation-daemon
 ```
 
 ---
