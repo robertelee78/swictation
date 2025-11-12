@@ -17,7 +17,8 @@ Environment="ORT_DYLIB_PATH=__ORT_DYLIB_PATH__"
 
 # LD_LIBRARY_PATH: CUDA runtime + ONNX Runtime CUDA providers (for GPU acceleration)
 # Without this: 14x performance regression (43s vs 3-6s expected for 57s audio)
-Environment="LD_LIBRARY_PATH=/usr/local/cuda/lib64:__INSTALL_DIR__/lib/native"
+# Include cuda-12.9 for cuDNN libraries (libcudnn.so.9) required by ONNX Runtime
+Environment="LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda-12.9/lib64:__INSTALL_DIR__/lib/native"
 
 # CUDA_HOME: Helps CUDA libraries find additional resources at runtime
 Environment="CUDA_HOME=/usr/local/cuda"
