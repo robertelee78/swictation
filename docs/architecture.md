@@ -115,7 +115,7 @@ pub struct AudioCapture {
 - Buffer: Lock-free for real-time performance
 
 **Key Files:**
-- `rust-crates/swictation-audio/src/capture.rs` (619 lines)
+- `rust-crates/swictation-audio/src/capture.rs` (627 lines)
 - `rust-crates/swictation-audio/src/buffer.rs` (167 lines)
 - `rust-crates/swictation-audio/src/resampler.rs` (199 lines)
 
@@ -139,8 +139,8 @@ pub struct VadDetector {
 ```
 
 **Performance:**
-- **Model size:** 2.3 MB
-- **VRAM usage:** 2.3 MB
+- **Model size:** ~630 KB (0.63 MB)
+- **VRAM usage:** ~630 KB
 - **Latency:** <50ms per window
 - **Accuracy:** 16% better on noisy data vs v5
 - **Threshold:** 0.001-0.005 (ONNX outputs ~100-200x lower than PyTorch!)

@@ -152,7 +152,7 @@ external/midstream/         # Text transformation (Git submodule)
 
 ### Technical Highlights
 - **STT Model:** Parakeet-TDT-1.1B (5.77% WER, parakeet-rs)
-- **VAD Model:** Silero VAD v6 (2.3MB, ort 2.0.0-rc.10, ONNX threshold: 0.003)
+- **VAD Model:** Silero VAD v6 (~630KB, ort 2.0.0-rc.10, ONNX threshold: 0.003)
 - **Text Transform:** MidStream Rust crate (~1µs latency)
 - **Audio Capture:** cpal with PipeWire backend
 - **Text Injection:** wtype (Wayland) with wl-clipboard fallback
@@ -212,7 +212,7 @@ Total after pause    → ~1.0s
 - GPU: ~2.2GB typical, ~3.5GB peak
   - Parakeet-TDT model: ~1.8GB
   - Context buffer: ~400MB
-  - Silero VAD: 2.3MB
+  - Silero VAD: ~630KB
 - System RAM: ~150MB (Rust daemon)
 
 ---
