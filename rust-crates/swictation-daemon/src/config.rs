@@ -111,10 +111,10 @@ impl Default for DaemonConfig {
             config_path: Self::default_config_path(),
             socket_path: "/tmp/swictation.sock".to_string(),
             vad_model_path: get_default_vad_model_path(),
-            vad_min_silence: 0.5,
+            vad_min_silence: 0.8,
             vad_min_speech: 0.25,
             vad_max_speech: 30.0,
-            vad_threshold: 0.003, // ONNX model threshold (100-200x lower than PyTorch 0.5)
+            vad_threshold: 0.25, // Optimized for real-time transcription (original 0.003 prevented silence detection)
             // STT adaptive model selection (auto = VRAM-based)
             stt_model_override: "auto".to_string(),
             stt_0_6b_model_path: get_default_0_6b_model_path(),
