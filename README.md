@@ -202,19 +202,18 @@ external/midstream/         # Text transformation (Git submodule)
 
 ### ONNX Threshold Configuration
 
-**IMPORTANT:** Silero VAD ONNX model outputs probabilities ~100-200x lower than PyTorch!
+**Daemon Default Configuration:**
 
 ```toml
-# config/config.example.toml
+# ~/.config/swictation/config.toml (runtime defaults)
 [vad]
-threshold = 0.25  # Optimized for real-time (0.001-0.005 for library default)
+threshold = 0.25  # Empirically optimized for real-time transcription
+min_silence_duration = 0.8  # Seconds of silence before transcription
+min_speech_duration = 0.25  # Minimum speech length to process
 
-# Note: Default is 0.25 (empirically optimized for real-time transcription)
-# Original 0.003 prevented proper silence detection in practice
-# Valid ONNX range: 0.001-0.01 (much lower than PyTorch 0.5)
+# Note: Threshold range is 0.0-1.0 (higher = less sensitive to background noise)
+# 0.25 provides optimal silence detection for real-time dictation
 ```
-
-**See `rust-crates/swictation-vad/ONNX_THRESHOLD_GUIDE.md` for technical details.**
 
 ### Performance Characteristics
 
@@ -401,7 +400,7 @@ Edit `~/.config/swictation/config.toml`:
 
 ```toml
 [vad]
-threshold = 0.25           # Optimized threshold for real-time (0.001-0.01 valid range)
+threshold = 0.25           # Empirically optimized for real-time (range: 0.0-1.0)
 min_silence_duration = 0.8 # Seconds of silence before transcription
 min_speech_duration = 0.25 # Minimum speech length to process
 
@@ -453,12 +452,12 @@ echo $XDG_SESSION_TYPE  # Should be "wayland"
 
 ### Low Probabilities / No Speech Detection
 
-Check VAD threshold - ONNX models use 0.001-0.005, **NOT** PyTorch 0.5!
+Check VAD threshold configuration:
 
 ```toml
 # ~/.config/swictation/config.toml
 [vad]
-threshold = 0.25  # Default optimized value (lower like 0.01-0.1 for more sensitive)
+threshold = 0.25  # Default optimized value (lower = more sensitive, higher = better silence detection)
 ```
 
 📖 **Check logs:** `journalctl --user -u swictation-daemon -f`
