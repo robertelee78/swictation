@@ -31,15 +31,35 @@ else
 fi
 echo ""
 
-# Step 3: Copy binary to npm package
-echo "3️⃣  Copying binary to npm-package/lib/native/..."
+# Step 3: Copy binary and CUDA libraries to npm package
+echo "3️⃣  Copying binary and CUDA libraries to npm-package/lib/native/..."
 mkdir -p "$REPO_ROOT/npm-package/lib/native"
+
+# Copy daemon binary
 cp rust-crates/target/release/swictation-daemon \
    npm-package/lib/native/swictation-daemon.bin
 chmod +x npm-package/lib/native/swictation-daemon.bin
-
 BINARY_SIZE=$(du -h npm-package/lib/native/swictation-daemon.bin | cut -f1)
-echo "   ✓ Binary copied (size: $BINARY_SIZE)"
+echo "   ✓ Daemon binary copied (size: $BINARY_SIZE)"
+
+# Copy CUDA provider libraries (excluded from npm tarball due to size)
+# These will be downloaded by postinstall.js from GitHub releases
+if [ -f "rust-crates/target/release/libonnxruntime_providers_cuda.so" ]; then
+  cp rust-crates/target/release/libonnxruntime_providers_cuda.so \
+     npm-package/lib/native/
+  CUDA_SIZE=$(du -h npm-package/lib/native/libonnxruntime_providers_cuda.so | cut -f1)
+  echo "   ✓ CUDA provider copied (size: $CUDA_SIZE) - for reference only"
+else
+  echo "   ⚠️  WARNING: CUDA provider not found in Rust build output"
+fi
+
+# Copy other ONNX Runtime providers
+if [ -f "rust-crates/target/release/libonnxruntime_providers_shared.so" ]; then
+  cp rust-crates/target/release/libonnxruntime_providers_shared.so \
+     npm-package/lib/native/
+  echo "   ✓ Shared provider copied"
+fi
+
 echo ""
 
 # Step 4: Verify service files have CUDA environment

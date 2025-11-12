@@ -230,8 +230,20 @@ async function downloadGPULibraries() {
 function detectOrtLibrary() {
   log('cyan', '\n🔍 Detecting ONNX Runtime library path...');
 
+  // CRITICAL: Check npm package library FIRST (GPU-enabled)
+  // This is the bundled library with CUDA support
+  const npmOrtLib = path.join(__dirname, 'lib', 'native', 'libonnxruntime.so');
+  if (fs.existsSync(npmOrtLib)) {
+    log('green', `✓ Found ONNX Runtime (GPU-enabled): ${npmOrtLib}`);
+    log('cyan', '  Using bundled GPU-enabled library with CUDA provider support');
+    return npmOrtLib;
+  } else {
+    log('yellow', `⚠️  Warning: GPU-enabled ONNX Runtime not found at ${npmOrtLib}`);
+    log('yellow', '   Falling back to system Python installation (may be CPU-only)');
+  }
+
   try {
-    // Try to find ONNX Runtime through Python
+    // Try to find ONNX Runtime through Python (fallback, usually CPU-only)
     const ortPath = execSync(
       'python3 -c "import onnxruntime; import os; print(os.path.join(os.path.dirname(onnxruntime.__file__), \'capi\'))"',
       { encoding: 'utf-8' }
@@ -256,7 +268,8 @@ function detectOrtLibrary() {
 
     // Use the first (or only) .so file found
     const ortLibPath = path.join(ortPath, ortFiles[0]);
-    log('green', `✓ Found ONNX Runtime: ${ortLibPath}`);
+    log('yellow', `⚠️  Using Python ONNX Runtime: ${ortLibPath}`);
+    log('yellow', '   Note: This may be CPU-only and lack CUDA support');
 
     // Store in a config file for systemd service generation
     const configDir = path.join(__dirname, 'config');
@@ -265,7 +278,8 @@ function detectOrtLibrary() {
     const envConfig = {
       ORT_DYLIB_PATH: ortLibPath,
       detected_at: new Date().toISOString(),
-      onnxruntime_version: execSync('python3 -c "import onnxruntime; print(onnxruntime.__version__)"', { encoding: 'utf-8' }).trim()
+      onnxruntime_version: execSync('python3 -c "import onnxruntime; print(onnxruntime.__version__)"', { encoding: 'utf-8' }).trim(),
+      warning: 'Using Python pip installation - may be CPU-only'
     };
 
     try {

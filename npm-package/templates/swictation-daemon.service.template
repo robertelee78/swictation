@@ -13,6 +13,7 @@ RestartSec=5
 Environment="RUST_LOG=info"
 
 # ORT_DYLIB_PATH: Points to ONNX Runtime library (CRITICAL - without this, model produces blank output)
+# Note: postinstall.js will replace __ORT_DYLIB_PATH__ with detected path, defaulting to bundled GPU library
 Environment="ORT_DYLIB_PATH=__ORT_DYLIB_PATH__"
 
 # LD_LIBRARY_PATH: CUDA runtime + ONNX Runtime CUDA providers (for GPU acceleration)

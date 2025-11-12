@@ -20,8 +20,15 @@ Command-line interface for managing the Swictation voice dictation daemon.
 ## Installation
 
 ```bash
-npm install -g swictation
+# Step 1: Install package
+sudo npm install -g swictation
+
+# Step 2: Run post-install setup (REQUIRED!)
+cd /usr/local/lib/node_modules/swictation
+node postinstall.js
 ```
+
+**⚠️ Important**: The post-install script downloads GPU libraries (~330MB) and sets up systemd services. Do not skip this step!
 
 ## Quick Start
 
