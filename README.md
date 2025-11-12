@@ -43,7 +43,7 @@ npm install -g swictation
 # - Download required AI models (~1.5GB)
 
 # Start the daemon
-systemctl --user start swictation-daemon
+swictation start
 
 # Check status
 systemctl --user status swictation-daemon
@@ -97,7 +97,7 @@ Swictation is a **native Rust application** with zero Python runtime dependencie
 ```
 ┌────────────────────────────────────────────────────────┐
 │         SWICTATION-DAEMON (Rust Binary)                │
-│  State: [IDLE] ↔ [RECORDING] ↔ [PROCESSING]           │
+│  State: [IDLE] ↔ [RECORDING] ↔ [PROCESSING]            │
 └────────────────────────────────────────────────────────┘
            ↓              ↓              ↓
     ┌──────────┐   ┌──────────┐   ┌─────────────┐
@@ -135,14 +135,6 @@ external/midstream/         # Text transformation (Git submodule)
 ```
 
 ### Key Technical Decisions
-
-**Why Rust?**
-- **Performance:** Native compiled code, zero garbage collection overhead
-- **Memory Safety:** Eliminates entire classes of bugs (use-after-free, data races)
-- **GPU Integration:** Direct ONNX Runtime bindings (ort crate) for CUDA acceleration
-- **Type Safety:** Compile-time guarantees prevent runtime errors
-- **Async Runtime:** Tokio provides efficient async I/O for real-time audio
-
 **ONNX Runtime (ort):**
 - Uses latest ort crate (2.0.0-rc.10) with direct CUDA support
 - ~150x faster than sherpa-rs for VAD operations
@@ -169,8 +161,7 @@ external/midstream/         # Text transformation (Git submodule)
 - 🌊 **Wayland Native** - wtype text injection, no X11 dependencies
 - ⌨️ **Hotkey Control** - `$mod+Shift+d` toggle via global-hotkey crate
 - 🔄 **systemd Integration** - Auto-start with Sway
-- 📋 **Full Unicode Support** - Emojis, Greek, Chinese, all languages
-- 🦀 **Pure Rust** - Native performance, memory safety, zero Python overhead
+- 🦀 **Pure Rust** - Native performance, memory safety, zero Python dependency hell
 
 ### Technical Highlights
 - **STT Model:** Parakeet-TDT-1.1B (5.77% WER, parakeet-rs)
@@ -334,26 +325,11 @@ cargo build --release
 
 ---
 
-## **Migration from Python** 🔄
+### Why QT Tray for Sway?
 
-Swictation has been fully migrated to Rust for performance, reliability, and memory safety.
+The **QT system tray** (`tauri-ui/`) is **optional** and only needed for visual status indicators on Sway/Wayland. The core daemon works perfectly without any GUI.
 
-### What Changed
-
-| Component | Old (Python) | New (Rust) | Improvement |
-|-----------|--------------|------------|-------------|
-| **Daemon** | swictationd.py | swictation-daemon | Native binary, no interpreter |
-| **VAD** | sherpa-rs Python bindings | ort 2.0.0-rc.10 (direct) | ~150x faster, Silero v6 |
-| **STT** | NeMo Toolkit (PyTorch) | 0.6B: sherpa-rs, 1.1B: direct ort | Adaptive model selection |
-| **Audio** | sounddevice (Python) | cpal (Rust) | Lower latency |
-| **Transform** | PyO3 wrapper | Native Rust crate | Zero FFI overhead |
-| **Memory** | ~250MB Python + GC | ~150MB Rust (no GC) | 40% reduction |
-
-### Why Keep QT Tray?
-
-The **QT system tray** (`tauri-ui/`) is **optional** and only needed for visual status indicators on Wayland. The core daemon works perfectly without any GUI.
-
-**Wayland Limitation:** System tray protocols are compositor-specific. QT provides the most reliable cross-compositor support.
+**Sway Limitation:** Could not get the icon to show properly with pure Tauri app.
 
 ### Python Components
 
@@ -411,19 +387,6 @@ model_override = "auto"    # auto, 0.6b-cpu, 0.6b-gpu, or 1.1b-gpu
 
 ---
 
-## **Performance** 📈
-
-| Metric | Value | Hardware |
-|--------|-------|----------|
-| **VAD Latency** | <50ms | RTX A1000 |
-| **STT Latency** | 150-250ms | RTX A1000 |
-| **Transform** | ~1µs | Native Rust |
-| **WER Accuracy** | 5.77% | Parakeet-TDT-1.1B |
-| **GPU Memory** | 2.2GB typical | Silero v6 + Parakeet |
-| **RAM Usage** | 150MB | Rust daemon |
-
----
-
 ## **Troubleshooting** 🔧
 
 ### Daemon Won't Start
@@ -466,6 +429,7 @@ threshold = 0.25  # Default optimized value (lower = more sensitive, higher = be
 
 ## **Documentation** 📚
 
+- **[Swictation Architecture](docs/architecture.md)** - Swictation Architecture
 - **[ONNX Threshold Guide](rust-crates/swictation-vad/ONNX_THRESHOLD_GUIDE.md)** - VAD tuning details
 - **[Tauri UI Architecture](tauri-ui/docs/ARCHITECTURE.md)** - UI system design
 - **[MidStream Transform](external/midstream/)** - Voice command library
@@ -510,5 +474,3 @@ Apache License 2.0 - See [LICENSE](LICENSE) for details.
 - ✅ ort 2.0.0-rc.10 with modern CUDA support
 - ✅ Silero VAD v6 with ONNX threshold tuning
 - ✅ MidStream text transformation (~1µs latency)
-
-**Next Milestone:** AMD GPU support (ROCm), extended voice command library
