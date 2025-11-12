@@ -1,0 +1,28 @@
+[Unit]
+Description=Swictation Voice-to-Text Daemon
+After=graphical-session.target
+Wants=swictation-ui.service
+
+[Service]
+Type=simple
+ExecStart=__INSTALL_DIR__/lib/native/swictation-daemon.bin
+Restart=on-failure
+RestartSec=5
+
+# Environment variables (CRITICAL for 1.1B GPU model)
+Environment="RUST_LOG=info"
+Environment="ORT_DYLIB_PATH=__ORT_DYLIB_PATH__"
+Environment="LD_LIBRARY_PATH=/usr/local/cuda/lib64:__INSTALL_DIR__/lib/native"
+
+# Import full user environment for PulseAudio
+# This ensures all audio devices are detected properly
+# Required for microphone access in user session
+ImportEnvironment=
+
+# Resource limits (commented out - let daemon use what it needs)
+# Uncomment and adjust if needed for production deployments
+# MemoryMax=8G
+# CPUQuota=200%
+
+[Install]
+WantedBy=default.target

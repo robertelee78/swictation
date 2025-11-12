@@ -287,6 +287,57 @@ function detectOrtLibrary() {
   }
 }
 
+function generateSystemdService(ortLibPath) {
+  log('cyan', '\n⚙️  Generating systemd service file...');
+
+  try {
+    // Read template
+    const templatePath = path.join(__dirname, 'templates', 'swictation-daemon.service.template');
+    if (!fs.existsSync(templatePath)) {
+      log('yellow', `⚠️  Warning: Template not found at ${templatePath}`);
+      log('yellow', '   Skipping systemd service generation');
+      return;
+    }
+
+    let template = fs.readFileSync(templatePath, 'utf8');
+
+    // Replace placeholders
+    const installDir = __dirname; // npm package installation directory
+    template = template.replace(/__INSTALL_DIR__/g, installDir);
+
+    if (ortLibPath) {
+      template = template.replace(/__ORT_DYLIB_PATH__/g, ortLibPath);
+    } else {
+      log('yellow', '⚠️  Warning: ORT_DYLIB_PATH not detected');
+      log('yellow', '   Service file will contain placeholder - you must set it manually');
+    }
+
+    // Write to systemd user directory
+    const systemdDir = path.join(os.homedir(), '.config', 'systemd', 'user');
+    const servicePath = path.join(systemdDir, 'swictation-daemon.service');
+
+    // Create systemd directory if it doesn't exist
+    if (!fs.existsSync(systemdDir)) {
+      fs.mkdirSync(systemdDir, { recursive: true });
+      log('green', `✓ Created ${systemdDir}`);
+    }
+
+    // Write service file
+    fs.writeFileSync(servicePath, template);
+    log('green', `✓ Generated systemd service: ${servicePath}`);
+
+    if (ortLibPath) {
+      log('cyan', '  Service configured with detected ONNX Runtime path');
+    } else {
+      log('yellow', '  ⚠️  Please edit the service file to set ORT_DYLIB_PATH manually');
+    }
+
+  } catch (err) {
+    log('yellow', `⚠️  Failed to generate systemd service: ${err.message}`);
+    log('cyan', '  You can manually create it later using: swictation setup');
+  }
+}
+
 function showNextSteps() {
   log('green', '\n✨ Swictation installed successfully!');
   log('cyan', '\nNext steps:');
@@ -316,7 +367,8 @@ async function main() {
   ensureBinaryPermissions();
   createDirectories();
   await downloadGPULibraries();
-  detectOrtLibrary();
+  const ortLibPath = detectOrtLibrary();
+  generateSystemdService(ortLibPath);
   checkDependencies();
   showNextSteps();
 }
