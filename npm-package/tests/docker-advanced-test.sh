@@ -48,7 +48,7 @@ set -e
 # Install dependencies
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq curl libasound2 libc-bin > /dev/null 2>&1
+apt-get install -y -qq curl libasound2t64 libc-bin > /dev/null 2>&1
 
 # Install Node.js
 curl -fsSL https://deb.nodesource.com/setup_NODE_VERSION.x | bash - > /dev/null 2>&1
