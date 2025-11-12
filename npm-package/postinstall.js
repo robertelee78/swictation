@@ -227,6 +227,66 @@ async function downloadGPULibraries() {
   }
 }
 
+function detectOrtLibrary() {
+  log('cyan', '\n🔍 Detecting ONNX Runtime library path...');
+
+  try {
+    // Try to find ONNX Runtime through Python
+    const ortPath = execSync(
+      'python3 -c "import onnxruntime; import os; print(os.path.join(os.path.dirname(onnxruntime.__file__), \'capi\'))"',
+      { encoding: 'utf-8' }
+    ).trim();
+
+    if (!fs.existsSync(ortPath)) {
+      log('yellow', '⚠️  Warning: ONNX Runtime capi directory not found at ' + ortPath);
+      log('yellow', '   Daemon may not work correctly without onnxruntime-gpu');
+      log('cyan', '   Install with: pip3 install onnxruntime-gpu');
+      return null;
+    }
+
+    // Find the actual .so file
+    const ortFiles = fs.readdirSync(ortPath).filter(f => f.startsWith('libonnxruntime.so'));
+
+    if (ortFiles.length === 0) {
+      log('yellow', '⚠️  Warning: Could not find libonnxruntime.so in ' + ortPath);
+      log('yellow', '   Daemon may not work correctly');
+      log('cyan', '   Install with: pip3 install onnxruntime-gpu');
+      return null;
+    }
+
+    // Use the first (or only) .so file found
+    const ortLibPath = path.join(ortPath, ortFiles[0]);
+    log('green', `✓ Found ONNX Runtime: ${ortLibPath}`);
+
+    // Store in a config file for systemd service generation
+    const configDir = path.join(__dirname, 'config');
+    const envFilePath = path.join(configDir, 'detected-environment.json');
+
+    const envConfig = {
+      ORT_DYLIB_PATH: ortLibPath,
+      detected_at: new Date().toISOString(),
+      onnxruntime_version: execSync('python3 -c "import onnxruntime; print(onnxruntime.__version__)"', { encoding: 'utf-8' }).trim()
+    };
+
+    try {
+      fs.writeFileSync(envFilePath, JSON.stringify(envConfig, null, 2));
+      log('green', `✓ Saved environment config to ${envFilePath}`);
+    } catch (err) {
+      log('yellow', `Warning: Could not save environment config: ${err.message}`);
+    }
+
+    return ortLibPath;
+
+  } catch (err) {
+    log('yellow', '\n⚠️  Could not detect ONNX Runtime:');
+    log('yellow', `   ${err.message}`);
+    log('cyan', '\n📦 Please install onnxruntime-gpu for optimal performance:');
+    log('cyan', '   pip3 install onnxruntime-gpu');
+    log('cyan', '\n   The daemon will not work correctly without this library!');
+    return null;
+  }
+}
+
 function showNextSteps() {
   log('green', '\n✨ Swictation installed successfully!');
   log('cyan', '\nNext steps:');
@@ -256,6 +316,7 @@ async function main() {
   ensureBinaryPermissions();
   createDirectories();
   await downloadGPULibraries();
+  detectOrtLibrary();
   checkDependencies();
   showNextSteps();
 }
