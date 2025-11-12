@@ -338,11 +338,105 @@ function generateSystemdService(ortLibPath) {
   }
 }
 
+function detectSystemCapabilities() {
+  const capabilities = {
+    hasGPU: false,
+    gpuName: null,
+    gpuMemoryMB: 0,
+    cpuCores: os.cpus().length,
+    totalRAMGB: Math.round(os.totalmem() / (1024 * 1024 * 1024))
+  };
+
+  // Detect NVIDIA GPU and get details
+  if (detectNvidiaGPU()) {
+    capabilities.hasGPU = true;
+
+    try {
+      // Get GPU memory
+      const gpuMemory = execSync('nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits', { encoding: 'utf8' });
+      capabilities.gpuMemoryMB = parseInt(gpuMemory.trim());
+
+      // Get GPU name
+      const gpuName = execSync('nvidia-smi --query-gpu=name --format=csv,noheader', { encoding: 'utf8' });
+      capabilities.gpuName = gpuName.trim();
+    } catch (err) {
+      // GPU detected but couldn't get details
+      capabilities.gpuMemoryMB = 0;
+    }
+  }
+
+  return capabilities;
+}
+
+function recommendOptimalModel(capabilities) {
+  // Recommendation logic based on hardware
+  if (capabilities.hasGPU) {
+    if (capabilities.gpuMemoryMB >= 4000) {
+      // High-end GPU: Recommend 1.1B model (best quality, full GPU acceleration)
+      return {
+        model: '1.1b',
+        reason: `GPU detected: ${capabilities.gpuName} (${Math.round(capabilities.gpuMemoryMB/1024)}GB VRAM)`,
+        description: 'Best quality - Full GPU acceleration with FP32 precision',
+        size: '~75MB download (FP32 + INT8 versions)',
+        performance: '62x realtime speed on GPU'
+      };
+    } else {
+      // Lower VRAM: Recommend 0.6B model
+      return {
+        model: '0.6b',
+        reason: `GPU detected but limited VRAM (${Math.round(capabilities.gpuMemoryMB/1024)}GB)`,
+        description: 'Lighter model for lower VRAM systems',
+        size: '~111MB',
+        performance: 'Fast on GPU'
+      };
+    }
+  } else {
+    // CPU-only systems
+    if (capabilities.cpuCores >= 8 && capabilities.totalRAMGB >= 16) {
+      // Powerful CPU: Can handle 1.1B INT8
+      return {
+        model: '1.1b',
+        reason: `Powerful CPU (${capabilities.cpuCores} cores, ${capabilities.totalRAMGB}GB RAM)`,
+        description: 'INT8 quantized for fast CPU inference',
+        size: '~1.1GB download',
+        performance: 'Good CPU performance with INT8'
+      };
+    } else {
+      // Weaker CPU: Recommend 0.6B
+      return {
+        model: '0.6b',
+        reason: `CPU-only system (${capabilities.cpuCores} cores, ${capabilities.totalRAMGB}GB RAM)`,
+        description: 'Lighter model for CPU-only systems',
+        size: '~111MB',
+        performance: 'Optimized for CPU'
+      };
+    }
+  }
+}
+
 function showNextSteps() {
   log('green', '\n✨ Swictation installed successfully!');
-  log('cyan', '\nNext steps:');
-  console.log('  1. Download AI models (9.43 GB):');
-  log('cyan', '     pip install "huggingface_hub[cli]"  # Required for model downloads');
+
+  // Detect system and recommend optimal model
+  const capabilities = detectSystemCapabilities();
+  const recommendation = recommendOptimalModel(capabilities);
+
+  log('cyan', '\n📊 System Detection:');
+  console.log(`   ${recommendation.reason}`);
+  console.log('');
+
+  log('cyan', '🎯 Recommended Model:');
+  log('green', `   ${recommendation.model.toUpperCase()} - ${recommendation.description}`);
+  console.log(`   Size: ${recommendation.size}`);
+  console.log(`   Performance: ${recommendation.performance}`);
+  console.log('');
+
+  log('cyan', 'Next steps:');
+  console.log('  1. Download recommended AI model:');
+  log('cyan', '     pip install "huggingface_hub[cli]"  # Required for downloads');
+  log('green', `     swictation download-model ${recommendation.model}`);
+  console.log('');
+  console.log('     Or download all models (9.43 GB):');
   log('cyan', '     swictation download-models');
   console.log('');
   console.log('  2. Run initial setup:');
