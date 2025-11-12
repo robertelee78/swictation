@@ -150,18 +150,19 @@ external/midstream/         # Text transformation (Git submodule)
 - Silero VAD v6 (August 2024, 16% less errors)
 - Parakeet-TDT-1.1B via parakeet-rs (5.77% WER)
 
-**No Python Runtime:**
-- Python files in `src/` are **legacy artifacts** from migration
-- Current implementation is **100% Rust**
-- systemd service executes: `/opt/swictation/rust-crates/target/release/swictation-daemon`
-- Python removed from critical path for reliability and performance
+**Minimal Python Dependencies:**
+- **Core daemon** is **100% Rust** (no Python in critical path)
+- **Optional Python** for Sway system tray (PySide6) - Wayland compatibility layer
+- **Optional Python** for CLI utilities (config parsing, daemon control)
+- systemd service executes pure Rust: `swictation-daemon` binary
+- Python not required for transcription - only for optional UI/tools
 
 ---
 
 ## **Features** ✨
 
 ### Core Capabilities
-- 🎙️ **VAD-Triggered Segmentation** - Auto-transcribe on natural pauses (0.25 threshold, optimized)
+- 🎙️ **VAD-Triggered Segmentation** - Auto-transcribe on natural pauses (0.25 confidence threshold, 0.8s silence duration)
 - 🎯 **Sub-Second Latency** - Real-time text injection with full segment accuracy
 - 🔒 **100% Privacy** - All processing on local GPU, no cloud
 - ⚡ **GPU Optimized** - Silero VAD v6 (ONNX) + Parakeet-TDT-1.1B (CUDA)
@@ -355,13 +356,17 @@ The **QT system tray** (`tauri-ui/`) is **optional** and only needed for visual 
 
 **Wayland Limitation:** System tray protocols are compositor-specific. QT provides the most reliable cross-compositor support.
 
-### Python Files in Repo
+### Python Components
 
-The `src/` directory contains:
-- `config_loader.py` - Configuration utilities
-- `swictation_cli.py` - CLI tools
+The `src/` directory contains **active Python utilities** (not legacy):
+- **`ui/swictation_tray.py`** - PySide6/Qt system tray for Sway/Wayland (launches Tauri UI)
+  - Works around Qt/Wayland context menu bugs using Telegram Desktop's proven solution
+- **`config_loader.py`** - Configuration utilities for TOML parsing
+- **`swictation_cli.py`** - CLI tool for daemon control via Unix socket
 
-The main daemon is the Rust binary at `/opt/swictation/rust-crates/target/release/swictation-daemon`.
+**Main UI:** Tauri (Rust + React) in `tauri-ui/`
+**Sway Tray:** Python PySide6 (for reliable Wayland system tray)
+**Core Daemon:** Pure Rust at `rust-crates/target/release/swictation-daemon`
 
 ---
 
