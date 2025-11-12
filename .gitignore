@@ -264,6 +264,14 @@ target/
 *.rmeta
 .rustc_info.json
 
-# Node build artifacts  
+# Node build artifacts
 dist/
 node_modules/
+
+# NPM package tarballs (publish to npm, don't commit)
+*.tgz
+
+# Large binary artifacts (too big for GitHub, use releases or external storage)
+*.tar.gz
+*.zip
+swictation-gpu-libs.tar.gz
