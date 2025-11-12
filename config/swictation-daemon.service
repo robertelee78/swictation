@@ -10,16 +10,21 @@ ExecStart=/usr/local/lib/node_modules/swictation/bin/swictation-daemon
 Restart=on-failure
 RestartSec=5
 
-# Environment - CRITICAL for 1.1B model to work correctly
+# Environment - CRITICAL for GPU acceleration and correct model operation
 Environment="RUST_LOG=info"
 
-# ORT_DYLIB_PATH: Points to ONNX Runtime library (CRITICAL - without this, model produces 100% blank tokens)
+# ORT_DYLIB_PATH: Points to ONNX Runtime library (CRITICAL - without this, model produces blank output)
 Environment="ORT_DYLIB_PATH=/usr/local/lib/node_modules/swictation/lib/native/libonnxruntime.so"
 
 # LD_LIBRARY_PATH: CUDA runtime + ONNX Runtime CUDA providers (for GPU acceleration)
+# Without this: 14x performance regression (43s vs 3-6s expected for 57s audio)
 Environment="LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/lib/node_modules/swictation/lib/native"
 
-# Import user environment for PulseAudio session (enables full audio device detection)
+# CUDA_HOME: Helps CUDA libraries find additional resources at runtime
+Environment="CUDA_HOME=/usr/local/cuda"
+
+# Import user environment for PulseAudio/PipeWire session (enables full audio device detection)
+# This ensures all audio devices are detected properly (4 devices instead of 1)
 ImportEnvironment=
 
 # Resource limits - REMOVED for development/testing

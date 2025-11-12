@@ -9,13 +9,21 @@ ExecStart=__INSTALL_DIR__/lib/native/swictation-daemon.bin
 Restart=on-failure
 RestartSec=5
 
-# Environment variables (CRITICAL for 1.1B GPU model)
+# Environment variables (CRITICAL for GPU acceleration and correct model operation)
 Environment="RUST_LOG=info"
+
+# ORT_DYLIB_PATH: Points to ONNX Runtime library (CRITICAL - without this, model produces blank output)
 Environment="ORT_DYLIB_PATH=__ORT_DYLIB_PATH__"
+
+# LD_LIBRARY_PATH: CUDA runtime + ONNX Runtime CUDA providers (for GPU acceleration)
+# Without this: 14x performance regression (43s vs 3-6s expected for 57s audio)
 Environment="LD_LIBRARY_PATH=/usr/local/cuda/lib64:__INSTALL_DIR__/lib/native"
 
-# Import full user environment for PulseAudio
-# This ensures all audio devices are detected properly
+# CUDA_HOME: Helps CUDA libraries find additional resources at runtime
+Environment="CUDA_HOME=/usr/local/cuda"
+
+# Import full user environment for PulseAudio/PipeWire session
+# This ensures all audio devices are detected properly (4 devices instead of 1)
 # Required for microphone access in user session
 ImportEnvironment=
 
