@@ -228,41 +228,82 @@ Total after pause    → ~1.0s
 
 ---
 
-## **Voice Commands & Text Transformation** 🎤⚡
+## **Secretary Mode: Natural Dictation** 🎤⚡
 
-### How It Works
+### What is Secretary Mode?
+
+**Secretary Mode** transforms spoken voice commands into written text, inspired by 1950s stenography. Speak naturally and dictate punctuation, formatting, and symbols exactly as you would to a secretary.
+
 ```
 ┌─────────────────────────────────────────────────┐
-│  YOU SPEAK → STT → Transform → Text Injection  │
+│  YOU SPEAK → STT → Transform → Text Injection   │
 │  "comma"  →  "comma"  →  ","  →  types ","      │
 └─────────────────────────────────────────────────┘
 ```
 
-**Performance:** ~1µs per transformation (pure Rust)
+**Performance:** ~1µs per transformation (pure Rust, HashMap O(1) lookup)
 
-### Examples
+### Quick Examples
 
-**Punctuation:**
+**Basic Punctuation:**
 ```
-YOU SAY:          "Hello comma world period"
+YOU SAY:          "hello comma world period"
 SWICTATION TYPES: Hello, world.
 ```
 
-**Symbols:**
+**Formal Letter:**
 ```
-YOU SAY:          "x equals open bracket one comma two comma three close bracket"
-SWICTATION TYPES: x = [1, 2, 3]
+YOU SAY:          "dear mr smith comma new paragraph I need to schedule..."
+SWICTATION TYPES: Dear Mr. Smith,
+
+                  I need to schedule...
 ```
 
-**Code:**
+**Numbers:**
 ```
-YOU SAY:          "def hello underscore world open parenthesis close parenthesis colon"
-SWICTATION TYPES: def hello_world():
+YOU SAY:          "number forty two items comma number nineteen fifty"
+SWICTATION TYPES: 42 items, 1950
 ```
 
-⚡ **Status:** Text transformation currently has **0 rules** (intentionally reset)
-📖 **Reason:** Awaiting Parakeet-TDT behavior analysis before implementing secretary dictation mode
-🎯 **Planned:** 30-50 natural punctuation rules ("comma" → ",", "period" → ".")
+**Quotes:**
+```
+YOU SAY:          "she said quote hello world quote exclamation point"
+SWICTATION TYPES: She said "Hello world"!
+```
+
+### Feature Highlights
+
+✅ **60+ Transformation Rules** including:
+- 🎯 Basic & extended punctuation (comma, period, colon, semicolon, dash, ellipsis)
+- 📐 Brackets & parentheses (with plural forms: "open parentheses" works!)
+- 💬 Smart quotes (stateful toggle, auto-capitalizes first word inside)
+- 🔣 Special symbols ($, %, @, &, *, #, /, \, +, =, ×)
+- 📝 Abbreviations (mister→Mr., doctor→Dr., etc.)
+- 🔢 Number conversion ("number forty two"→42, year patterns "nineteen fifty"→1950)
+- 📋 Formatting (new line, new paragraph, tab)
+- 🔠 Capitalization modes (caps on/off, all caps [word], capital [letter] [word])
+- ✨ Automatic capitalization (I pronoun, sentence starts, after quotes, after titles)
+
+### 📖 Full Documentation
+
+**[→ Complete Secretary Mode Guide](docs/secretary-mode.md)**
+
+Includes:
+- Complete command reference (60+ commands)
+- Usage examples for letters, emails, notes
+- Best practices and tips
+- Technical details and architecture
+- Troubleshooting guide
+
+---
+
+### Status: **Production Ready** ✅
+
+- ✅ **60+ rules implemented** and tested
+- ✅ **27/27 tests passing** with real-world voice samples
+- ✅ **MidStream text-transform** integrated (pure Rust)
+- ✅ **Automatic spacing** between VAD chunks
+- ✅ **Smart capitalization** (titles, sentences, quotes, pronouns)
 
 ---
 

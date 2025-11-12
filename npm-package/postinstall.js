@@ -288,33 +288,10 @@ function detectOrtLibrary() {
 }
 
 function generateSystemdService(ortLibPath) {
-  log('cyan', '\n⚙️  Generating systemd service file...');
+  log('cyan', '\n⚙️  Generating systemd service files...');
 
   try {
-    // Read template
-    const templatePath = path.join(__dirname, 'templates', 'swictation-daemon.service.template');
-    if (!fs.existsSync(templatePath)) {
-      log('yellow', `⚠️  Warning: Template not found at ${templatePath}`);
-      log('yellow', '   Skipping systemd service generation');
-      return;
-    }
-
-    let template = fs.readFileSync(templatePath, 'utf8');
-
-    // Replace placeholders
-    const installDir = __dirname; // npm package installation directory
-    template = template.replace(/__INSTALL_DIR__/g, installDir);
-
-    if (ortLibPath) {
-      template = template.replace(/__ORT_DYLIB_PATH__/g, ortLibPath);
-    } else {
-      log('yellow', '⚠️  Warning: ORT_DYLIB_PATH not detected');
-      log('yellow', '   Service file will contain placeholder - you must set it manually');
-    }
-
-    // Write to systemd user directory
     const systemdDir = path.join(os.homedir(), '.config', 'systemd', 'user');
-    const servicePath = path.join(systemdDir, 'swictation-daemon.service');
 
     // Create systemd directory if it doesn't exist
     if (!fs.existsSync(systemdDir)) {
@@ -322,19 +299,51 @@ function generateSystemdService(ortLibPath) {
       log('green', `✓ Created ${systemdDir}`);
     }
 
-    // Write service file
-    fs.writeFileSync(servicePath, template);
-    log('green', `✓ Generated systemd service: ${servicePath}`);
-
-    if (ortLibPath) {
-      log('cyan', '  Service configured with detected ONNX Runtime path');
+    // 1. Generate daemon service from template
+    const templatePath = path.join(__dirname, 'templates', 'swictation-daemon.service.template');
+    if (!fs.existsSync(templatePath)) {
+      log('yellow', `⚠️  Warning: Template not found at ${templatePath}`);
+      log('yellow', '   Skipping daemon service generation');
     } else {
-      log('yellow', '  ⚠️  Please edit the service file to set ORT_DYLIB_PATH manually');
+      let template = fs.readFileSync(templatePath, 'utf8');
+
+      // Replace placeholders
+      const installDir = __dirname; // npm package installation directory
+      template = template.replace(/__INSTALL_DIR__/g, installDir);
+
+      if (ortLibPath) {
+        template = template.replace(/__ORT_DYLIB_PATH__/g, ortLibPath);
+      } else {
+        log('yellow', '⚠️  Warning: ORT_DYLIB_PATH not detected');
+        log('yellow', '   Service file will contain placeholder - you must set it manually');
+      }
+
+      // Write daemon service file
+      const daemonServicePath = path.join(systemdDir, 'swictation-daemon.service');
+      fs.writeFileSync(daemonServicePath, template);
+      log('green', `✓ Generated daemon service: ${daemonServicePath}`);
+
+      if (ortLibPath) {
+        log('cyan', '  Service configured with detected ONNX Runtime path');
+      } else {
+        log('yellow', '  ⚠️  Please edit the service file to set ORT_DYLIB_PATH manually');
+      }
+    }
+
+    // 2. Install UI service (copy directly, no template)
+    const uiServiceSource = path.join(__dirname, 'config', 'swictation-ui.service');
+    if (fs.existsSync(uiServiceSource)) {
+      const uiServiceDest = path.join(systemdDir, 'swictation-ui.service');
+      fs.copyFileSync(uiServiceSource, uiServiceDest);
+      log('green', `✓ Installed UI service: ${uiServiceDest}`);
+    } else {
+      log('yellow', `⚠️  Warning: UI service not found at ${uiServiceSource}`);
+      log('yellow', '   You can manually install it later');
     }
 
   } catch (err) {
-    log('yellow', `⚠️  Failed to generate systemd service: ${err.message}`);
-    log('cyan', '  You can manually create it later using: swictation setup');
+    log('yellow', `⚠️  Failed to generate systemd services: ${err.message}`);
+    log('cyan', '  You can manually create them later using: swictation setup');
   }
 }
 

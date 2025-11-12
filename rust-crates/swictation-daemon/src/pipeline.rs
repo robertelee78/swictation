@@ -429,7 +429,17 @@ impl Pipeline {
                                     }
                                 }
 
-                                let _ = tx.send(Ok(transformed));
+                                // Add trailing space between VAD chunks (always, unless already has whitespace)
+                                // This fixes: "hello world" + "testing" → "hello worldtesting" (NO SPACE)
+                                //        AND: "hello world." + "testing" → "hello world.testing" (NO SPACE AFTER PUNCTUATION)
+                                // Solution: ALWAYS add trailing space (proper secretary would leave space after punctuation)
+                                let final_text = if transformed.ends_with(char::is_whitespace) {
+                                    transformed  // Already has trailing whitespace
+                                } else {
+                                    format!("{} ", transformed)  // Add space for next chunk (even after punctuation)
+                                };
+
+                                let _ = tx.send(Ok(final_text));
                             }
                         }
                         Ok(VadResult::Silence) => {

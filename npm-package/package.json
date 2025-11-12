@@ -1,18 +1,21 @@
 {
   "name": "swictation",
-  "version": "0.2.3",
-  "description": "Voice-to-text dictation system with smart text transformation and NVIDIA GPU acceleration (Ubuntu 24.04+ required)",
+  "version": "0.3.0",
+  "description": "Voice-to-text dictation with Secretary Mode (60+ natural language commands), NVIDIA GPU acceleration, and pure Rust performance (Ubuntu 24.04+ required)",
   "keywords": [
     "voice-to-text",
     "speech-recognition",
     "dictation",
+    "secretary-mode",
+    "natural-language",
     "transcription",
     "stt",
     "rust",
     "parakeet-tdt",
     "silero-vad",
     "wayland",
-    "onnx"
+    "onnx",
+    "text-transformation"
   ],
   "homepage": "https://github.com/robertelee78/swictation",
   "bugs": {

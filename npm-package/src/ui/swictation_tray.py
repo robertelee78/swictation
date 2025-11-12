@@ -228,6 +228,11 @@ class SwictationTrayApp(QApplication):
                 # Process is still running - close it
                 print(f"Closing Tauri UI (PID: {self.tauri_process.pid})")
                 self.tauri_process.terminate()
+                try:
+                    self.tauri_process.wait(timeout=2)  # Wait for clean shutdown, reap zombie
+                except subprocess.TimeoutExpired:
+                    self.tauri_process.kill()  # Force kill if doesn't terminate gracefully
+                    self.tauri_process.wait()
                 self.tauri_process = None
                 print("✓ Tauri UI closed")
             else:

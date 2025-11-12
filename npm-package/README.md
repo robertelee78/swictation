@@ -5,7 +5,12 @@ Command-line interface for managing the Swictation voice dictation daemon.
 ## Features
 
 - 🎤 **Real-time voice transcription** using Parakeet-TDT-1.1B (NVIDIA)
-- 🔄 **Smart text transformation** - MidStream library for voice commands
+- 📝 **Secretary Mode** - 60+ natural language commands for dictation
+  - Say "comma" → Get ","
+  - Say "mr smith said quote hello quote" → Get "Mr. Smith said 'Hello'"
+  - Automatic capitalization, punctuation, numbers, quotes, formatting
+  - **[→ Full Secretary Mode Guide](https://github.com/robertelee78/swictation/blob/main/docs/secretary-mode.md)**
+- 🔄 **Smart text transformation** - MidStream Rust library (~1µs latency)
 - ⚡ **Low latency** - Pure Rust implementation with CUDA acceleration
 - 🖥️ **Wayland native** - wtype text injection for Sway/Wayland
 - 🎯 **Hotkey support** - toggle recording with $mod+Shift+D

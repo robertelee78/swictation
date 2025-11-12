@@ -8,7 +8,7 @@ PartOf=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/env python3 /opt/swictation/src/ui/swictation_tray.py
+ExecStart=/usr/bin/env python3 /usr/local/lib/node_modules/swictation/src/ui/swictation_tray.py
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
