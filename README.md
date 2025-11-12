@@ -140,7 +140,7 @@ external/midstream/         # Text transformation (Git submodule)
 ## **Features** ✨
 
 ### Core Capabilities
-- 🎙️ **VAD-Triggered Segmentation** - Auto-transcribe on natural pauses (0.003 threshold)
+- 🎙️ **VAD-Triggered Segmentation** - Auto-transcribe on natural pauses (0.25 threshold, optimized)
 - 🎯 **Sub-Second Latency** - Real-time text injection with full segment accuracy
 - 🔒 **100% Privacy** - All processing on local GPU, no cloud
 - ⚡ **GPU Optimized** - Silero VAD v6 (ONNX) + Parakeet-TDT-1.1B (CUDA)
@@ -152,7 +152,7 @@ external/midstream/         # Text transformation (Git submodule)
 
 ### Technical Highlights
 - **STT Model:** Parakeet-TDT-1.1B (5.77% WER, parakeet-rs)
-- **VAD Model:** Silero VAD v6 (~630KB, ort 2.0.0-rc.10, ONNX threshold: 0.003)
+- **VAD Model:** Silero VAD v6 (~630KB, ort 2.0.0-rc.10, threshold: 0.25 optimized for real-time)
 - **Text Transform:** MidStream Rust crate (~1µs latency)
 - **Audio Capture:** cpal with PipeWire backend
 - **Text Injection:** wtype (Wayland) with wl-clipboard fallback
@@ -185,12 +185,11 @@ external/midstream/         # Text transformation (Git submodule)
 ```toml
 # config/config.example.toml
 [vad]
-threshold = 0.003  # ONNX: 0.001-0.005 (NOT PyTorch 0.5!)
+threshold = 0.25  # Optimized for real-time (0.001-0.005 for library default)
 
-# Tuning guide for ONNX:
-# - 0.001 = Most sensitive (catches quiet speech, may have false positives)
-# - 0.003 = Balanced (recommended default)
-# - 0.005 = Conservative (fewer false positives, may miss quiet speech)
+# Note: Default is 0.25 (empirically optimized for real-time transcription)
+# Original 0.003 prevented proper silence detection in practice
+# Valid ONNX range: 0.001-0.01 (much lower than PyTorch 0.5)
 ```
 
 **See `rust-crates/swictation-vad/ONNX_THRESHOLD_GUIDE.md` for technical details.**
@@ -249,8 +248,9 @@ YOU SAY:          "def hello underscore world open parenthesis close parenthesis
 SWICTATION TYPES: def hello_world():
 ```
 
-⚡ **Rust Performance:** 266 transformation rules, ~1µs latency
-📖 **Full Command Reference:** See `external/midstream/` documentation
+⚡ **Status:** Text transformation currently has **0 rules** (intentionally reset)
+📖 **Reason:** Awaiting Parakeet-TDT behavior analysis before implementing secretary dictation mode
+🎯 **Planned:** 30-50 natural punctuation rules ("comma" → ",", "period" → ".")
 
 ---
 
@@ -304,7 +304,7 @@ Swictation has been fully migrated to Rust for performance, reliability, and mem
 |-----------|--------------|------------|-------------|
 | **Daemon** | swictationd.py | swictation-daemon | Native binary, no interpreter |
 | **VAD** | sherpa-rs Python bindings | ort 2.0.0-rc.10 (direct) | ~150x faster, Silero v6 |
-| **STT** | NeMo Toolkit (PyTorch) | parakeet-rs (ONNX) | Smaller memory footprint |
+| **STT** | NeMo Toolkit (PyTorch) | 0.6B: sherpa-rs, 1.1B: direct ort | Adaptive model selection |
 | **Audio** | sounddevice (Python) | cpal (Rust) | Lower latency |
 | **Transform** | PyO3 wrapper | Native Rust crate | Zero FFI overhead |
 | **Memory** | ~250MB Python + GC | ~150MB Rust (no GC) | 40% reduction |
@@ -356,12 +356,13 @@ Edit `~/.config/swictation/config.toml`:
 
 ```toml
 [vad]
-threshold = 0.003          # ONNX threshold (0.001-0.005)
-min_silence_duration = 0.5 # Seconds of silence before transcription
+threshold = 0.25           # Optimized threshold for real-time (0.001-0.01 valid range)
+min_silence_duration = 0.8 # Seconds of silence before transcription
 min_speech_duration = 0.25 # Minimum speech length to process
 
 [stt]
-model_path = "/path/to/parakeet-tdt-1.1b.onnx"
+model_override = "auto"    # auto, 0.6b-cpu, 0.6b-gpu, or 1.1b-gpu
+# Paths configured automatically based on adaptive selection
 ```
 
 ---
@@ -412,7 +413,7 @@ Check VAD threshold - ONNX models use 0.001-0.005, **NOT** PyTorch 0.5!
 ```toml
 # ~/.config/swictation/config.toml
 [vad]
-threshold = 0.003  # Lower for more sensitive detection
+threshold = 0.25  # Default optimized value (lower like 0.01-0.1 for more sensitive)
 ```
 
 📖 **Check logs:** `journalctl --user -u swictation-daemon -f`
