@@ -34,6 +34,7 @@
     "config/",
     "src/",
     "docs/",
+    "templates/",
     "postinstall.js",
     "README.md"
   ],
