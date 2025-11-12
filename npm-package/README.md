@@ -65,6 +65,22 @@ npm install -g swictation
 - **GPU**: NVIDIA with 4GB+ VRAM (CUDA 11.8+) or CPU-only mode
 - **Window Managers**: Sway, i3, Hyprland
 
+### GPU Requirements (1.1B Model - Recommended)
+For optimal performance with the 1.1B model (62.8x realtime speed):
+- **GPU**: NVIDIA GPU with 4GB+ VRAM
+- **CUDA**: 11.8+ or 12.x
+- **Compute Capability**: 7.0+ (Turing architecture or newer)
+- **ONNX Runtime**: onnxruntime-gpu 1.16.0+
+
+### Python Environment
+The 1.1B GPU-accelerated model requires ONNX Runtime GPU:
+
+```bash
+pip3 install onnxruntime-gpu
+```
+
+**CRITICAL**: The postinstall script automatically detects ONNX Runtime and configures the systemd service. If detection fails, you'll need to manually set `ORT_DYLIB_PATH` (see Troubleshooting below).
+
 ### Runtime Dependencies
 - **Required**:
   - GLIBC 2.39+ (Ubuntu 24.04+)
@@ -140,6 +156,92 @@ arecord -d 5 test.wav && aplay test.wav
 ### Text not being typed
 - **Wayland**: Ensure `wtype` is installed and compositor supports input injection
 - Check logs: `journalctl --user -u swictation-daemon -f`
+
+### "100% blank predictions" or empty transcriptions
+
+**Cause**: Missing ONNX Runtime library path in systemd service.
+
+**Solution**: The postinstall script should automatically detect this. If it fails, manually add to `~/.config/systemd/user/swictation-daemon.service`:
+
+```ini
+[Service]
+Environment="ORT_DYLIB_PATH=/path/to/onnxruntime/capi/libonnxruntime.so.X.Y.Z"
+```
+
+To find your ONNX Runtime path:
+```bash
+python3 -c "import onnxruntime; import os; print(os.path.join(os.path.dirname(onnxruntime.__file__), 'capi'))"
+ls -la /path/from/above/libonnxruntime.so*
+```
+
+Then reload and restart:
+```bash
+systemctl --user daemon-reload
+systemctl --user restart swictation-daemon
+```
+
+### Extremely slow performance (15+ seconds per transcription)
+
+**Cause**: Missing CUDA library paths or using INT8 quantized models on GPU.
+
+**Current behavior**: Should be 62.8x realtime (0.16s for 10s audio) with 1.1B FP32 model on GPU.
+
+**Solution 1 - Check CUDA paths**: Verify in `~/.config/systemd/user/swictation-daemon.service`:
+```ini
+Environment="LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/lib/node_modules/swictation/lib/native"
+```
+
+**Solution 2 - Verify using FP32 models**: Check logs for "Using FP32 model for GPU":
+```bash
+journalctl --user -u swictation-daemon -f
+```
+
+If you see "Using INT8 quantized model", the system is incorrectly using quantized models on GPU (no CUDA kernels). This should be auto-detected but can be forced in `~/.config/swictation/config.toml`:
+```toml
+stt_model_override = "1.1b-gpu"  # Forces FP32 models
+```
+
+After changes:
+```bash
+systemctl --user daemon-reload
+systemctl --user restart swictation-daemon
+```
+
+### Only 1 audio device detected (should see 4+)
+
+**Cause**: Missing PulseAudio/PipeWire session variables.
+
+**Solution**: Verify in `~/.config/systemd/user/swictation-daemon.service`:
+```ini
+# Import full user environment for PulseAudio
+ImportEnvironment=
+```
+
+This imports all user session variables including `PULSE_SERVER`, `DBUS_SESSION_BUS_ADDRESS`, etc.
+
+### Real-time transcription not working (only transcribes at end)
+
+**Cause**: VAD threshold too low - background noise exceeds threshold.
+
+**Solution**: Adjust in `~/.config/swictation/config.toml`:
+```toml
+vad_threshold = 0.25      # Default optimized for real-time
+vad_min_silence = 0.8     # Seconds of silence before flush
+```
+
+Lower threshold (0.003) causes continuous speech detection. Optimal is 0.25 for balanced sensitivity.
+
+### After fixing environment variables
+
+Always reload systemd and restart the daemon:
+```bash
+systemctl --user daemon-reload
+systemctl --user restart swictation-daemon
+
+# Verify it started correctly
+systemctl --user status swictation-daemon
+journalctl --user -u swictation-daemon -n 50
+```
 
 ## Platform Support
 
