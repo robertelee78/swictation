@@ -27,7 +27,7 @@ use ort::{
 };
 use std::fs;
 use std::path::{Path, PathBuf};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 /// Direct ONNX Runtime recognizer for Parakeet-TDT models (0.6B and 1.1B)
 pub struct OrtRecognizer {
@@ -104,17 +104,34 @@ impl OrtRecognizer {
             info!("Using CPU execution provider");
         }
 
-        // Helper function to find model file (try .int8.onnx first, then .onnx)
+        // Helper function to find model file
+        // CRITICAL: INT8 quantized models don't have CUDA kernels - use FP32 for GPU!
         let find_model_file = |name: &str| -> std::result::Result<PathBuf, SttError> {
-            let int8_path = model_path.join(format!("{}.int8.onnx", name));
-            if int8_path.exists() {
-                info!("Using INT8 quantized model: {}.int8.onnx", name);
-                return Ok(int8_path);
-            }
-            let onnx_path = model_path.join(format!("{}.onnx", name));
-            if onnx_path.exists() {
-                info!("Using FP32 model: {}.onnx", name);
-                return Ok(onnx_path);
+            // When using GPU, prefer FP32 models (INT8 ops have no CUDA kernels)
+            if use_gpu {
+                let onnx_path = model_path.join(format!("{}.onnx", name));
+                if onnx_path.exists() {
+                    info!("Using FP32 model for GPU: {}.onnx", name);
+                    return Ok(onnx_path);
+                }
+                // Fallback to INT8 if FP32 not available (will be slow)
+                let int8_path = model_path.join(format!("{}.int8.onnx", name));
+                if int8_path.exists() {
+                    warn!("⚠️  Using INT8 model on GPU - will be slow (no CUDA kernels for quantized ops)");
+                    return Ok(int8_path);
+                }
+            } else {
+                // For CPU, prefer INT8 (smaller and faster on CPU)
+                let int8_path = model_path.join(format!("{}.int8.onnx", name));
+                if int8_path.exists() {
+                    info!("Using INT8 quantized model for CPU: {}.int8.onnx", name);
+                    return Ok(int8_path);
+                }
+                let onnx_path = model_path.join(format!("{}.onnx", name));
+                if onnx_path.exists() {
+                    info!("Using FP32 model: {}.onnx", name);
+                    return Ok(onnx_path);
+                }
             }
             Err(SttError::ModelLoadError(format!(
                 "Could not find {}.onnx or {}.int8.onnx in {:?}",
@@ -147,7 +164,7 @@ impl OrtRecognizer {
 
         info!("Loading decoder...");
         let decoder_path = find_model_file("decoder")?;
-        let decoder = Session::builder()
+        let mut decoder_builder = Session::builder()
             .map_err(|e| {
                 let _ = std::env::set_current_dir(&original_dir);
                 SttError::ModelLoadError(format!("Failed to create decoder session builder: {}", e))
@@ -156,7 +173,22 @@ impl OrtRecognizer {
             .map_err(|e| {
                 let _ = std::env::set_current_dir(&original_dir);
                 SttError::ModelLoadError(format!("Failed to set decoder optimization: {}", e))
-            })?
+            })?;
+
+        if use_gpu {
+            info!("Enabling CUDA for decoder");
+            decoder_builder = decoder_builder
+                .with_execution_providers([
+                    ep::CUDAExecutionProvider::default().build(),
+                    ep::CPUExecutionProvider::default().build(),
+                ])
+                .map_err(|e| {
+                    let _ = std::env::set_current_dir(&original_dir);
+                    SttError::ModelLoadError(format!("Failed to set decoder execution providers: {}", e))
+                })?;
+        }
+
+        let decoder = decoder_builder
             .commit_from_file(&decoder_path)
             .map_err(|e| {
                 let _ = std::env::set_current_dir(&original_dir);
@@ -166,7 +198,7 @@ impl OrtRecognizer {
 
         info!("Loading joiner...");
         let joiner_path = find_model_file("joiner")?;
-        let joiner = Session::builder()
+        let mut joiner_builder = Session::builder()
             .map_err(|e| {
                 let _ = std::env::set_current_dir(&original_dir);
                 SttError::ModelLoadError(format!("Failed to create joiner session builder: {}", e))
@@ -175,7 +207,22 @@ impl OrtRecognizer {
             .map_err(|e| {
                 let _ = std::env::set_current_dir(&original_dir);
                 SttError::ModelLoadError(format!("Failed to set joiner optimization: {}", e))
-            })?
+            })?;
+
+        if use_gpu {
+            info!("Enabling CUDA for joiner");
+            joiner_builder = joiner_builder
+                .with_execution_providers([
+                    ep::CUDAExecutionProvider::default().build(),
+                    ep::CPUExecutionProvider::default().build(),
+                ])
+                .map_err(|e| {
+                    let _ = std::env::set_current_dir(&original_dir);
+                    SttError::ModelLoadError(format!("Failed to set joiner execution providers: {}", e))
+                })?;
+        }
+
+        let joiner = joiner_builder
             .commit_from_file(&joiner_path)
             .map_err(|e| {
                 let _ = std::env::set_current_dir(&original_dir);

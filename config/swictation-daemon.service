@@ -10,12 +10,25 @@ ExecStart=/usr/local/lib/node_modules/swictation/bin/swictation-daemon
 Restart=on-failure
 RestartSec=5
 
-# Environment
+# Environment - CRITICAL for 1.1B model to work correctly
 Environment="RUST_LOG=info"
 
-# Resource limits
-MemoryMax=500M
-CPUQuota=50%
+# ORT_DYLIB_PATH: Points to ONNX Runtime library (CRITICAL - without this, model produces 100% blank tokens)
+Environment="ORT_DYLIB_PATH=/usr/local/lib/node_modules/swictation/lib/native/libonnxruntime.so"
+
+# LD_LIBRARY_PATH: CUDA runtime + ONNX Runtime CUDA providers (for GPU acceleration)
+Environment="LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/lib/node_modules/swictation/lib/native"
+
+# Import user environment for PulseAudio session (enables full audio device detection)
+ImportEnvironment=
+
+# Resource limits - REMOVED for development/testing
+# Previously: MemoryMax=500M caused 99.7% usage + 2.4GB swap
+# Previously: CPUQuota=50% limited to 4 cores
+# 1.1B model needs ~3.5GB GPU + ~1GB system RAM + full CPU for optimal performance
+# Uncomment and adjust for production if needed:
+# MemoryMax=8G
+# CPUQuota=200%
 
 # Security hardening (relaxed for USB device access)
 #PrivateTmp=true
