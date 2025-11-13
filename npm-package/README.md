@@ -46,6 +46,22 @@ If GPU is not available, Swictation will run in CPU-only mode.
 
 ### Recommended: User-Local Installation (No sudo required)
 
+#### If using nvm (Node Version Manager)
+
+**nvm already handles user-local installations automatically!** No additional setup needed:
+
+```bash
+# Just install (nvm manages the prefix)
+npm install -g swictation --foreground-scripts
+```
+
+**Important**: If you previously set a custom npm prefix, remove it:
+```bash
+npm config delete prefix
+```
+
+#### If NOT using nvm
+
 Configure npm to install packages to your home directory:
 
 ```bash
@@ -59,7 +75,7 @@ export PATH="$HOME/.npm-global/bin:$PATH"
 # Source your shell config to apply changes
 source ~/.bashrc  # or source ~/.zshrc
 
-# Now install without sudo (recommended)
+# Now install without sudo
 npm install -g swictation --foreground-scripts
 ```
 
@@ -73,11 +89,12 @@ sudo npm install -g swictation --foreground-scripts
 sudo npm install -g swictation
 ```
 
-**Note**: User-local installation is recommended because:
+**Why user-local installation is recommended**:
 - ✅ No sudo required
 - ✅ No permission issues
 - ✅ Each user has their own installation
 - ✅ Cleaner and more secure
+- ✅ Works with nvm seamlessly
 
 **Note**: The `--foreground-scripts` flag makes the installation progress visible. The postinstall script will:
 1. Download GPU acceleration libraries (~209MB, if GPU detected)
