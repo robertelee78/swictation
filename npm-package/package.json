@@ -33,14 +33,15 @@
   },
   "files": [
     "bin/",
-    "lib/",
+    "lib/model-downloader.js",
+    "lib/native/swictation-daemon.bin",
+    "lib/native/package.json",
     "config/",
     "src/",
     "docs/",
     "templates/",
     "postinstall.js",
-    "README.md",
-    ".npmignore"
+    "README.md"
   ],
   "scripts": {
     "postinstall": "node postinstall.js",
