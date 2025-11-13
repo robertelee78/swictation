@@ -235,6 +235,45 @@ function detectNvidiaGPU() {
   }
 }
 
+/**
+ * Detect CUDA and cuDNN library paths dynamically
+ * Returns an array of directories to include in LD_LIBRARY_PATH
+ */
+function detectCudaLibraryPaths() {
+  const paths = [];
+
+  // Check common CUDA installation directories
+  const cudaDirs = [
+    '/usr/local/cuda/lib64',
+    '/usr/local/cuda/lib',
+    '/usr/local/cuda-13/lib64',
+    '/usr/local/cuda-13/lib',
+    '/usr/local/cuda-12.9/lib64',
+    '/usr/local/cuda-12.9/lib',
+    '/usr/local/cuda-12/lib64',
+    '/usr/local/cuda-12/lib',
+  ];
+
+  // Find directories that contain cuDNN
+  for (const dir of cudaDirs) {
+    try {
+      if (fs.existsSync(dir)) {
+        const files = fs.readdirSync(dir);
+        // Check for cuDNN or CUDA runtime libraries
+        if (files.some(f => f.startsWith('libcudnn.so') || f.startsWith('libcudart.so'))) {
+          if (!paths.includes(dir)) {
+            paths.push(dir);
+          }
+        }
+      }
+    } catch (err) {
+      // Ignore errors from directories we can't read
+    }
+  }
+
+  return paths;
+}
+
 async function downloadFile(url, dest) {
   return new Promise((resolve, reject) => {
     const file = fs.createWriteStream(dest);
@@ -416,6 +455,21 @@ function generateSystemdService(ortLibPath) {
       } else {
         log('yellow', '⚠️  Warning: ORT_DYLIB_PATH not detected');
         log('yellow', '   Service file will contain placeholder - you must set it manually');
+      }
+
+      // Detect CUDA library paths dynamically
+      const cudaPaths = detectCudaLibraryPaths();
+      const nativeLibPath = path.join(installDir, 'lib', 'native');
+
+      // Build LD_LIBRARY_PATH with detected CUDA paths + native libs
+      const ldLibraryPath = [...cudaPaths, nativeLibPath].join(':');
+      template = template.replace(/__LD_LIBRARY_PATH__/g, ldLibraryPath);
+
+      if (cudaPaths.length > 0) {
+        log('cyan', `  Detected ${cudaPaths.length} CUDA library path(s):`);
+        cudaPaths.forEach(p => log('cyan', `    ${p}`));
+      } else {
+        log('yellow', '  ⚠️  No CUDA libraries detected (CPU-only mode)');
       }
 
       // Write daemon service file
