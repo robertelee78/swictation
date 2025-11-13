@@ -700,13 +700,14 @@ async function testLoadModel(modelName, daemonBin, ortLibPath) {
       { encoding: 'utf8', env, stdio: 'pipe' }
     );
 
-    // Check for success indicators in output
-    if (output.includes('Model loaded successfully') || output.includes('Selected model')) {
-      log('green', `    ✓ ${modelName} loaded successfully`);
+    // Check for success indicators in dry-run output
+    // Daemon outputs "Dry-run complete" and "Would load: MODEL_NAME" in dry-run mode
+    if (output.includes('Dry-run complete') || output.includes('Would load:')) {
+      log('green', `    ✓ ${modelName} verified (dry-run passed)`);
       return { success: true, model: modelName };
     } else {
-      log('yellow', `    ⚠️  ${modelName} load uncertain (no success indicator)`);
-      return { success: false, model: modelName, reason: 'No success indicator' };
+      log('yellow', `    ⚠️  ${modelName} verification uncertain (no success indicator)`);
+      return { success: false, model: modelName, reason: 'No success indicator in dry-run output' };
     }
   } catch (err) {
     log('yellow', `    ✗ ${modelName} failed to load`);
