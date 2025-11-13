@@ -1,23 +1,19 @@
+# Exclude downloaded GPU libraries (364MB - downloaded during postinstall)
+lib/native/*.so
+
+# Exclude development files
+.claude-flow/
+*.log
+.npmrc
+
 # Build files
-build.sh
 *.tar.gz
 *.tgz
-
-# Development files
-.git/
-.gitignore
-*.log
-*.swp
-*.swo
-*~
 
 # Test files
 test/
 tests/
 *.test.js
-
-# Documentation source
-docs/
 
 # IDE files
 .vscode/
@@ -27,7 +23,3 @@ docs/
 # OS files
 .DS_Store
 Thumbs.db
-
-# Keep only necessary files for npm package
-# Included by default: package.json, README.md, LICENSE
-# Included via "files" in package.json: bin/, lib/, config/, postinstall.js
