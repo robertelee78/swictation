@@ -680,6 +680,26 @@ function detectGPUVRAM() {
 async function testLoadModel(modelName, daemonBin, ortLibPath) {
   log('cyan', `  🔄 Test-loading ${modelName} model (max 30s)...`);
 
+  // Create a minimal temporary config for testing
+  const configDir = path.join(os.homedir(), '.config', 'swictation');
+  const configPath = path.join(configDir, 'config.toml');
+  const needsTempConfig = !fs.existsSync(configPath);
+
+  if (needsTempConfig) {
+    try {
+      fs.mkdirSync(configDir, { recursive: true });
+      const minimalConfig = `# Temporary config for installation testing
+socket_path = "/tmp/swictation-test.sock"
+recording_enabled = false
+vad_threshold = 0.25
+vad_min_silence = 0.8
+`;
+      fs.writeFileSync(configPath, minimalConfig);
+    } catch (err) {
+      log('yellow', `    ⚠️  Could not create temp config: ${err.message}`);
+    }
+  }
+
   // Detect CUDA library paths dynamically (same as systemd service)
   const cudaPaths = detectCudaLibraryPaths();
   const nativeLibPath = path.join(__dirname, 'lib', 'native');
