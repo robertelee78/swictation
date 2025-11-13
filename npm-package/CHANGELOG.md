@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.12] - 2025-11-13
+
+### Fixed
+- **GPU acceleration broken**: Updated to gpu-libs-v1.0.1 with complete library set
+  - gpu-libs-v1.0.0 was missing libonnxruntime.so (main ONNX Runtime library)
+  - gpu-libs-v1.0.0 was missing libsherpa-onnx-c-api.so and libsherpa-onnx-cxx-api.so
+  - This caused "ONNX Runtime not found" warning and model test-loading failures
+  - All GPU acceleration fell back to CPU-only mode
+  - **Now includes all 6 required libraries** (218 MB total)
+
+### Changed
+- Updated GPU_LIBS_VERSION from 1.0.0 to 1.0.1 in postinstall.js
+
 ## [0.3.11] - 2025-11-13
 
 ### Fixed

@@ -319,7 +319,7 @@ async function downloadGPULibraries() {
 
   // GPU libs are versioned independently from npm package
   // Only update this version when ONNX Runtime or CUDA providers change
-  const GPU_LIBS_VERSION = '1.0.0'; // ONNX Runtime 1.19.0, CUDA 12.x providers
+  const GPU_LIBS_VERSION = '1.0.1'; // ONNX Runtime 1.19.0, CUDA 12.x, Sherpa ONNX (complete set)
   const releaseUrl = `https://github.com/robertelee78/swictation/releases/download/gpu-libs-v${GPU_LIBS_VERSION}/swictation-gpu-libs.tar.gz`;
   const tmpDir = path.join(os.tmpdir(), 'swictation-gpu-install');
   const tarPath = path.join(tmpDir, 'gpu-libs.tar.gz');
