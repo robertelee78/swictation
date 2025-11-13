@@ -474,6 +474,35 @@ function generateSystemdService(ortLibPath) {
         log('yellow', '  ⚠️  No CUDA libraries detected (CPU-only mode)');
       }
 
+      // Detect Wayland display for text injection support
+      const runtimeDir = process.env.XDG_RUNTIME_DIR || `/run/user/${process.getuid()}`;
+      let waylandDisplay = null;
+      let xDisplay = process.env.DISPLAY || null;
+
+      try {
+        const sockets = fs.readdirSync(runtimeDir).filter(f => f.startsWith('wayland-'));
+        if (sockets.length > 0) {
+          // Use the first wayland socket (usually wayland-0 or wayland-1)
+          waylandDisplay = sockets[0];
+          log('cyan', `  Detected Wayland display: ${waylandDisplay}`);
+        }
+      } catch (err) {
+        // Wayland socket not found, may be X11-only system
+      }
+
+      // Add display environment variables before ImportEnvironment
+      if (waylandDisplay || xDisplay) {
+        const envVars = [];
+        if (waylandDisplay) envVars.push(`Environment="WAYLAND_DISPLAY=${waylandDisplay}"`);
+        if (xDisplay) envVars.push(`Environment="DISPLAY=${xDisplay}"`);
+
+        // Insert before ImportEnvironment= line
+        template = template.replace(
+          /ImportEnvironment=/,
+          `${envVars.join('\n')}\n\n# Import full user environment for PulseAudio/PipeWire session\n# This ensures all audio devices are detected properly (4 devices instead of 1)\n# Required for microphone access in user session\nImportEnvironment=`
+        );
+      }
+
       // Write daemon service file
       const daemonServicePath = path.join(systemdDir, 'swictation-daemon.service');
       fs.writeFileSync(daemonServicePath, template);
