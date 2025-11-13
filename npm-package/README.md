@@ -30,6 +30,26 @@ node postinstall.js
 
 **⚠️ Important**: The post-install script downloads GPU libraries (~330MB) and sets up systemd services. Do not skip this step!
 
+### Installation Options
+
+You can customize the installation with environment variables:
+
+```bash
+# Default: Fast install, no model test-loading
+npm install -g swictation
+
+# Enable optional model test-loading (adds ~30s to verify GPU model loading)
+TEST_MODEL_LOADING=1 npm install -g swictation
+
+# Skip for CI/headless environments (minimal setup)
+SKIP_MODEL_TEST=1 npm install -g swictation
+```
+
+**When to use:**
+- `TEST_MODEL_LOADING=1` - Verify your GPU can load models during installation (useful for troubleshooting)
+- `SKIP_MODEL_TEST=1` - For automated/CI environments where you want fastest install
+- Default (no flags) - Recommended for most users (fast, no test-loading)
+
 ## Quick Start
 
 1. **Initial setup** (configures systemd and hotkeys):

@@ -37,10 +37,18 @@ sudo pacman -S wtype wl-clipboard pipewire cuda
 npm install -g swictation
 
 # The postinstall script will:
-# - Detect your GPU and recommend optimal AI model
+# - Detect your GPU and measure VRAM
+# - Recommend optimal AI model (1.1B for 6GB+, 0.6B for 4GB+)
+# - Test-load the model to verify it works (~30-60 seconds)
 # - Install systemd services automatically
 # - Configure Sway/i3 hotkeys
 # - Download required AI models (~1.5GB)
+
+# ⏱️  Note: Installation includes model test-loading (30-60s)
+# This prevents runtime failures on systems with limited VRAM
+
+# For CI/automation (skip test-loading):
+SKIP_MODEL_TEST=1 npm install -g swictation
 
 # Start the daemon
 swictation start
