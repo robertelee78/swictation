@@ -17,18 +17,44 @@ Command-line interface for managing the Swictation voice dictation daemon.
 - 📊 **Real-time metrics** - WPM, latency, GPU/CPU usage
 - 🦀 **Pure Rust daemon** - Zero Python runtime dependencies
 
+## System Requirements
+
+### Required
+- **Operating System**: Ubuntu 24.04 LTS or later (x64)
+- **Node.js**: >= 18.0.0
+- **GLIBC**: >= 2.39 (Ubuntu 24.04+)
+- **libasound2**: Audio library for ALSA
+  ```bash
+  # Ubuntu 24.04+
+  sudo apt-get install libasound2t64
+
+  # Ubuntu 22.04 and older
+  sudo apt-get install libasound2
+  ```
+
+### Optional (for GPU Acceleration)
+- **NVIDIA GPU**: Any CUDA-capable GPU
+- **CUDA**: 12.x or later
+- **VRAM**: 4GB minimum (6GB+ recommended for 1.1B model)
+- **Driver**: NVIDIA proprietary drivers (not nouveau)
+
+If GPU is not available, Swictation will run in CPU-only mode.
+
 ## Installation
 
 ```bash
-# Step 1: Install package
-sudo npm install -g swictation
+# Install with visible output (recommended)
+sudo npm install -g swictation --foreground-scripts
 
-# Step 2: Run post-install setup (REQUIRED!)
-cd /usr/local/lib/node_modules/swictation
-node postinstall.js
+# Or standard install (output hidden by npm)
+sudo npm install -g swictation
 ```
 
-**⚠️ Important**: The post-install script downloads GPU libraries (~330MB) and sets up systemd services. Do not skip this step!
+**Note**: The `--foreground-scripts` flag makes the installation progress visible. The postinstall script will:
+1. Download GPU acceleration libraries (~209MB, if GPU detected)
+2. Generate systemd service files
+3. Set up configuration directories
+4. Test GPU model loading (if GPU detected)
 
 ### Installation Options
 
@@ -166,6 +192,40 @@ Swictation consists of three main components:
 3. **CLI** (`swictation`) - Node.js command-line interface
 
 ## Troubleshooting
+
+### Installation Issues
+
+#### "Cannot see postinstall output"
+**Solution**: Use the `--foreground-scripts` flag:
+```bash
+sudo npm install -g swictation --foreground-scripts
+```
+
+#### "GPU libraries download failed (404)"
+**Cause**: GitHub release for this version doesn't exist yet.
+**Solution**: This only happens with unreleased versions. Published npm versions will work.
+
+#### "libasound.so.2: cannot open shared object file"
+**Cause**: Missing ALSA library.
+**Solution**:
+```bash
+# Ubuntu 24.04+
+sudo apt-get install libasound2t64
+
+# Ubuntu 22.04 and older
+sudo apt-get install libasound2
+```
+
+#### "Model test-loading failed during installation"
+**Cause**: GPU not detected or CUDA libraries missing.
+**Solution**: This is non-fatal. Swictation will fall back to CPU mode. To verify GPU setup after installation:
+```bash
+# Check if CUDA is available
+nvidia-smi
+
+# Check CUDA libraries
+ls /usr/local/cuda/lib64/
+```
 
 ### Service won't start
 ```bash
