@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.3.13] - 2025-11-13
+
+### Fixed
+- **UI service hardcoded paths**: UI service now uses template with auto-detected paths
+  - Previously: Hardcoded `/usr/local/lib/node_modules/swictation/` path
+  - Now: Auto-detects installation directory (`__INSTALL_DIR__` placeholder)
+  - Also auto-detects `DISPLAY` and `WAYLAND_DISPLAY` environment variables
+  - Fixes UI service failures on user-local and nvm installations
+
+### Changed
+- Removed `config/swictation-ui.service` (replaced with template)
+- Added `templates/swictation-ui.service.template` with placeholders
+- Updated postinstall to template UI service like daemon service
+
 ## [0.3.12] - 2025-11-13
 
 ### Fixed

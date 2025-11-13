@@ -11,13 +11,13 @@ PartOf=swictation-daemon.service
 
 [Service]
 Type=simple
-ExecStart=/usr/local/lib/node_modules/swictation/bin/swictation-ui-launcher
+ExecStart=__INSTALL_DIR__/bin/swictation-ui-launcher
 Restart=on-failure
 RestartSec=5
 
 # Environment for Wayland/X11
-Environment="DISPLAY=:0"
-Environment="WAYLAND_DISPLAY=wayland-0"
+Environment="DISPLAY=__DISPLAY__"
+Environment="WAYLAND_DISPLAY=__WAYLAND_DISPLAY__"
 
 # Resource limits (UI is lightweight)
 MemoryMax=100M

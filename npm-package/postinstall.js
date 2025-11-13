@@ -441,6 +441,22 @@ function generateSystemdService(ortLibPath) {
       log('green', `✓ Created ${systemdDir}`);
     }
 
+    // Detect display environment variables (used by both daemon and UI services)
+    const runtimeDir = process.env.XDG_RUNTIME_DIR || `/run/user/${process.getuid()}`;
+    let waylandDisplay = null;
+    let xDisplay = process.env.DISPLAY || null;
+
+    try {
+      const sockets = fs.readdirSync(runtimeDir).filter(f => f.startsWith('wayland-'));
+      if (sockets.length > 0) {
+        // Use the first wayland socket (usually wayland-0 or wayland-1)
+        waylandDisplay = sockets[0];
+        log('cyan', `  Detected Wayland display: ${waylandDisplay}`);
+      }
+    } catch (err) {
+      // Wayland socket not found, may be X11-only system
+    }
+
     // 1. Generate daemon service from template
     const templatePath = path.join(__dirname, 'templates', 'swictation-daemon.service.template');
     if (!fs.existsSync(templatePath)) {
@@ -475,22 +491,6 @@ function generateSystemdService(ortLibPath) {
         log('yellow', '  ⚠️  No CUDA libraries detected (CPU-only mode)');
       }
 
-      // Detect Wayland display for text injection support
-      const runtimeDir = process.env.XDG_RUNTIME_DIR || `/run/user/${process.getuid()}`;
-      let waylandDisplay = null;
-      let xDisplay = process.env.DISPLAY || null;
-
-      try {
-        const sockets = fs.readdirSync(runtimeDir).filter(f => f.startsWith('wayland-'));
-        if (sockets.length > 0) {
-          // Use the first wayland socket (usually wayland-0 or wayland-1)
-          waylandDisplay = sockets[0];
-          log('cyan', `  Detected Wayland display: ${waylandDisplay}`);
-        }
-      } catch (err) {
-        // Wayland socket not found, may be X11-only system
-      }
-
       // Add display environment variables before ImportEnvironment
       if (waylandDisplay || xDisplay) {
         const envVars = [];
@@ -516,15 +516,22 @@ function generateSystemdService(ortLibPath) {
       }
     }
 
-    // 2. Install UI service (copy directly, no template)
-    const uiServiceSource = path.join(__dirname, 'config', 'swictation-ui.service');
-    if (fs.existsSync(uiServiceSource)) {
+    // 2. Install UI service (template-based, like daemon service)
+    const uiServiceTemplate = path.join(__dirname, 'templates', 'swictation-ui.service.template');
+    if (fs.existsSync(uiServiceTemplate)) {
+      let uiTemplate = fs.readFileSync(uiServiceTemplate, 'utf8');
+
+      // Replace placeholders
+      uiTemplate = uiTemplate.replace(/__INSTALL_DIR__/g, __dirname);
+      uiTemplate = uiTemplate.replace(/__DISPLAY__/g, xDisplay || ':0');
+      uiTemplate = uiTemplate.replace(/__WAYLAND_DISPLAY__/g, waylandDisplay || 'wayland-0');
+
       const uiServiceDest = path.join(systemdDir, 'swictation-ui.service');
-      fs.copyFileSync(uiServiceSource, uiServiceDest);
+      fs.writeFileSync(uiServiceDest, uiTemplate);
       log('green', `✓ Installed UI service: ${uiServiceDest}`);
     } else {
-      log('yellow', `⚠️  Warning: UI service not found at ${uiServiceSource}`);
-      log('yellow', '   You can manually install it later');
+      log('yellow', `⚠️  Warning: UI service template not found at ${uiServiceTemplate}`);
+      log('yellow', '   You can manually create it later');
     }
 
   } catch (err) {
