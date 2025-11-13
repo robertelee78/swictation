@@ -6,6 +6,10 @@ const { execSync } = require('child_process');
 const os = require('os');
 const https = require('https');
 
+// Environment variable support for model test-loading
+const SKIP_MODEL_TEST = process.env.SKIP_MODEL_TEST === '1';
+const ENABLE_MODEL_TEST = process.env.TEST_MODEL_LOADING === '1';
+
 // Colors for console output (basic implementation without chalk dependency)
 const colors = {
   reset: '\x1b[0m',
@@ -54,6 +58,88 @@ function checkPlatform() {
   } catch (err) {
     log('yellow', 'Warning: Could not check GLIBC version');
   }
+}
+
+/**
+ * Phase 1: Clean up old/conflicting service files from previous installations
+ * This prevents conflicts between old Python-based services and new Node.js services
+ */
+async function cleanOldServices() {
+  log('cyan', '\n🧹 Checking for old service files...');
+
+  const oldServiceLocations = [
+    // Old system-wide service files (from Python version)
+    '/usr/lib/systemd/user/swictation.service',
+    '/usr/lib/systemd/system/swictation.service',
+    // Old user service files that might conflict
+    path.join(os.homedir(), '.config', 'systemd', 'user', 'swictation.service')
+  ];
+
+  let foundOldServices = false;
+
+  for (const servicePath of oldServiceLocations) {
+    if (fs.existsSync(servicePath)) {
+      foundOldServices = true;
+      log('yellow', `⚠️  Found old service file: ${servicePath}`);
+
+      // Extract service name from path
+      const serviceName = path.basename(servicePath);
+      const isSystemService = servicePath.includes('/system/');
+
+      try {
+        // Try to stop the service if it's running
+        const stopCmd = isSystemService
+          ? `sudo systemctl stop ${serviceName} 2>/dev/null || true`
+          : `systemctl --user stop ${serviceName} 2>/dev/null || true`;
+
+        execSync(stopCmd, { stdio: 'ignore' });
+        log('cyan', `  ✓ Stopped service: ${serviceName}`);
+
+        // Disable the service
+        const disableCmd = isSystemService
+          ? `sudo systemctl disable ${serviceName} 2>/dev/null || true`
+          : `systemctl --user disable ${serviceName} 2>/dev/null || true`;
+
+        execSync(disableCmd, { stdio: 'ignore' });
+        log('cyan', `  ✓ Disabled service: ${serviceName}`);
+
+        // Remove the service file (requires sudo for system services)
+        if (isSystemService) {
+          try {
+            execSync(`sudo rm -f "${servicePath}"`, { stdio: 'ignore' });
+            log('green', `  ✓ Removed old service file: ${servicePath}`);
+          } catch (err) {
+            log('yellow', `  ⚠️  Could not remove ${servicePath} (may need manual cleanup)`);
+          }
+        } else {
+          try {
+            fs.unlinkSync(servicePath);
+            log('green', `  ✓ Removed old service file: ${servicePath}`);
+          } catch (err) {
+            log('yellow', `  ⚠️  Could not remove ${servicePath}: ${err.message}`);
+          }
+        }
+
+      } catch (err) {
+        log('yellow', `  ⚠️  Error cleaning up ${serviceName}: ${err.message}`);
+      }
+    }
+  }
+
+  if (foundOldServices) {
+    // Reload systemd to pick up changes
+    try {
+      execSync('systemctl --user daemon-reload 2>/dev/null', { stdio: 'ignore' });
+      execSync('sudo systemctl daemon-reload 2>/dev/null || true', { stdio: 'ignore' });
+      log('green', '✓ Reloaded systemd daemon');
+    } catch (err) {
+      log('yellow', '⚠️  Could not reload systemd daemon');
+    }
+  } else {
+    log('green', '✓ No old service files found');
+  }
+
+  return foundOldServices;
 }
 
 function ensureBinaryPermissions() {
@@ -361,6 +447,273 @@ function generateSystemdService(ortLibPath) {
   }
 }
 
+/**
+ * Phase 2: Interactive config migration with pacman/apt-style prompts
+ * Handles conflicts between old and new config files
+ */
+async function interactiveConfigMigration() {
+  log('cyan', '\n📝 Checking configuration files...');
+
+  const configDir = path.join(os.homedir(), '.config', 'swictation');
+  const configPath = path.join(configDir, 'config.toml');
+  const newConfigTemplate = path.join(__dirname, 'config', 'config.toml');
+
+  // If no existing config, just copy the template
+  if (!fs.existsSync(configPath)) {
+    if (fs.existsSync(newConfigTemplate)) {
+      try {
+        fs.copyFileSync(newConfigTemplate, configPath);
+        log('green', `✓ Created config file: ${configPath}`);
+      } catch (err) {
+        log('yellow', `⚠️  Could not create config: ${err.message}`);
+      }
+    }
+    return;
+  }
+
+  // Check if new template exists
+  if (!fs.existsSync(newConfigTemplate)) {
+    log('yellow', '⚠️  No config template found in package');
+    return;
+  }
+
+  // Read both configs
+  let oldConfig, newConfig;
+  try {
+    oldConfig = fs.readFileSync(configPath, 'utf8');
+    newConfig = fs.readFileSync(newConfigTemplate, 'utf8');
+  } catch (err) {
+    log('yellow', `⚠️  Error reading config files: ${err.message}`);
+    return;
+  }
+
+  // If configs are identical, no action needed
+  if (oldConfig === newConfig) {
+    log('green', '✓ Config file is up to date');
+    return;
+  }
+
+  // Configs differ - offer migration options
+  log('yellow', '\n⚠️  Config file exists and differs from new template');
+  log('cyan', '\nOptions:');
+  log('cyan', '  [K] Keep    - Keep your current config (default)');
+  log('cyan', '  [N] New     - Replace with new config (backup old)');
+  log('cyan', '  [M] Merge   - Keep old, add new required fields');
+  log('cyan', '  [D] Diff    - Show differences');
+  log('cyan', '  [S] Skip    - Continue without changes');
+
+  // For non-interactive installs, default to Keep
+  if (!process.stdin.isTTY) {
+    log('green', '\n✓ Non-interactive mode: Keeping existing config');
+    log('cyan', '  Tip: Run "swictation setup" to review config changes');
+    return;
+  }
+
+  // Interactive prompt (simplified for postinstall)
+  log('yellow', '\n⚠️  Interactive mode not available during postinstall');
+  log('cyan', '   Defaulting to: Keep existing config');
+  log('cyan', '   New config template available at:');
+  log('cyan', `   ${newConfigTemplate}`);
+  log('cyan', '\n   To update config manually:');
+  log('cyan', `   diff ${configPath} ${newConfigTemplate}`);
+  log('green', '\n✓ Kept existing config');
+}
+
+/**
+ * Phase 3: Detect GPU VRAM for intelligent model selection
+ * Prevents loading models that are too large for available VRAM
+ */
+function detectGPUVRAM() {
+  log('cyan', '\n🎮 Detecting GPU capabilities...');
+
+  const gpuInfo = {
+    hasGPU: false,
+    gpuName: null,
+    vramMB: 0,
+    vramGB: 0,
+    cudaVersion: null,
+    driverVersion: null,
+    recommendedModel: null
+  };
+
+  if (!detectNvidiaGPU()) {
+    log('cyan', '  No NVIDIA GPU detected - CPU mode will be used');
+    return gpuInfo;
+  }
+
+  gpuInfo.hasGPU = true;
+
+  try {
+    // Get comprehensive GPU information
+    const gpuData = execSync(
+      'nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader,nounits',
+      { encoding: 'utf8' }
+    ).trim();
+
+    const [name, vramMB, driver] = gpuData.split(',').map(s => s.trim());
+
+    gpuInfo.gpuName = name;
+    gpuInfo.vramMB = parseInt(vramMB);
+    gpuInfo.vramGB = Math.round(gpuInfo.vramMB / 1024);
+    gpuInfo.driverVersion = driver;
+
+    // Try to get CUDA version
+    try {
+      const cudaVersion = execSync('nvidia-smi | grep "CUDA Version" | awk \'{print $9}\'', { encoding: 'utf8' }).trim();
+      if (cudaVersion) {
+        gpuInfo.cudaVersion = cudaVersion;
+      }
+    } catch {
+      // CUDA version detection optional
+    }
+
+    log('green', `✓ GPU Detected: ${gpuInfo.gpuName}`);
+    log('cyan', `  VRAM: ${gpuInfo.vramGB}GB (${gpuInfo.vramMB}MB)`);
+    log('cyan', `  Driver: ${gpuInfo.driverVersion}`);
+    if (gpuInfo.cudaVersion) {
+      log('cyan', `  CUDA: ${gpuInfo.cudaVersion}`);
+    }
+
+    // Intelligent model recommendation based on VRAM
+    // Based on empirical data from the analysis:
+    // 0.6B model: ~3.5GB VRAM (fits in 4GB with headroom)
+    // 1.1B model: ~6GB VRAM (needs at least 8GB for safety)
+    if (gpuInfo.vramMB >= 6000) {
+      // 6GB+ VRAM: Can safely run 1.1B model
+      gpuInfo.recommendedModel = '1.1b';
+      log('green', `  ✓ Sufficient VRAM for 1.1B model (best quality)`);
+    } else if (gpuInfo.vramMB >= 4000) {
+      // 4-6GB VRAM: Run 0.6B model (proven safe on 4GB)
+      gpuInfo.recommendedModel = '0.6b';
+      log('yellow', `  ⚠️  Limited VRAM - Recommending 0.6B model`);
+      log('cyan', `     (1.1B model requires ~6GB VRAM)`);
+    } else {
+      // <4GB VRAM: Too little for GPU acceleration
+      gpuInfo.recommendedModel = 'cpu-only';
+      log('yellow', `  ⚠️  Insufficient VRAM for GPU models`);
+      log('cyan', `     GPU models require minimum 4GB VRAM`);
+      log('cyan', `     Falling back to CPU-only mode`);
+    }
+
+    // Save GPU info for later use by daemon
+    const configDir = path.join(os.homedir(), '.config', 'swictation');
+    const gpuInfoPath = path.join(configDir, 'gpu-info.json');
+
+    try {
+      fs.writeFileSync(gpuInfoPath, JSON.stringify(gpuInfo, null, 2));
+      log('green', `  ✓ Saved GPU info to ${gpuInfoPath}`);
+    } catch (err) {
+      log('yellow', `  ⚠️  Could not save GPU info: ${err.message}`);
+    }
+
+  } catch (err) {
+    log('yellow', `⚠️  Error detecting GPU details: ${err.message}`);
+    log('cyan', '   GPU detected but could not read specifications');
+  }
+
+  return gpuInfo;
+}
+
+/**
+ * Test-load a specific model to verify it actually works
+ * @param {string} modelName - Model name (e.g., '1.1b-gpu', '0.6b-gpu')
+ * @param {string} daemonBin - Path to daemon binary
+ * @param {string} ortLibPath - Path to ONNX Runtime library
+ * @returns {Promise<{success: boolean, model: string, reason?: string}>}
+ */
+async function testLoadModel(modelName, daemonBin, ortLibPath) {
+  log('cyan', `  🔄 Test-loading ${modelName} model (max 30s)...`);
+
+  const modelFlag = `--test-model=${modelName}`;
+  const env = {
+    ...process.env,
+    ORT_DYLIB_PATH: ortLibPath,
+    LD_LIBRARY_PATH: `/usr/local/cuda/lib64:/usr/local/cuda-12.9/lib64:${path.join(__dirname, 'lib', 'native')}`,
+    CUDA_HOME: '/usr/local/cuda',
+    RUST_LOG: 'info'
+  };
+
+  try {
+    const output = execSync(
+      `timeout 30s "${daemonBin}" ${modelFlag} --dry-run 2>&1`,
+      { encoding: 'utf8', env, stdio: 'pipe' }
+    );
+
+    // Check for success indicators in output
+    if (output.includes('Model loaded successfully') || output.includes('Selected model')) {
+      log('green', `    ✓ ${modelName} loaded successfully`);
+      return { success: true, model: modelName };
+    } else {
+      log('yellow', `    ⚠️  ${modelName} load uncertain (no success indicator)`);
+      return { success: false, model: modelName, reason: 'No success indicator' };
+    }
+  } catch (err) {
+    log('yellow', `    ✗ ${modelName} failed to load`);
+    log('cyan', `      Error: ${err.message.split('\n')[0]}`);
+    return { success: false, model: modelName, reason: err.message };
+  }
+}
+
+/**
+ * Test models in order from best to worst, returning the first that works
+ * @param {object} gpuInfo - GPU information from detectGPUVRAM()
+ * @param {string} daemonBin - Path to daemon binary
+ * @param {string} ortLibPath - Path to ONNX Runtime library
+ * @returns {Promise<{recommendedModel: string, tested: boolean, vramVerified?: boolean, fallbackToCpu?: boolean}>}
+ */
+async function testModelsInOrder(gpuInfo, daemonBin, ortLibPath) {
+  log('cyan', '\n🧪 Testing models on your GPU...');
+  log('cyan', `   GPU: ${gpuInfo.gpuName || 'Unknown'} with ${gpuInfo.vramGB}GB VRAM`);
+
+  if (!gpuInfo.hasGPU) {
+    log('cyan', '  No GPU - skipping model tests');
+    return { recommendedModel: 'cpu-only', tested: false };
+  }
+
+  if (!fs.existsSync(daemonBin)) {
+    log('yellow', '  ⚠️  Daemon binary not found, skipping model tests');
+    return { recommendedModel: gpuInfo.recommendedModel, tested: false };
+  }
+
+  // Test models in order from best to worst
+  const modelsToTest = [];
+
+  if (gpuInfo.vramMB >= 5500) {
+    modelsToTest.push('1.1b-gpu');
+  }
+  if (gpuInfo.vramMB >= 3500) {
+    modelsToTest.push('0.6b-gpu');
+  }
+
+  if (modelsToTest.length === 0) {
+    log('cyan', '  Insufficient VRAM for GPU models');
+    return { recommendedModel: 'cpu-only', tested: false };
+  }
+
+  log('cyan', `  Testing ${modelsToTest.length} model(s)...\n`);
+
+  for (const model of modelsToTest) {
+    const result = await testLoadModel(model, daemonBin, ortLibPath);
+    if (result.success) {
+      log('green', `\n  ✓ Selected: ${model} (verified working)`);
+      return {
+        recommendedModel: model,
+        tested: true,
+        vramVerified: true
+      };
+    }
+  }
+
+  // All tests failed - fall back to CPU
+  log('yellow', '\n  ⚠️  All GPU models failed to load');
+  log('cyan', '     Falling back to CPU-only mode');
+  return {
+    recommendedModel: 'cpu-only',
+    tested: true,
+    fallbackToCpu: true
+  };
+}
+
 function detectSystemCapabilities() {
   const capabilities = {
     hasGPU: false,
@@ -440,24 +793,72 @@ function recommendOptimalModel(capabilities) {
 function showNextSteps() {
   log('green', '\n✨ Swictation installed successfully!');
 
-  // Detect system and recommend optimal model
-  const capabilities = detectSystemCapabilities();
-  const recommendation = recommendOptimalModel(capabilities);
+  // Try to read GPU info from detection
+  const gpuInfoPath = path.join(os.homedir(), '.config', 'swictation', 'gpu-info.json');
+  let gpuInfo = null;
+  let recommendation;
 
-  log('cyan', '\n📊 System Detection:');
-  console.log(`   ${recommendation.reason}`);
-  console.log('');
+  try {
+    if (fs.existsSync(gpuInfoPath)) {
+      gpuInfo = JSON.parse(fs.readFileSync(gpuInfoPath, 'utf8'));
+    }
+  } catch {
+    // Fall back to old detection method
+  }
 
-  log('cyan', '🎯 Recommended Model:');
-  log('green', `   ${recommendation.model.toUpperCase()} - ${recommendation.description}`);
-  console.log(`   Size: ${recommendation.size}`);
-  console.log(`   Performance: ${recommendation.performance}`);
+  // Use GPU info if available, otherwise fall back to old method
+  if (gpuInfo && gpuInfo.recommendedModel) {
+    log('cyan', '\n📊 System Detection:');
+    if (gpuInfo.hasGPU) {
+      console.log(`   GPU: ${gpuInfo.gpuName} (${gpuInfo.vramGB}GB VRAM)`);
+      console.log(`   Driver: ${gpuInfo.driverVersion}`);
+      if (gpuInfo.cudaVersion) {
+        console.log(`   CUDA: ${gpuInfo.cudaVersion}`);
+      }
+    } else {
+      const capabilities = detectSystemCapabilities();
+      console.log(`   CPU: ${capabilities.cpuCores} cores, ${capabilities.totalRAMGB}GB RAM`);
+    }
+    console.log('');
+
+    log('cyan', '🎯 Recommended Model:');
+    if (gpuInfo.recommendedModel === '1.1b') {
+      log('green', '   1.1B - Best quality - Full GPU acceleration with FP32 precision');
+      console.log('   Size: ~75MB download (FP32 + INT8 versions)');
+      console.log('   Performance: 62x realtime speed on GPU');
+    } else if (gpuInfo.recommendedModel === '0.6b') {
+      log('yellow', '   0.6B - Lighter model for limited VRAM systems');
+      console.log('   Size: ~111MB');
+      console.log('   Performance: Fast on GPU');
+    } else {
+      log('cyan', '   CPU-optimized models');
+      console.log('   Multiple sizes available (0.6B - 1.1B)');
+    }
+    recommendation = { model: gpuInfo.recommendedModel };
+  } else {
+    // Fallback to old detection
+    const capabilities = detectSystemCapabilities();
+    recommendation = recommendOptimalModel(capabilities);
+
+    log('cyan', '\n📊 System Detection:');
+    console.log(`   ${recommendation.reason}`);
+    console.log('');
+
+    log('cyan', '🎯 Recommended Model:');
+    log('green', `   ${recommendation.model.toUpperCase()} - ${recommendation.description}`);
+    console.log(`   Size: ${recommendation.size}`);
+    console.log(`   Performance: ${recommendation.performance}`);
+  }
   console.log('');
 
   log('cyan', 'Next steps:');
   console.log('  1. Download recommended AI model:');
   log('cyan', '     pip install "huggingface_hub[cli]"  # Required for downloads');
-  log('green', `     swictation download-model ${recommendation.model}`);
+  if (recommendation.model !== 'cpu-only') {
+    log('green', `     swictation download-model ${recommendation.model}`);
+  } else {
+    log('green', '     swictation download-model 0.6b  # Recommended for CPU');
+  }
   console.log('');
   console.log('     Or download all models (9.43 GB):');
   log('cyan', '     swictation download-models');
@@ -480,14 +881,80 @@ function showNextSteps() {
 async function main() {
   log('cyan', '🚀 Setting up Swictation...\n');
 
-  checkPlatform();
-  ensureBinaryPermissions();
-  createDirectories();
-  await downloadGPULibraries();
-  const ortLibPath = detectOrtLibrary();
-  generateSystemdService(ortLibPath);
-  checkDependencies();
-  showNextSteps();
+  try {
+    // Platform and basic checks
+    checkPlatform();
+    ensureBinaryPermissions();
+    createDirectories();
+
+    // Phase 1: Clean up old/conflicting service files
+    log('cyan', '\n═══ Phase 1: Service Cleanup ═══');
+    await cleanOldServices();
+
+    // Phase 2: Handle config file migration
+    log('cyan', '\n═══ Phase 2: Configuration ═══');
+    await interactiveConfigMigration();
+
+    // Phase 3: Detect GPU capabilities
+    log('cyan', '\n═══ Phase 3: GPU Detection ═══');
+    let gpuInfo = detectGPUVRAM();
+
+    // Download GPU libraries if needed
+    if (gpuInfo.hasGPU && gpuInfo.recommendedModel !== 'cpu-only') {
+      await downloadGPULibraries();
+    } else if (!gpuInfo.hasGPU) {
+      log('cyan', '\nℹ No NVIDIA GPU detected - skipping GPU library download');
+      log('cyan', '  CPU-only mode will be used');
+    }
+
+    // Detect ONNX Runtime library (needed for test-loading)
+    const ortLibPath = detectOrtLibrary();
+
+    // Phase 3.5: Model test-loading (actual verification)
+    if (!SKIP_MODEL_TEST && gpuInfo.hasGPU && gpuInfo.recommendedModel !== 'cpu-only') {
+      log('cyan', '\n═══ Phase 3.5: Model Verification ═══');
+      const daemonBin = path.join(__dirname, 'lib', 'native', 'swictation-daemon.bin');
+
+      const testResult = await testModelsInOrder(gpuInfo, daemonBin, ortLibPath);
+
+      // Update gpuInfo with test results
+      gpuInfo.recommendedModel = testResult.recommendedModel;
+      gpuInfo.tested = testResult.tested;
+      gpuInfo.vramVerified = testResult.vramVerified || false;
+      gpuInfo.fallbackToCpu = testResult.fallbackToCpu || false;
+
+      // Save updated GPU info with test results
+      const configDir = path.join(os.homedir(), '.config', 'swictation');
+      const gpuInfoPath = path.join(configDir, 'gpu-info.json');
+
+      try {
+        fs.writeFileSync(gpuInfoPath, JSON.stringify(gpuInfo, null, 2));
+        log('green', `  ✓ Saved verified GPU info to ${gpuInfoPath}`);
+      } catch (err) {
+        log('yellow', `  ⚠️  Could not save GPU info: ${err.message}`);
+      }
+    } else if (SKIP_MODEL_TEST) {
+      log('cyan', '\n═══ Phase 3.5: Model Verification ═══');
+      log('yellow', '  ⚠️  Model test-loading skipped (SKIP_MODEL_TEST=1)');
+      log('cyan', '     Using VRAM-based heuristics only');
+    }
+
+    // Phase 4: Generate systemd services
+    log('cyan', '\n═══ Phase 4: Service Installation ═══');
+    generateSystemdService(ortLibPath);
+
+    // Final checks and next steps
+    checkDependencies();
+    showNextSteps();
+
+    log('green', '\n✅ Postinstall completed successfully!');
+
+  } catch (err) {
+    log('red', `\n❌ Postinstall error: ${err.message}`);
+    log('yellow', '\nSome steps may have failed, but installation can continue.');
+    log('cyan', 'Run "swictation setup" to complete configuration manually.');
+    // Don't exit with error - npm install should succeed even if postinstall has issues
+  }
 }
 
 // Run postinstall
