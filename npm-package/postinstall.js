@@ -558,7 +558,7 @@ async function interactiveConfigMigration() {
 
   // Check if new template exists
   if (!fs.existsSync(newConfigTemplate)) {
-    log('yellow', '⚠️  No config template found in package');
+    // No template in package - daemon will generate default config on first run
     return;
   }
 
@@ -941,17 +941,20 @@ function showNextSteps() {
     console.log('');
 
     log('cyan', '🎯 Recommended Model:');
-    if (gpuInfo.recommendedModel === '1.1b') {
-      log('green', '   1.1B - Best quality - Full GPU acceleration with FP32 precision');
+    if (gpuInfo.recommendedModel === '1.1b-gpu' || gpuInfo.recommendedModel === '1.1b') {
+      log('green', '   1.1B GPU - Best quality with full CUDA acceleration');
       console.log('   Size: ~75MB download (FP32 + INT8 versions)');
       console.log('   Performance: 62x realtime speed on GPU');
-    } else if (gpuInfo.recommendedModel === '0.6b') {
-      log('yellow', '   0.6B - Lighter model for limited VRAM systems');
-      console.log('   Size: ~111MB');
-      console.log('   Performance: Fast on GPU');
+      console.log('   VRAM: ~6GB required');
+    } else if (gpuInfo.recommendedModel === '0.6b-gpu' || gpuInfo.recommendedModel === '0.6b') {
+      log('green', '   0.6B GPU - Optimized for 4GB VRAM systems');
+      console.log('   Size: ~111MB download');
+      console.log('   Performance: Fast GPU acceleration');
+      console.log('   VRAM: ~4GB required');
     } else {
       log('cyan', '   CPU-optimized models');
       console.log('   Multiple sizes available (0.6B - 1.1B)');
+      console.log('   Note: Consider GPU models for better performance');
     }
     recommendation = { model: gpuInfo.recommendedModel };
   } else {
