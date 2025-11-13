@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.3.11] - 2025-11-13
+
+### Fixed
+- **Confusing model test-loading documentation**: README now accurately reflects default behavior
+  - Model testing IS enabled by default when GPU detected (not optional)
+  - Removed misleading `TEST_MODEL_LOADING=1` variable that didn't do anything
+  - Clarified: Default = model testing (GPU systems), SKIP_MODEL_TEST=1 = disable it
+  - Updated installation instructions to reflect actual behavior
+
+### Documentation
+- Updated README Installation Options section for clarity
+- Removed confusing "Default: Fast install, no model test-loading" language
+- Emphasized that model testing verifies GPU setup works correctly
+
 ## [0.3.1] - 2025-11-13
 
 ### Fixed

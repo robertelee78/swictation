@@ -107,20 +107,18 @@ sudo npm install -g swictation
 You can customize the installation with environment variables:
 
 ```bash
-# Default: Fast install, no model test-loading
-npm install -g swictation
+# Default: Standard install with GPU model testing (if GPU detected)
+npm install -g swictation --foreground-scripts
 
-# Enable optional model test-loading (adds ~30s to verify GPU model loading)
-TEST_MODEL_LOADING=1 npm install -g swictation
-
-# Skip for CI/headless environments (minimal setup)
-SKIP_MODEL_TEST=1 npm install -g swictation
+# Skip model testing for CI/headless environments (faster install)
+SKIP_MODEL_TEST=1 npm install -g swictation --foreground-scripts
 ```
 
-**When to use:**
-- `TEST_MODEL_LOADING=1` - Verify your GPU can load models during installation (useful for troubleshooting)
-- `SKIP_MODEL_TEST=1` - For automated/CI environments where you want fastest install
-- Default (no flags) - Recommended for most users (fast, no test-loading)
+**Installation behavior:**
+- **Default**: Model test-loading runs automatically when GPU is detected (~30s to verify)
+- **SKIP_MODEL_TEST=1**: Skips model testing entirely (useful for CI/automated environments)
+
+**Note**: Model testing is recommended to ensure your GPU setup works correctly. It verifies that the daemon can load models with your CUDA installation.
 
 ## Quick Start
 

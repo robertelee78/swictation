@@ -7,8 +7,9 @@ const os = require('os');
 const https = require('https');
 
 // Environment variable support for model test-loading
+// By default, model testing runs when GPU is detected
+// Set SKIP_MODEL_TEST=1 to disable (useful for CI/headless environments)
 const SKIP_MODEL_TEST = process.env.SKIP_MODEL_TEST === '1';
-const ENABLE_MODEL_TEST = process.env.TEST_MODEL_LOADING === '1';
 
 // Colors for console output (basic implementation without chalk dependency)
 const colors = {
