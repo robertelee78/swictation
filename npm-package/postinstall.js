@@ -680,11 +680,16 @@ function detectGPUVRAM() {
 async function testLoadModel(modelName, daemonBin, ortLibPath) {
   log('cyan', `  🔄 Test-loading ${modelName} model (max 30s)...`);
 
+  // Detect CUDA library paths dynamically (same as systemd service)
+  const cudaPaths = detectCudaLibraryPaths();
+  const nativeLibPath = path.join(__dirname, 'lib', 'native');
+  const ldLibraryPath = [...cudaPaths, nativeLibPath].join(':');
+
   const modelFlag = `--test-model=${modelName}`;
   const env = {
     ...process.env,
     ORT_DYLIB_PATH: ortLibPath,
-    LD_LIBRARY_PATH: `/usr/local/cuda/lib64:/usr/local/cuda-12.9/lib64:${path.join(__dirname, 'lib', 'native')}`,
+    LD_LIBRARY_PATH: ldLibraryPath,
     CUDA_HOME: '/usr/local/cuda',
     RUST_LOG: 'info'
   };
