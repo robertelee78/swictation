@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.3.14] - 2025-11-13
+
+### Fixed
+- **User-local npm installations broken**: Fixed package directory structure for user-local npm installs
+  - Previously: npm files array listed individual files without parent directories
+  - Issue: `lib/native/` directory wasn't created, causing GPU libs extraction to fail
+  - Now: Added `.gitkeep` placeholder to ensure `lib/native/` directory structure is preserved
+  - Fixes installations with `npm config set prefix ~/.npm-global` (non-sudo installs)
+  - Fixes nvm-based installations
+  - Error was: `tar: /home/user/.npm-global/lib/node_modules/swictation/lib/native: Cannot open: No such file or directory`
+
+### Changed
+- Updated package.json files array to include `lib/native/.gitkeep` for directory preservation
+- Maintains small package size (8 MB) - GPU libs still downloaded separately during postinstall
+
 ## [0.3.13] - 2025-11-13
 
 ### Fixed
