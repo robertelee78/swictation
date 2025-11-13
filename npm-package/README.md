@@ -38,6 +38,8 @@ Command-line interface for managing the Swictation voice dictation daemon.
 - **VRAM**: 4GB minimum (6GB+ recommended for 1.1B model)
 - **Driver**: NVIDIA proprietary drivers (not nouveau)
 
+**Note**: GPU acceleration libraries (~209MB) are downloaded during installation from a **separate versioned release** (`gpu-libs-v1.0.0`). These are versioned independently from the npm package to avoid duplication across releases.
+
 If GPU is not available, Swictation will run in CPU-only mode.
 
 ## Installation

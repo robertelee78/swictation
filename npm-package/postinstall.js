@@ -316,8 +316,10 @@ async function downloadGPULibraries() {
   log('green', '\n✓ NVIDIA GPU detected!');
   log('cyan', '📦 Downloading GPU acceleration libraries...');
 
-  const version = require('./package.json').version;
-  const releaseUrl = `https://github.com/robertelee78/swictation/releases/download/v${version}/swictation-gpu-libs.tar.gz`;
+  // GPU libs are versioned independently from npm package
+  // Only update this version when ONNX Runtime or CUDA providers change
+  const GPU_LIBS_VERSION = '1.0.0'; // ONNX Runtime 1.19.0, CUDA 12.x providers
+  const releaseUrl = `https://github.com/robertelee78/swictation/releases/download/gpu-libs-v${GPU_LIBS_VERSION}/swictation-gpu-libs.tar.gz`;
   const tmpDir = path.join(os.tmpdir(), 'swictation-gpu-install');
   const tarPath = path.join(tmpDir, 'gpu-libs.tar.gz');
   const nativeDir = path.join(__dirname, 'lib', 'native');
