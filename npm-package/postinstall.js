@@ -850,6 +850,17 @@ function generateSystemdService(ortLibPath) {
       log('yellow', '   You can manually create it later');
     }
 
+    // CRITICAL: Reload systemd to pick up service file changes
+    // Without this, systemd uses cached versions and services fail to start with old paths
+    log('cyan', '\n🔄 Reloading systemd daemon...');
+    try {
+      execSync('systemctl --user daemon-reload', { stdio: 'ignore' });
+      log('green', '✓ Systemd daemon reloaded - service files updated');
+    } catch (err) {
+      log('yellow', `⚠️  Could not reload systemd: ${err.message}`);
+      log('yellow', '   You may need to run manually: systemctl --user daemon-reload');
+    }
+
   } catch (err) {
     log('yellow', `⚠️  Failed to generate systemd services: ${err.message}`);
     log('cyan', '  You can manually create them later using: swictation setup');
