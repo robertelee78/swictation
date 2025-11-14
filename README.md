@@ -41,7 +41,7 @@ Swictation automatically detects your GPU architecture and downloads optimized l
 **Key Benefits:**
 - **Automatic detection** - Zero configuration required
 - **Optimized downloads** - 65-74% smaller than universal binaries
-- **Wide compatibility** - Supports GPUs from 2014 (Maxwell) through 2024 (Blackwell)
+- **Wide compatibility** - Supports all NVIDIA GPUs from Maxwell (2014) through current Blackwell architecture
 - **Native support** - No PTX hacks, native compilation for all architectures
 
 **Unsupported GPUs** (< sm_50):
