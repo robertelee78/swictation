@@ -104,7 +104,7 @@ jobs:
         ./bin/swictation status || true
 
     - name: Upload npm package artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: npm-package-linux-x64
         path: npm-package/
@@ -134,7 +134,7 @@ jobs:
     - uses: actions/checkout@v3
 
     - name: Download artifacts
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
       with:
         name: npm-package-linux-x64
         path: npm-package/
