@@ -5,6 +5,23 @@ All notable changes to Swictation will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.20] - 2025-11-14
+
+### Fixed
+- **CRITICAL: Missing ONNX Runtime CUDA provider library**
+  - Added libonnxruntime_providers_cuda.so (345MB) to GPU libs packages v1.1.1
+  - This library was missing from v1.1.0, causing daemon to crash with "cannot open shared object file" error
+  - Now downloaded as part of GPU libs packages (not bundled in npm)
+  - Fixes daemon crash on GPU systems
+
+### Technical Details
+- Created gpu-libs-v1.1.1 with 15 libraries total:
+  - 14 CUDA runtime libraries (libcublas, libcudnn, etc.) - from v1.1.0
+  - 1 ONNX Runtime CUDA provider (libonnxruntime_providers_cuda.so) - NEW
+- Package size: ~1.7GB compressed per architecture (LEGACY, MODERN, LATEST)
+- Removed CUDA provider from npm package (too large, 345MB)
+- Updated postinstall to download from gpu-libs-v1.1.1
+
 ## [0.3.19] - 2025-11-14
 
 ### Fixed

@@ -558,7 +558,7 @@ async function downloadGPULibraries() {
     log('yellow', '⚠️  Could not detect GPU compute capability');
     log('cyan', '   Skipping GPU library download');
     log('cyan', '   You can manually download from:');
-    log('cyan', '   https://github.com/robertelee78/swictation/releases/tag/gpu-libs-v1.1.0');
+    log('cyan', '   https://github.com/robertelee78/swictation/releases/tag/gpu-libs-v1.1.1');
     return;
   }
 
