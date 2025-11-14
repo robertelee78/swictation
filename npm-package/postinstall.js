@@ -668,17 +668,8 @@ async function downloadGPULibraries() {
 function detectOrtLibrary() {
   log('cyan', '\n🔍 Detecting ONNX Runtime library path...');
 
-  // PRIORITY 1: Check GPU libs directory (downloaded separately as part of multi-arch packages)
-  // The ONNX Runtime library is included in the GPU architecture packages
-  const gpuLibsDir = path.join(os.homedir(), '.local', 'share', 'swictation', 'gpu-libs');
-  const gpuOrtLib = path.join(gpuLibsDir, 'libonnxruntime.so');
-  if (fs.existsSync(gpuOrtLib)) {
-    log('green', `✓ Found ONNX Runtime in GPU libs: ${gpuOrtLib}`);
-    log('cyan', '  Using multi-architecture GPU library with CUDA support');
-    return gpuOrtLib;
-  }
-
-  // PRIORITY 2: Check npm package library (if we ever bundle it in the future)
+  // CRITICAL: Check npm package library FIRST (GPU-enabled, bundled with package)
+  // This is the bundled library with CUDA support
   const npmOrtLib = path.join(__dirname, 'lib', 'native', 'libonnxruntime.so');
   if (fs.existsSync(npmOrtLib)) {
     log('green', `✓ Found ONNX Runtime (bundled): ${npmOrtLib}`);
@@ -686,9 +677,7 @@ function detectOrtLibrary() {
     return npmOrtLib;
   }
 
-  log('yellow', `⚠️  Warning: GPU-enabled ONNX Runtime not found`);
-  log('yellow', `   Checked: ${gpuOrtLib}`);
-  log('yellow', `   Checked: ${npmOrtLib}`);
+  log('yellow', `⚠️  Warning: GPU-enabled ONNX Runtime not found at ${npmOrtLib}`);
   log('yellow', '   Falling back to system Python installation (may be CPU-only)');
 
 

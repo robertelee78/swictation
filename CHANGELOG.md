@@ -5,10 +5,28 @@ All notable changes to Swictation will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.18] - 2025-11-14
+
+### Fixed
+- **CRITICAL: Missing native libraries in npm package** - Bundle libonnxruntime.so and related libraries
+  - v0.3.15-v0.3.17 accidentally excluded native .so libraries from npm package
+  - Restored libonnxruntime.so (22MB), libsherpa-onnx-c-api.so (3.8MB), and provider libs
+  - Package size increases from 7.8MB to ~17MB (same as v0.3.8)
+  - This was the root cause of "All GPU models failed to load" errors
+
+### Technical Details
+- Added back to package.json files list:
+  - lib/native/libonnxruntime.so
+  - lib/native/libonnxruntime_providers_shared.so
+  - lib/native/libsherpa-onnx-c-api.so
+  - lib/native/libsherpa-onnx-cxx-api.so
+- v0.3.8 had these libraries, but they were accidentally removed in v0.3.15+
+- Without these libraries, detectOrtLibrary() could never find them (neither in GPU libs nor npm package)
+
 ## [0.3.17] - 2025-11-14
 
 ### Fixed
-- **CRITICAL: ONNX Runtime detection failure** - Model test-loading now works on all systems
+- **ONNX Runtime detection order** - Check GPU libs directory first (reverted in v0.3.18)
   - detectOrtLibrary() now checks GPU libs directory FIRST (~/.local/share/swictation/gpu-libs/)
   - Previous version looked in npm package directory first, but ONNX Runtime is downloaded separately as part of multi-arch GPU packages
   - Fixes "GPU-enabled ONNX Runtime not found" error during installation
