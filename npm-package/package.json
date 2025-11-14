@@ -1,6 +1,6 @@
 {
   "name": "swictation",
-  "version": "0.3.14",
+  "version": "0.3.15",
   "description": "Voice-to-text dictation with Secretary Mode (60+ natural language commands), NVIDIA GPU acceleration, and pure Rust performance (Ubuntu 24.04+ required)",
   "keywords": [
     "voice-to-text",
