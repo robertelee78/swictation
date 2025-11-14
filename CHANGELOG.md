@@ -5,6 +5,24 @@ All notable changes to Swictation will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.21] - 2025-11-14
+
+### Fixed
+- **GPU libs package download URL** - Fixed GPU_LIBS_VERSION constant to correctly download gpu-libs-v1.1.1
+  - v0.3.20 had GPU_LIBS_VERSION set to '1.1.0' instead of '1.1.1' in postinstall.js line 583
+  - This caused postinstall to download the old package without the CUDA provider library
+  - Daemon would crash with "cannot open shared object file: libonnxruntime_providers_cuda.so"
+  - Now correctly downloads gpu-libs-v1.1.1 with all 15 libraries including CUDA provider
+
+### Technical Details
+- Updated GPU_LIBS_VERSION constant from '1.1.0' to '1.1.1'
+- Verified gpu-libs-v1.1.1 release assets exist with correct naming (cuda-libs-modern.tar.gz)
+- Tested on RTX A1000 (sm_86) - daemon starts successfully, no crashes
+- All 15 libraries extracted including 330MB libonnxruntime_providers_cuda.so
+
+### Migration Notes
+This is a critical hotfix for v0.3.20. If you installed v0.3.20 and experienced daemon crashes with "libonnxruntime_providers_cuda.so: cannot open shared object file", upgrade to v0.3.21 to resolve the issue.
+
 ## [0.3.20] - 2025-11-14
 
 ### Fixed
