@@ -580,7 +580,7 @@ async function downloadGPULibraries() {
 
   // GPU libs v1.1.0: Multi-architecture CUDA support (sm_50-120)
   // ONNX Runtime 1.23.2, CUDA 12.9, cuDNN 9.15.1
-  const GPU_LIBS_VERSION = '1.1.0';
+  const GPU_LIBS_VERSION = '1.1.1';
   const variant = packageInfo.variant;
   const releaseUrl = `https://github.com/robertelee78/swictation/releases/download/gpu-libs-v${GPU_LIBS_VERSION}/cuda-libs-${variant}.tar.gz`;
   const tmpDir = path.join(os.tmpdir(), 'swictation-gpu-install');
