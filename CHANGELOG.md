@@ -5,6 +5,29 @@ All notable changes to Swictation will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.17] - 2025-11-14
+
+### Fixed
+- **CRITICAL: ONNX Runtime detection failure** - Model test-loading now works on all systems
+  - detectOrtLibrary() now checks GPU libs directory FIRST (~/.local/share/swictation/gpu-libs/)
+  - Previous version looked in npm package directory first, but ONNX Runtime is downloaded separately as part of multi-arch GPU packages
+  - Fixes "GPU-enabled ONNX Runtime not found" error during installation
+  - Fixes model test-loading failures (0.6b-gpu, 1.1b-gpu)
+
+- **Expanded old installation cleanup paths**
+  - Added /usr/lib/node_modules/swictation to cleanup list
+  - Ensures all possible system-wide installations are removed during upgrade
+
+### Technical Details
+- ONNX Runtime library path detection priority:
+  1. GPU libs directory: ~/.local/share/swictation/gpu-libs/libonnxruntime.so (PRIMARY)
+  2. npm package directory: lib/native/libonnxruntime.so (FALLBACK)
+  3. System Python installations: ~/.local/lib/python*/site-packages/onnxruntime/capi/ (LEGACY)
+- This fix is critical - v0.3.16 could not load models due to wrong detection order
+
+### Migration Notes
+This is a hotfix release. If v0.3.16 failed to load models during installation, upgrading to v0.3.17 will resolve the issue.
+
 ## [0.3.16] - 2025-11-14
 
 ### Added

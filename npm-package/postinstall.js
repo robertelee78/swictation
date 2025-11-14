@@ -159,6 +159,7 @@ function cleanupOldNpmInstallations() {
   const oldInstallPaths = [
     '/usr/local/lib/node_modules/swictation',
     '/usr/local/nodejs/lib/node_modules/swictation',
+    '/usr/lib/node_modules/swictation',
   ];
 
   let removedAny = false;
@@ -667,17 +668,29 @@ async function downloadGPULibraries() {
 function detectOrtLibrary() {
   log('cyan', '\n🔍 Detecting ONNX Runtime library path...');
 
-  // CRITICAL: Check npm package library FIRST (GPU-enabled)
-  // This is the bundled library with CUDA support
+  // PRIORITY 1: Check GPU libs directory (downloaded separately as part of multi-arch packages)
+  // The ONNX Runtime library is included in the GPU architecture packages
+  const gpuLibsDir = path.join(os.homedir(), '.local', 'share', 'swictation', 'gpu-libs');
+  const gpuOrtLib = path.join(gpuLibsDir, 'libonnxruntime.so');
+  if (fs.existsSync(gpuOrtLib)) {
+    log('green', `✓ Found ONNX Runtime in GPU libs: ${gpuOrtLib}`);
+    log('cyan', '  Using multi-architecture GPU library with CUDA support');
+    return gpuOrtLib;
+  }
+
+  // PRIORITY 2: Check npm package library (if we ever bundle it in the future)
   const npmOrtLib = path.join(__dirname, 'lib', 'native', 'libonnxruntime.so');
   if (fs.existsSync(npmOrtLib)) {
-    log('green', `✓ Found ONNX Runtime (GPU-enabled): ${npmOrtLib}`);
+    log('green', `✓ Found ONNX Runtime (bundled): ${npmOrtLib}`);
     log('cyan', '  Using bundled GPU-enabled library with CUDA provider support');
     return npmOrtLib;
-  } else {
-    log('yellow', `⚠️  Warning: GPU-enabled ONNX Runtime not found at ${npmOrtLib}`);
-    log('yellow', '   Falling back to system Python installation (may be CPU-only)');
   }
+
+  log('yellow', `⚠️  Warning: GPU-enabled ONNX Runtime not found`);
+  log('yellow', `   Checked: ${gpuOrtLib}`);
+  log('yellow', `   Checked: ${npmOrtLib}`);
+  log('yellow', '   Falling back to system Python installation (may be CPU-only)');
+
 
   try {
     // Try to find ONNX Runtime through Python (fallback, usually CPU-only)
