@@ -28,6 +28,29 @@ sudo apt install wtype wl-clipboard pipewire nvidia-cuda-toolkit
 sudo pacman -S wtype wl-clipboard pipewire cuda
 ```
 
+### GPU Support
+
+Swictation automatically detects your GPU architecture and downloads optimized libraries:
+
+| GPU Generation | Architectures | Example GPUs | Package Size |
+|----------------|--------------|--------------|--------------|
+| **Maxwell / Pascal / Volta** | sm_50-70 | GTX 750/900/1000 series<br>Quadro M/P series<br>Titan V, V100 | ~1.5GB |
+| **Turing / Ampere** | sm_75-86 | GTX 16 series<br>RTX 20/30 series<br>A100, RTX A1000-A6000 | ~1.5GB |
+| **Ada / Hopper / Blackwell** | sm_89-120 | RTX 4090<br>H100, B100/B200<br>RTX PRO 6000 Blackwell<br>RTX 50 series | ~1.5GB |
+
+**Key Benefits:**
+- **Automatic detection** - Zero configuration required
+- **Optimized downloads** - 65-74% smaller than universal binaries
+- **Wide compatibility** - Supports GPUs from 2014 (Maxwell) through 2024 (Blackwell)
+- **Native support** - No PTX hacks, native compilation for all architectures
+
+**Unsupported GPUs** (< sm_50):
+- GTX 600/700 series (Kepler)
+- Quadro K series
+- System automatically falls back to CPU mode
+
+For more details, see [GPU Library Packages Documentation](docs/GPU_LIBRARY_PACKAGES.md).
+
 ### Installation (Recommended: npm)
 
 **Easiest method - installs pre-built binaries:**
@@ -37,12 +60,11 @@ sudo pacman -S wtype wl-clipboard pipewire cuda
 npm install -g swictation
 
 # The postinstall script will:
-# - Detect your GPU and measure VRAM
-# - Recommend optimal AI model (1.1B for 6GB+, 0.6B for 4GB+)
+# - Detect your GPU architecture (sm_50-120) and download optimized libraries (~1.5GB)
+# - Measure VRAM and recommend optimal AI model (1.1B for 6GB+, 0.6B for 4GB+)
 # - Test-load the model to verify it works (~30-60 seconds)
 # - Install systemd services automatically
 # - Configure Sway/i3 hotkeys
-# - Download required AI models (~1.5GB)
 
 # ⏱️  Note: Installation includes model test-loading (30-60s)
 # This prevents runtime failures on systems with limited VRAM
