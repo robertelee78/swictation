@@ -72,13 +72,10 @@ npm install -g swictation --foreground-scripts
 # - Configure Sway/i3 hotkeys
 
 # ⏱️  Note: Installation includes model test-loading (30-60s)
-# This prevents runtime failures on systems with limited VRAM
-
-# For CI/automation (skip test-loading):
-SKIP_MODEL_TEST=1 npm install -g swictation --foreground-scripts
+# This verifies GPU/VRAM compatibility before first use
 
 # Alternative: Install to system-wide location (requires sudo):
-sudo npm install -g swictation --foreground-scripts --unsafe-perm
+# sudo npm install -g swictation --foreground-scripts --unsafe-perm
 
 # Start the daemon
 swictation start
