@@ -237,13 +237,106 @@ function detectNvidiaGPU() {
 }
 
 /**
+ * Detect GPU compute capability (sm_XX architecture)
+ * Returns { hasGPU: boolean, computeCap: string, smVersion: number }
+ * @returns {object} GPU compute capability info
+ */
+function detectGPUComputeCapability() {
+  const result = {
+    hasGPU: false,
+    computeCap: null,  // e.g., "5.2", "8.6", "12.0"
+    smVersion: null,   // e.g., 52, 86, 120
+    gpuName: null
+  };
+
+  if (!detectNvidiaGPU()) {
+    return result;
+  }
+
+  result.hasGPU = true;
+
+  try {
+    // Get compute capability and GPU name
+    const output = execSync(
+      'nvidia-smi --query-gpu=compute_cap,name --format=csv,noheader',
+      { encoding: 'utf8' }
+    ).trim();
+
+    const [computeCap, gpuName] = output.split(',').map(s => s.trim());
+    result.computeCap = computeCap;
+    result.gpuName = gpuName;
+
+    // Convert "5.2" -> 52, "8.6" -> 86, "12.0" -> 120
+    const [major, minor] = computeCap.split('.').map(n => parseInt(n));
+    result.smVersion = major * 10 + minor;
+
+    log('green', `✓ Detected GPU: ${gpuName}`);
+    log('cyan', `  Compute Capability: ${computeCap} (sm_${result.smVersion})`);
+
+  } catch (err) {
+    log('yellow', `⚠️  Could not detect compute capability: ${err.message}`);
+  }
+
+  return result;
+}
+
+/**
+ * Select appropriate GPU library package variant based on compute capability
+ * @param {number} smVersion - Compute capability as integer (e.g., 52, 86, 120)
+ * @returns {object} Package variant info
+ */
+function selectGPUPackageVariant(smVersion) {
+  // Architecture mapping based on RELEASE_NOTES.md
+  if (smVersion >= 50 && smVersion <= 70) {
+    // sm_50-70: Maxwell, Pascal, Volta (2014-2017)
+    return {
+      variant: 'legacy',
+      architectures: 'sm_50-70',
+      description: 'Maxwell, Pascal, Volta GPUs (2014-2017)',
+      examples: 'GTX 750/900/1000, Quadro M/P series, Titan V, V100'
+    };
+  } else if (smVersion >= 75 && smVersion <= 86) {
+    // sm_75-86: Turing, Ampere (2018-2021)
+    return {
+      variant: 'modern',
+      architectures: 'sm_75-86',
+      description: 'Turing, Ampere GPUs (2018-2021)',
+      examples: 'GTX 16/RTX 20/30 series, A100, RTX A1000-A6000'
+    };
+  } else if (smVersion >= 89 && smVersion <= 121) {
+    // sm_89-120: Ada Lovelace, Hopper, Blackwell (2022-2024)
+    return {
+      variant: 'latest',
+      architectures: 'sm_89-120',
+      description: 'Ada Lovelace, Hopper, Blackwell GPUs (2022-2024)',
+      examples: 'RTX 4090, H100, B100/B200, RTX PRO 6000 Blackwell, RTX 50 series'
+    };
+  } else {
+    // Unsupported architecture
+    return {
+      variant: null,
+      architectures: `sm_${smVersion}`,
+      description: 'Unsupported GPU architecture',
+      examples: 'GPU too old (<sm_50) or unknown architecture'
+    };
+  }
+}
+
+/**
  * Detect CUDA and cuDNN library paths dynamically
  * Returns an array of directories to include in LD_LIBRARY_PATH
+ * Now includes ~/.local/share/swictation/gpu-libs as PRIMARY source
  */
 function detectCudaLibraryPaths() {
   const paths = [];
 
-  // Check common CUDA installation directories
+  // PRIORITY 1: User's GPU libs directory (our multi-architecture packages)
+  const gpuLibsDir = path.join(os.homedir(), '.local', 'share', 'swictation', 'gpu-libs');
+  if (fs.existsSync(gpuLibsDir)) {
+    paths.push(gpuLibsDir);
+  }
+
+  // PRIORITY 2: Check common CUDA installation directories (system-wide fallback)
   const cudaDirs = [
     '/usr/local/cuda/lib64',
     '/usr/local/cuda/lib',
@@ -255,7 +348,7 @@ function detectCudaLibraryPaths() {
     '/usr/local/cuda-12/lib',
   ];
 
-  // Find directories that contain cuDNN
+  // Find directories that contain cuDNN or CUDA runtime
   for (const dir of cudaDirs) {
     try {
       if (fs.existsSync(dir)) {
@@ -315,43 +408,119 @@ async function downloadGPULibraries() {
   }
 
   log('green', '\n✓ NVIDIA GPU detected!');
-  log('cyan', '📦 Downloading GPU acceleration libraries...');
+  log('cyan', '📦 Detecting GPU architecture and downloading optimized libraries...\n');
 
-  // GPU libs are versioned independently from npm package
-  // Only update this version when ONNX Runtime or CUDA providers change
-  const GPU_LIBS_VERSION = '1.0.1'; // ONNX Runtime 1.19.0, CUDA 12.x, Sherpa ONNX (complete set)
-  const releaseUrl = `https://github.com/robertelee78/swictation/releases/download/gpu-libs-v${GPU_LIBS_VERSION}/swictation-gpu-libs.tar.gz`;
+  // Detect GPU compute capability
+  const gpuInfo = detectGPUComputeCapability();
+
+  if (!gpuInfo.smVersion) {
+    log('yellow', '⚠️  Could not detect GPU compute capability');
+    log('cyan', '   Skipping GPU library download');
+    log('cyan', '   You can manually download from:');
+    log('cyan', '   https://github.com/robertelee78/swictation/releases/tag/gpu-libs-v1.1.0');
+    return;
+  }
+
+  // Select appropriate package variant
+  const packageInfo = selectGPUPackageVariant(gpuInfo.smVersion);
+
+  if (!packageInfo.variant) {
+    log('yellow', `⚠️  GPU architecture ${packageInfo.architectures} is not supported`);
+    log('cyan', `   ${packageInfo.description}`);
+    log('cyan', '   Supported architectures: sm_50 through sm_121');
+    log('cyan', '   Your GPU may be too old or require a newer ONNX Runtime build');
+    return;
+  }
+
+  log('cyan', `📦 Selected Package: ${packageInfo.variant.toUpperCase()}`);
+  log('cyan', `   Architectures: ${packageInfo.architectures}`);
+  log('cyan', `   Description: ${packageInfo.description}`);
+  log('cyan', `   Examples: ${packageInfo.examples}\n`);
+
+  // GPU libs v1.1.0: Multi-architecture CUDA support (sm_50-120)
+  // ONNX Runtime 1.23.2, CUDA 12.9, cuDNN 9.15.1
+  const GPU_LIBS_VERSION = '1.1.0';
+  const variant = packageInfo.variant;
+  const releaseUrl = `https://github.com/robertelee78/swictation/releases/download/gpu-libs-v${GPU_LIBS_VERSION}/cuda-libs-${variant}.tar.gz`;
   const tmpDir = path.join(os.tmpdir(), 'swictation-gpu-install');
-  const tarPath = path.join(tmpDir, 'gpu-libs.tar.gz');
-  const nativeDir = path.join(__dirname, 'lib', 'native');
+  const tarPath = path.join(tmpDir, `cuda-libs-${variant}.tar.gz`);
+
+  // Extract to user's home directory for GPU libs (shared across npm installs)
+  const gpuLibsDir = path.join(os.homedir(), '.local', 'share', 'swictation', 'gpu-libs');
 
   try {
-    // Create temp directory
+    // Create directories
     if (!fs.existsSync(tmpDir)) {
       fs.mkdirSync(tmpDir, { recursive: true });
     }
+    if (!fs.existsSync(gpuLibsDir)) {
+      fs.mkdirSync(gpuLibsDir, { recursive: true });
+    }
 
     // Download tarball
-    log('cyan', `  Downloading from: ${releaseUrl}`);
+    log('cyan', `  Downloading ${variant} package...`);
+    log('cyan', `  URL: ${releaseUrl}`);
     await downloadFile(releaseUrl, tarPath);
-    log('green', '  ✓ Downloaded GPU libraries');
+    log('green', `  ✓ Downloaded ${variant} package (~1.5GB)`);
 
-    // Extract tarball
-    log('cyan', '  Extracting...');
-    execSync(`tar -xzf "${tarPath}" -C "${nativeDir}"`, { stdio: 'inherit' });
-    log('green', '  ✓ Extracted GPU libraries');
+    // Extract tarball to gpu-libs directory
+    log('cyan', '  Extracting libraries...');
+    execSync(`tar -xzf "${tarPath}" -C "${tmpDir}"`, { stdio: 'inherit' });
+
+    // Move libraries from extracted ${variant}/libs/ to gpu-libs directory
+    const extractedLibsDir = path.join(tmpDir, variant, 'libs');
+    if (fs.existsSync(extractedLibsDir)) {
+      const libFiles = fs.readdirSync(extractedLibsDir);
+      for (const file of libFiles) {
+        const srcPath = path.join(extractedLibsDir, file);
+        const destPath = path.join(gpuLibsDir, file);
+        fs.copyFileSync(srcPath, destPath);
+      }
+      log('green', `  ✓ Extracted ${libFiles.length} libraries to ${gpuLibsDir}`);
+    } else {
+      throw new Error(`Expected directory not found: ${extractedLibsDir}`);
+    }
 
     // Cleanup
     fs.unlinkSync(tarPath);
-    fs.rmdirSync(tmpDir);
+    execSync(`rm -rf "${path.join(tmpDir, variant)}"`, { stdio: 'ignore' });
 
-    log('green', '✓ GPU acceleration enabled!');
-    log('cyan', '  Your system will use CUDA for faster transcription');
+    log('green', '\n✅ GPU acceleration enabled!');
+    log('cyan', `   Architecture: ${packageInfo.architectures}`);
+    log('cyan', `   Libraries: ${gpuLibsDir}`);
+    log('cyan', '   Your system will use CUDA for faster transcription\n');
+
+    // Save GPU package info for systemd service generation
+    const configDir = path.join(os.homedir(), '.config', 'swictation');
+    const gpuPackageInfoPath = path.join(configDir, 'gpu-package-info.json');
+
+    const packageMetadata = {
+      variant: packageInfo.variant,
+      architectures: packageInfo.architectures,
+      smVersion: gpuInfo.smVersion,
+      computeCap: gpuInfo.computeCap,
+      gpuName: gpuInfo.gpuName,
+      version: GPU_LIBS_VERSION,
+      libsPath: gpuLibsDir,
+      installedAt: new Date().toISOString()
+    };
+
+    try {
+      fs.writeFileSync(gpuPackageInfoPath, JSON.stringify(packageMetadata, null, 2));
+      log('green', `   ✓ Saved package metadata to ${gpuPackageInfoPath}`);
+    } catch (err) {
+      log('yellow', `   ⚠️  Could not save package metadata: ${err.message}`);
+    }
+
   } catch (err) {
-    log('yellow', `\n⚠ Failed to download GPU libraries: ${err.message}`);
-    log('cyan', '  Continuing with CPU-only mode');
-    log('cyan', '  You can manually download from:');
-    log('cyan', `  ${releaseUrl}`);
+    log('yellow', `\n⚠️  Failed to download GPU libraries: ${err.message}`);
+    log('cyan', '   Continuing with CPU-only mode');
+    log('cyan', '   You can manually download from:');
+    log('cyan', `   ${releaseUrl}`);
+    log('cyan', '\n   Manual installation:');
+    log('cyan', `   1. Download: curl -L -o /tmp/cuda-libs-${variant}.tar.gz ${releaseUrl}`);
+    log('cyan', `   2. Extract: tar -xzf /tmp/cuda-libs-${variant}.tar.gz -C /tmp`);
+    log('cyan', `   3. Install: cp /tmp/${variant}/libs/*.so ${gpuLibsDir}/`);
   }
 }
 

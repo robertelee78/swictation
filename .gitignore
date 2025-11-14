@@ -275,3 +275,4 @@ node_modules/
 *.tar.gz
 *.zip
 swictation-gpu-libs.tar.gz
+docker/onnxruntime-builder/output/
