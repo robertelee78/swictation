@@ -56,8 +56,13 @@ For more details, see [GPU Library Packages Documentation](docs/GPU_LIBRARY_PACK
 **Easiest method - installs pre-built binaries:**
 
 ```bash
+# One-time npm configuration (avoids sudo requirement)
+echo "prefix=$HOME/.npm-global" > ~/.npmrc
+export PATH="$HOME/.npm-global/bin:$PATH"
+echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> ~/.profile
+
 # Install globally (gets latest version)
-npm install -g swictation
+npm install -g swictation --foreground-scripts
 
 # The postinstall script will:
 # - Detect your GPU architecture (sm_50-120) and download optimized libraries (~1.5GB)
@@ -70,7 +75,10 @@ npm install -g swictation
 # This prevents runtime failures on systems with limited VRAM
 
 # For CI/automation (skip test-loading):
-SKIP_MODEL_TEST=1 npm install -g swictation
+SKIP_MODEL_TEST=1 npm install -g swictation --foreground-scripts
+
+# Alternative: Install to system-wide location (requires sudo):
+sudo npm install -g swictation --foreground-scripts --unsafe-perm
 
 # Start the daemon
 swictation start
