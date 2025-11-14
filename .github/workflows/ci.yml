@@ -110,7 +110,7 @@ jobs:
         strip target/release/swictation-daemon
 
     - name: Upload daemon artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: swictation-daemon-linux-x64
         path: rust-crates/target/release/swictation-daemon
