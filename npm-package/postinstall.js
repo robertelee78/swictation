@@ -65,6 +65,124 @@ function checkPlatform() {
  * Phase 1: Clean up old/conflicting service files from previous installations
  * This prevents conflicts between old Python-based services and new Node.js services
  */
+/**
+ * Stop currently running services before upgrade to prevent CUDA state corruption
+ * This must run BEFORE any file modifications happen
+ */
+async function stopExistingServices() {
+  log('cyan', '\n🛑 Stopping currently running services...');
+
+  let stopped = false;
+
+  try {
+    // Method 1: Try using swictation CLI if available
+    try {
+      execSync('which swictation 2>/dev/null', { stdio: 'ignore' });
+      execSync('swictation stop 2>/dev/null', { stdio: 'ignore' });
+      log('green', '✓ Stopped swictation services via CLI');
+      stopped = true;
+      // Give services time to fully stop and release CUDA
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    } catch (cliErr) {
+      // swictation CLI not available, try systemctl
+      try {
+        execSync('systemctl --user stop swictation-daemon.service 2>/dev/null', { stdio: 'ignore' });
+        execSync('systemctl --user stop swictation-ui.service 2>/dev/null', { stdio: 'ignore' });
+        log('green', '✓ Stopped services via systemctl');
+        stopped = true;
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      } catch (systemctlErr) {
+        log('cyan', 'ℹ No existing services to stop');
+      }
+    }
+  } catch (err) {
+    log('cyan', 'ℹ No existing services to stop');
+  }
+
+  return stopped;
+}
+
+/**
+ * Clean up old ONNX Runtime libraries from Python pip installations
+ * These cause version conflicts (1.20.1 vs 1.22.x)
+ */
+function cleanupOldOnnxRuntime() {
+  log('cyan', '\n🧹 Checking for old ONNX Runtime libraries...');
+
+  try {
+    const homeDir = os.homedir();
+    const pythonLibDirs = [
+      path.join(homeDir, '.local', 'lib', 'python3.13', 'site-packages', 'onnxruntime'),
+      path.join(homeDir, '.local', 'lib', 'python3.12', 'site-packages', 'onnxruntime'),
+      path.join(homeDir, '.local', 'lib', 'python3.11', 'site-packages', 'onnxruntime'),
+      path.join(homeDir, '.local', 'lib', 'python3.10', 'site-packages', 'onnxruntime'),
+    ];
+
+    let removedAny = false;
+
+    for (const ortDir of pythonLibDirs) {
+      if (fs.existsSync(ortDir)) {
+        try {
+          // Check if it's an old version that conflicts
+          const capiDir = path.join(ortDir, 'capi');
+          if (fs.existsSync(capiDir)) {
+            const ortFiles = fs.readdirSync(capiDir).filter(f => f.includes('libonnxruntime.so'));
+            if (ortFiles.length > 0 && ortFiles[0].includes('1.20')) {
+              log('yellow', `⚠️  Found old ONNX Runtime 1.20.x at ${ortDir}`);
+              log('cyan', `   Removing to prevent version conflicts...`);
+              execSync(`rm -rf "${ortDir}"`, { stdio: 'ignore' });
+              log('green', `✓ Removed old ONNX Runtime installation`);
+              removedAny = true;
+            }
+          }
+        } catch (err) {
+          // Can't determine version, leave it alone
+        }
+      }
+    }
+
+    if (!removedAny) {
+      log('green', '✓ No conflicting ONNX Runtime installations found');
+    }
+  } catch (err) {
+    log('yellow', `⚠️  Error checking ONNX Runtime installations: ${err.message}`);
+  }
+}
+
+/**
+ * Remove old npm installations that conflict with new installation
+ * Handles both system-wide and nvm installations
+ */
+function cleanupOldNpmInstallations() {
+  log('cyan', '\n🧹 Checking for old npm installations...');
+
+  const oldInstallPaths = [
+    '/usr/local/lib/node_modules/swictation',
+    '/usr/local/nodejs/lib/node_modules/swictation',
+  ];
+
+  let removedAny = false;
+
+  for (const oldPath of oldInstallPaths) {
+    if (fs.existsSync(oldPath) && oldPath !== __dirname) {
+      log('yellow', `⚠️  Found old npm installation at ${oldPath}`);
+      log('cyan', `   Removing to prevent conflicts...`);
+      try {
+        execSync(`sudo rm -rf "${oldPath}" 2>/dev/null || rm -rf "${oldPath}"`, { stdio: 'ignore' });
+        log('green', `✓ Removed old installation`);
+        removedAny = true;
+      } catch (err) {
+        log('yellow', `⚠️  Could not remove ${oldPath}: ${err.message}`);
+        log('yellow', `   You may need to run: sudo rm -rf "${oldPath}"`);
+      }
+    }
+  }
+
+  if (!removedAny) {
+    log('green', '✓ No conflicting npm installations found');
+  }
+}
+
 async function cleanOldServices() {
   log('cyan', '\n🧹 Checking for old service files...');
 
@@ -327,6 +445,28 @@ function selectGPUPackageVariant(smVersion) {
  * Returns an array of directories to include in LD_LIBRARY_PATH
  * Now includes ~/.local/share/swictation/gpu-libs as PRIMARY source
  */
+/**
+ * Detect actual npm installation path (handles nvm vs system-wide)
+ * This is critical for service files to find the correct libraries
+ */
+function detectActualNpmInstallPath() {
+  // __dirname is where this script is running from
+  // For system-wide: /usr/local/lib/node_modules/swictation
+  // For nvm: /home/user/.nvm/versions/node/vX.Y.Z/lib/node_modules/swictation
+
+  // Return the actual installation directory
+  return __dirname;
+}
+
+/**
+ * Detect where npm global packages are installed
+ * This helps find the native library path for LD_LIBRARY_PATH
+ */
+function detectNpmNativeLibPath() {
+  const installDir = detectActualNpmInstallPath();
+  return path.join(installDir, 'lib', 'native');
+}
+
 function detectCudaLibraryPaths() {
   const paths = [];
 
@@ -647,11 +787,16 @@ function generateSystemdService(ortLibPath) {
 
       // Detect CUDA library paths dynamically
       const cudaPaths = detectCudaLibraryPaths();
-      const nativeLibPath = path.join(installDir, 'lib', 'native');
+
+      // CRITICAL: Detect actual npm installation path (nvm vs system-wide)
+      // This ensures LD_LIBRARY_PATH points to the right location
+      const nativeLibPath = detectNpmNativeLibPath();
 
       // Build LD_LIBRARY_PATH with detected CUDA paths + native libs
       const ldLibraryPath = [...cudaPaths, nativeLibPath].join(':');
       template = template.replace(/__LD_LIBRARY_PATH__/g, ldLibraryPath);
+
+      log('cyan', `  Using npm native libs: ${nativeLibPath}`);
 
       if (cudaPaths.length > 0) {
         log('cyan', `  Detected ${cudaPaths.length} CUDA library path(s):`);
@@ -837,23 +982,28 @@ function detectGPUVRAM() {
     }
 
     // Intelligent model recommendation based on VRAM
-    // Based on empirical data from the analysis:
-    // 0.6B model: ~3.5GB VRAM (fits in 4GB with headroom)
-    // 1.1B model: ~6GB VRAM (needs at least 8GB for safety)
+    // Based on empirical data from real-world testing:
+    // 0.6B model: ~3.5GB VRAM (fits in 4GB with headroom) - VERIFIED ON RTX A1000
+    // 1.1B model: ~6GB VRAM (needs at least 6GB for safety)
     if (gpuInfo.vramMB >= 6000) {
       // 6GB+ VRAM: Can safely run 1.1B model
-      gpuInfo.recommendedModel = '1.1b';
+      gpuInfo.recommendedModel = '1.1b-gpu';
       log('green', `  ✓ Sufficient VRAM for 1.1B model (best quality)`);
-    } else if (gpuInfo.vramMB >= 4000) {
-      // 4-6GB VRAM: Run 0.6B model (proven safe on 4GB)
-      gpuInfo.recommendedModel = '0.6b';
-      log('yellow', `  ⚠️  Limited VRAM - Recommending 0.6B model`);
+    } else if (gpuInfo.vramMB >= 3500) {
+      // 3.5-6GB VRAM: Run 0.6B model (proven safe on 4GB)
+      // This includes exactly 4GB GPUs like RTX A1000
+      gpuInfo.recommendedModel = '0.6b-gpu';
+      if (gpuInfo.vramMB >= 4000) {
+        log('green', `  ✓ VRAM sufficient for 0.6B GPU model`);
+      } else {
+        log('yellow', `  ⚠️  Limited VRAM - Recommending 0.6B model`);
+      }
       log('cyan', `     (1.1B model requires ~6GB VRAM)`);
     } else {
-      // <4GB VRAM: Too little for GPU acceleration
+      // <3.5GB VRAM: Too little for GPU acceleration
       gpuInfo.recommendedModel = 'cpu-only';
       log('yellow', `  ⚠️  Insufficient VRAM for GPU models`);
-      log('cyan', `     GPU models require minimum 4GB VRAM`);
+      log('cyan', `     GPU models require minimum 3.5GB VRAM`);
       log('cyan', `     Falling back to CPU-only mode`);
     }
 
@@ -1186,9 +1336,19 @@ async function main() {
     ensureBinaryPermissions();
     createDirectories();
 
+    // Phase 0: Stop running services BEFORE any modifications
+    // This prevents CUDA state corruption and file conflicts
+    log('cyan', '\n═══ Phase 0: Stop Running Services ═══');
+    await stopExistingServices();
+
     // Phase 1: Clean up old/conflicting service files
     log('cyan', '\n═══ Phase 1: Service Cleanup ═══');
     await cleanOldServices();
+
+    // Phase 1.5: Clean up conflicting installations
+    log('cyan', '\n═══ Phase 1.5: Cleanup Old Installations ═══');
+    cleanupOldOnnxRuntime();
+    cleanupOldNpmInstallations();
 
     // Phase 2: Handle config file migration
     log('cyan', '\n═══ Phase 2: Configuration ═══');

@@ -5,6 +5,49 @@ All notable changes to Swictation will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.16] - 2025-11-14
+
+### Added
+- **Automatic service shutdown before npm install/upgrade** - Prevents CUDA state corruption (error 999)
+  - Stops existing swictation-daemon and swictation-ui services before any file modifications
+  - 2-second grace period for services to release CUDA driver cleanly
+  - Prevents "All GPU models failed to load" errors on upgrades
+
+### Fixed
+- **Upgrade installation failures on systems with existing installations**
+  - Automatically removes old ONNX Runtime 1.20.x from Python site-packages (version conflicts with bundled 1.22.x)
+  - Cleans up old system-wide npm installations that conflict with nvm installations
+  - Auto-detects actual npm installation path (nvm vs system-wide) for service file generation
+  - Fixed LD_LIBRARY_PATH in systemd service files to match actual npm installation location
+  - Fixed ORT_DYLIB_PATH to use bundled library instead of old Python installations
+
+- **4GB VRAM GPU model selection** - Now correctly recommends 0.6b-gpu instead of cpu-only
+  - RTX A1000 (4GB VRAM) now gets 0.6b-gpu recommendation (verified working)
+  - Adjusted VRAM threshold from 4GB to 3.5GB for GPU models
+  - Based on real-world testing: 0.6b-gpu uses ~3.5GB VRAM (safe on 4GB GPUs)
+
+### Changed
+- **Postinstall script reorganized into phases**
+  - Phase 0: Stop running services (new)
+  - Phase 1: Clean up old service files
+  - Phase 1.5: Clean up old installations (new)
+  - Phase 2: Configuration migration
+  - Phase 3: GPU detection and library download
+  - Phase 3.5: Model verification
+  - Phase 4: Service installation
+
+### Technical Details
+- Service shutdown uses both CLI (`swictation stop`) and systemctl fallback
+- ONNX Runtime cleanup targets Python 3.10-3.13 site-packages directories
+- npm installation detection handles both `/usr/local/lib/node_modules` and nvm paths
+- Dynamic path detection ensures service files always point to actual installation
+
+### Migration Notes
+When upgrading from v0.3.15 or earlier:
+- Services will be automatically stopped before upgrade (prevents CUDA corruption)
+- Old conflicting installations will be cleaned up automatically
+- No manual intervention required - upgrades now work smoothly
+
 ## [0.3.15] - 2025-11-14
 
 ### Added
