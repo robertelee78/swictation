@@ -794,6 +794,57 @@ external/midstream/         # Text transformation (Git submodule)
 
 ---
 
+## GPU Library Package System
+
+### Multi-Architecture Support
+
+To support all NVIDIA GPUs from Maxwell (2014) through Blackwell (2024+), swictation uses a **multi-architecture GPU library system** with automatic runtime detection.
+
+**Problem:** A single CUDA provider library supporting all compute capabilities (sm_50-120) would be 500-700MB.
+
+**Solution:** Three optimized packages downloaded automatically based on GPU detection:
+
+| Package | Compute Caps | Target GPUs | Size | User Base |
+|---------|-------------|-------------|------|-----------|
+| **LEGACY** | sm_50-70 | Maxwell/Pascal/Volta<br>GTX 900/1000, Quadro M/P, Titan V | ~1.5GB | ~15% |
+| **MODERN** | sm_75-86 | Turing/Ampere<br>GTX 16, RTX 20/30, A100, RTX A-series | ~1.5GB | ~70% |
+| **LATEST** | sm_89-120 | Ada/Hopper/Blackwell<br>RTX 4090, H100, B100/B200, RTX 50 | ~1.5GB | ~15% |
+
+### Automatic Installation
+
+During `npm install`, the postinstall script:
+1. Detects GPU via `nvidia-smi --query-gpu=compute_cap`
+2. Maps compute capability to package variant
+3. Downloads from GitHub release `gpu-libs-v1.1.1`
+4. Extracts to `~/.local/share/swictation/gpu-libs/`
+
+**Benefits:**
+- ✅ 65-74% size reduction per user (downloads only what's needed)
+- ✅ Full GPU support (sm_50 through sm_120)
+- ✅ Zero user configuration
+- ✅ Architecture-specific optimized kernels
+
+### Package Contents
+
+Each package contains:
+- **ONNX Runtime 1.23.2** (3 libraries: core, CUDA provider, shared)
+- **CUDA 12.9 Runtime** (6 libraries: cublas, cublasLt, cudart, cufft, curand, nvrtc)
+- **cuDNN 9.15.1** (8 libraries: core, adv, cnn, engines, graph, heuristic, ops)
+
+**Total uncompressed:** ~2.3GB per package (~1.5GB compressed)
+
+**Why CUDA 12.9?** Last version supporting sm_50 (Maxwell 2014) while providing native sm_120 (Blackwell 2024) support.
+
+### Build System
+
+Built using Docker with reproducible environment:
+- Base: NVIDIA CUDA 12.9.0-devel-ubuntu22.04
+- Parallel builds for all 3 architectures (~51 minutes each on 32-thread system)
+- Verification: `cuobjdump` confirms all architectures present
+- Build location: `docker/onnxruntime-builder/`
+
+---
+
 ## Scaling Considerations
 
 ### Current Limitations
