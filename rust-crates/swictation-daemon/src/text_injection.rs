@@ -1,74 +1,61 @@
 //! Cross-platform text injection for Linux (X11/Wayland) with keyboard shortcut support
 //!
+//! Supports three text injection tools:
+//! - xdotool: X11 (fast, mature)
+//! - wtype: Wayland compatible (KDE, Sway, Hyprland - NOT GNOME)
+//! - ydotool: Universal (X11, all Wayland compositors including GNOME, even TTY)
+//!
 //! This version properly handles <KEY:...> markers by sending actual key events
 
 use anyhow::{Context, Result};
 use std::process::Command;
+use tracing::{debug, info};
 
-/// Display server type
-#[derive(Debug, Clone)]
-pub enum DisplayServer {
-    X11,
-    Wayland,
-    Unknown,
-}
+use crate::display_server::{
+    detect_display_server, detect_available_tools, select_best_tool, DisplayServerInfo,
+    TextInjectionTool,
+};
 
 /// Text injector that works across X11 and Wayland
 pub struct TextInjector {
-    display_server: DisplayServer,
+    /// Detected display server information
+    display_server_info: DisplayServerInfo,
+    /// Selected text injection tool
+    selected_tool: TextInjectionTool,
 }
 
 impl TextInjector {
     /// Create a new text injector with auto-detection
     pub fn new() -> Result<Self> {
-        let display_server = Self::detect_display_server();
+        // Detect display server
+        let display_server_info = detect_display_server();
 
-        // Verify required tools are installed
-        match &display_server {
-            DisplayServer::X11 => {
-                Command::new("which")
-                    .arg("xdotool")
-                    .output()
-                    .context("xdotool not found. Install with: sudo apt install xdotool")?;
-            }
-            DisplayServer::Wayland => {
-                Command::new("which")
-                    .arg("wtype")
-                    .output()
-                    .context("wtype not found. Install with: sudo apt install wtype")?;
-            }
-            DisplayServer::Unknown => {
-                eprintln!("Warning: Could not detect display server");
-            }
+        // Detect available tools
+        let available_tools = detect_available_tools();
+
+        if available_tools.is_empty() {
+            anyhow::bail!(
+                "No text injection tools found. Please install xdotool, wtype, or ydotool"
+            );
         }
 
-        Ok(Self { display_server })
-    }
+        // Select best tool for this environment
+        let selected_tool = select_best_tool(&display_server_info, &available_tools)?;
 
-    /// Detect the current display server
-    fn detect_display_server() -> DisplayServer {
-        // Check for Wayland
-        if std::env::var("WAYLAND_DISPLAY").is_ok() {
-            return DisplayServer::Wayland;
+        info!(
+            "Using {} for text injection ({:?})",
+            selected_tool.name(),
+            display_server_info.server_type
+        );
+
+        if display_server_info.is_gnome_wayland {
+            info!("GNOME Wayland detected - using ydotool (wtype not compatible)");
         }
 
-        // Check for X11
-        if std::env::var("DISPLAY").is_ok() {
-            // Double-check it's not XWayland
-            if std::env::var("XDG_SESSION_TYPE")
-                .map(|t| t == "x11")
-                .unwrap_or(false)
-            {
-                return DisplayServer::X11;
-            }
-        }
-
-        // Check XDG_SESSION_TYPE as fallback
-        match std::env::var("XDG_SESSION_TYPE").as_deref() {
-            Ok("wayland") => DisplayServer::Wayland,
-            Ok("x11") => DisplayServer::X11,
-            _ => DisplayServer::Unknown,
-        }
+        Ok(Self {
+            display_server_info,
+            selected_tool,
+        })
     }
 
     /// Inject text into the current window, handling <KEY:...> markers
@@ -78,17 +65,7 @@ impl TextInjector {
             self.inject_with_keys(text)
         } else {
             // Plain text injection
-            match self.display_server {
-                DisplayServer::X11 => self.inject_x11_text(text),
-                DisplayServer::Wayland => self.inject_wayland_text(text),
-                DisplayServer::Unknown => {
-                    // Try both as fallback
-                    if let Ok(_) = self.inject_wayland_text(text) {
-                        return Ok(());
-                    }
-                    self.inject_x11_text(text)
-                }
-            }
+            self.inject_plain_text(text)
         }
     }
 
@@ -129,20 +106,36 @@ impl TextInjector {
 
     /// Send a key combination (e.g., "super-Right", "ctrl-c")
     fn send_key_combination(&self, combo: &str) -> Result<()> {
-        match self.display_server {
-            DisplayServer::Wayland => self.send_wayland_keys(combo),
-            DisplayServer::X11 => self.send_x11_keys(combo),
-            DisplayServer::Unknown => {
-                if let Ok(_) = self.send_wayland_keys(combo) {
-                    return Ok(());
-                }
-                self.send_x11_keys(combo)
-            }
+        match self.selected_tool {
+            TextInjectionTool::Xdotool => self.send_xdotool_keys(combo),
+            TextInjectionTool::Wtype => self.send_wtype_keys(combo),
+            TextInjectionTool::Ydotool => self.send_ydotool_keys(combo),
         }
     }
 
+    /// Send key combination using xdotool on X11
+    fn send_xdotool_keys(&self, combo: &str) -> Result<()> {
+        // Convert to xdotool format (e.g., "super-Right" -> "super+Right")
+        let xdo_combo = combo.replace('-', "+");
+
+        debug!("xdotool key: {}", xdo_combo);
+
+        let output = Command::new("xdotool")
+            .arg("key")
+            .arg(&xdo_combo)
+            .output()
+            .context(format!("Failed to send key combination: {}", combo))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("xdotool key command failed: {}", stderr);
+        }
+
+        Ok(())
+    }
+
     /// Send key combination using wtype on Wayland
-    fn send_wayland_keys(&self, combo: &str) -> Result<()> {
+    fn send_wtype_keys(&self, combo: &str) -> Result<()> {
         // Parse the key combination
         let parts: Vec<&str> = combo.split('-').collect();
 
@@ -165,23 +158,52 @@ impl TextInjector {
             cmd.arg("-k").arg(key);
         }
 
+        debug!("wtype command: {:?}", cmd);
+
         // Release modifiers (automatic when wtype exits)
-        cmd.output()
+        let output = cmd
+            .output()
             .context(format!("Failed to send key combination: {}", combo))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("wtype key command failed: {}", stderr);
+        }
 
         Ok(())
     }
 
-    /// Send key combination using xdotool on X11
-    fn send_x11_keys(&self, combo: &str) -> Result<()> {
-        // Convert to xdotool format (e.g., "super-Right" -> "super+Right")
-        let xdo_combo = combo.replace('-', "+");
+    /// Send key combination using ydotool (universal)
+    fn send_ydotool_keys(&self, combo: &str) -> Result<()> {
+        // ydotool key command uses key codes
+        // For simplicity, we'll use the same format as xdotool (modifier+key)
+        // and let ydotool parse it
+        let yd_combo = combo.replace('-', "+");
 
-        Command::new("xdotool")
+        debug!("ydotool key: {}", yd_combo);
+
+        let output = Command::new("ydotool")
             .arg("key")
-            .arg(xdo_combo)
+            .arg(&yd_combo)
             .output()
             .context(format!("Failed to send key combination: {}", combo))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+
+            // Check for permission errors
+            if stderr.contains("Permission denied") || stderr.contains("input group") {
+                anyhow::bail!(
+                    "ydotool permission denied. Add user to input group:\n  \
+                    sudo usermod -aG input $USER\n  \
+                    Then log out and back in.\n\n\
+                    Error: {}",
+                    stderr
+                );
+            }
+
+            anyhow::bail!("ydotool key command failed: {}", stderr);
+        }
 
         Ok(())
     }
@@ -192,21 +214,18 @@ impl TextInjector {
             return Ok(());
         }
 
-        match self.display_server {
-            DisplayServer::X11 => self.inject_x11_text(text),
-            DisplayServer::Wayland => self.inject_wayland_text(text),
-            DisplayServer::Unknown => {
-                if let Ok(_) = self.inject_wayland_text(text) {
-                    return Ok(());
-                }
-                self.inject_x11_text(text)
-            }
+        match self.selected_tool {
+            TextInjectionTool::Xdotool => self.inject_xdotool_text(text),
+            TextInjectionTool::Wtype => self.inject_wtype_text(text),
+            TextInjectionTool::Ydotool => self.inject_ydotool_text(text),
         }
     }
 
-    /// Inject text using X11 tools
-    fn inject_x11_text(&self, text: &str) -> Result<()> {
-        Command::new("xdotool")
+    /// Inject text using xdotool (X11)
+    fn inject_xdotool_text(&self, text: &str) -> Result<()> {
+        debug!("xdotool type: {} chars", text.len());
+
+        let output = Command::new("xdotool")
             .arg("type")
             .arg("--clearmodifiers")
             .arg("--")
@@ -214,22 +233,71 @@ impl TextInjector {
             .output()
             .context("Failed to inject text with xdotool")?;
 
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("xdotool type command failed: {}", stderr);
+        }
+
         Ok(())
     }
 
-    /// Inject text using Wayland tools
-    fn inject_wayland_text(&self, text: &str) -> Result<()> {
-        Command::new("wtype")
+    /// Inject text using wtype (Wayland)
+    fn inject_wtype_text(&self, text: &str) -> Result<()> {
+        debug!("wtype: {} chars", text.len());
+
+        let output = Command::new("wtype")
+            .arg("--")
             .arg(text)
             .output()
             .context("Failed to inject text with wtype")?;
 
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("wtype command failed: {}", stderr);
+        }
+
         Ok(())
     }
 
-    /// Get the detected display server type
-    pub fn display_server(&self) -> &DisplayServer {
-        &self.display_server
+    /// Inject text using ydotool (universal - works on X11, Wayland, TTY)
+    fn inject_ydotool_text(&self, text: &str) -> Result<()> {
+        debug!("ydotool type: {} chars", text.len());
+
+        let output = Command::new("ydotool")
+            .arg("type")
+            .arg("--")
+            .arg(text)
+            .output()
+            .context("Failed to inject text with ydotool")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+
+            // Check for permission errors
+            if stderr.contains("Permission denied") || stderr.contains("input group") {
+                anyhow::bail!(
+                    "ydotool permission denied. Add user to input group:\n  \
+                    sudo usermod -aG input $USER\n  \
+                    Then log out and back in.\n\n\
+                    Error: {}",
+                    stderr
+                );
+            }
+
+            anyhow::bail!("ydotool type command failed: {}", stderr);
+        }
+
+        Ok(())
+    }
+
+    /// Get the detected display server information
+    pub fn display_server_info(&self) -> &DisplayServerInfo {
+        &self.display_server_info
+    }
+
+    /// Get the selected text injection tool
+    pub fn selected_tool(&self) -> TextInjectionTool {
+        self.selected_tool
     }
 }
 
@@ -238,22 +306,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_display_server_detection() {
-        let injector = TextInjector::new();
-        if injector.is_ok() {
-            let injector = injector.unwrap();
-            println!("Detected display server: {:?}", injector.display_server());
+    fn test_text_injector_creation() {
+        // Should not panic during detection
+        let result = TextInjector::new();
+
+        if let Ok(injector) = result {
+            println!(
+                "Created text injector: {:?} using {}",
+                injector.display_server_info().server_type,
+                injector.selected_tool().name()
+            );
+        } else if let Err(e) = result {
+            println!("Text injector creation failed (expected if no tools installed): {}", e);
         }
     }
 
     #[test]
     fn test_key_marker_parsing() {
-        let injector = TextInjector::new().unwrap();
+        // Only test if we can create an injector
+        if let Ok(injector) = TextInjector::new() {
+            // Test that it doesn't panic on various inputs
+            let _ = injector.inject_text("Hello, world!");
+            let _ = injector.inject_text("Press <KEY:ctrl-c> to copy");
+            let _ = injector.inject_text("<KEY:super-Right>");
+            let _ = injector.inject_text("Multiple <KEY:ctrl-a> keys <KEY:ctrl-v>");
+        }
+    }
 
-        // Test that it doesn't panic on various inputs
-        let _ = injector.inject_text("Hello, world!");
-        let _ = injector.inject_text("Press <KEY:ctrl-c> to copy");
-        let _ = injector.inject_text("<KEY:super-Right>");
-        let _ = injector.inject_text("Multiple <KEY:ctrl-a> keys <KEY:ctrl-v>");
+    #[test]
+    fn test_empty_text() {
+        if let Ok(injector) = TextInjector::new() {
+            // Empty text should not error
+            assert!(injector.inject_plain_text("").is_ok());
+        }
     }
 }

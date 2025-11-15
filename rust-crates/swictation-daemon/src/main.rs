@@ -10,6 +10,7 @@ mod config;
 mod ipc;
 mod hotkey;
 mod text_injection;
+mod display_server;
 
 use anyhow::{Context, Result};
 use tracing::{info, error, warn};
@@ -357,7 +358,7 @@ async fn main() -> Result<()> {
         // Initialize text injector with display server detection
         let text_injector = match TextInjector::new() {
             Ok(injector) => {
-                info!("Text injector initialized for: {:?}", injector.display_server());
+                info!("Text injector initialized for: {:?}", injector.display_server_info().server_type);
                 injector
             }
             Err(e) => {

@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 
 use crate::Daemon;
 

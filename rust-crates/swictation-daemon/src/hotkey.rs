@@ -11,6 +11,7 @@ use tokio::sync::mpsc;
 use tracing::{info, warn};
 
 use crate::config::HotkeyConfig;
+use crate::display_server::{detect_display_server as detect_display_server_base, DisplayServer as BaseDisplayServer};
 
 /// Hotkey events
 #[derive(Debug, Clone)]
@@ -23,33 +24,30 @@ pub enum HotkeyEvent {
     PushToTalkReleased,
 }
 
-/// Display server types
+/// Hotkey-specific display server types (extends base detection with Sway)
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum DisplayServer {
+enum HotkeyDisplayServer {
     X11,
     Sway,
     Wayland,
     Headless,
 }
 
-/// Detect which display server is running
-fn detect_display_server() -> DisplayServer {
-    // Check for Sway specifically (wlroots-based compositor)
+/// Detect display server for hotkey management
+/// Uses shared detection module and adds Sway-specific logic
+fn detect_hotkey_server() -> HotkeyDisplayServer {
+    // Check for Sway specifically (wlroots-based compositor with IPC)
     if std::env::var("SWAYSOCK").is_ok() {
-        return DisplayServer::Sway;
+        return HotkeyDisplayServer::Sway;
     }
 
-    // Generic Wayland
-    if std::env::var("WAYLAND_DISPLAY").is_ok() {
-        return DisplayServer::Wayland;
+    // Use shared display server detection for X11/Wayland
+    let base_info = detect_display_server_base();
+    match base_info.server_type {
+        BaseDisplayServer::X11 => HotkeyDisplayServer::X11,
+        BaseDisplayServer::Wayland => HotkeyDisplayServer::Wayland,
+        BaseDisplayServer::Unknown => HotkeyDisplayServer::Headless,
     }
-
-    // X11
-    if std::env::var("DISPLAY").is_ok() {
-        return DisplayServer::X11;
-    }
-
-    DisplayServer::Headless
 }
 
 /// Hotkey manager for global hotkey registration
@@ -76,19 +74,19 @@ impl HotkeyManager {
     /// Create new hotkey manager with configured hotkeys
     /// Returns None if hotkeys are not available on this system
     pub fn new(config: HotkeyConfig) -> Result<Option<Self>> {
-        let display_server = detect_display_server();
+        let display_server = detect_hotkey_server();
         info!("Detected display server: {:?}", display_server);
 
         match display_server {
-            DisplayServer::X11 => {
+            HotkeyDisplayServer::X11 => {
                 info!("Using X11 hotkey backend (direct key grabbing)");
                 Self::new_global_hotkey(config)
             }
-            DisplayServer::Sway => {
+            HotkeyDisplayServer::Sway => {
                 info!("Using Sway IPC backend (requires manual config)");
                 Self::new_sway_ipc(config)
             }
-            DisplayServer::Wayland => {
+            HotkeyDisplayServer::Wayland => {
                 warn!("Generic Wayland compositor detected");
                 warn!("Global hotkeys not supported - compositor-specific integration required");
                 warn!("Please configure hotkeys in your compositor to call:");
@@ -97,7 +95,7 @@ impl HotkeyManager {
                 warn!("  - PTT release: echo 'ptt_release' | nc -U /tmp/swictation.sock");
                 Ok(None)
             }
-            DisplayServer::Headless => {
+            HotkeyDisplayServer::Headless => {
                 warn!("No display server detected (headless mode)");
                 warn!("Hotkeys disabled - use IPC/CLI for control");
                 Ok(None)
@@ -173,7 +171,7 @@ impl HotkeyManager {
     ///
     /// Note: Sway does not support dynamic hotkey registration via IPC.
     /// We check if hotkeys exist in ~/.config/sway/config and auto-configure if needed.
-    fn new_sway_ipc(config: HotkeyConfig) -> Result<Option<Self>> {
+    fn new_sway_ipc(_config: HotkeyConfig) -> Result<Option<Self>> {
         // Check if we can connect to Sway
         match swayipc::Connection::new() {
             Ok(_) => {
@@ -200,7 +198,7 @@ impl HotkeyManager {
     }
 
     /// Check if Sway config has our hotkeys, add them if not, and reload Sway
-    fn configure_sway_hotkeys(config: &HotkeyConfig) -> Result<()> {
+    fn configure_sway_hotkeys(_config: &HotkeyConfig) -> Result<()> {
         let sway_config_path = std::env::var("HOME")
             .map(|home| format!("{}/.config/sway/config", home))
             .context("HOME environment variable not set")?;

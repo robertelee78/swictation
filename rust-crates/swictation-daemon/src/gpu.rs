@@ -330,6 +330,7 @@ mod tests {
         println!("\nModel Selection Decision Tree Test:");
         println!("====================================");
 
+        let test_count = test_cases.len();
         for tc in test_cases {
             let selected = if tc.vram_mb >= 4096 {
                 "1.1B GPU INT8"
@@ -349,6 +350,6 @@ mod tests {
                      tc.vram_mb, tc.expected_model, tc.reason);
         }
 
-        println!("\n✓ All {} test cases passed", test_cases.len());
+        println!("\n✓ All {} test cases passed", test_count);
     }
 }
