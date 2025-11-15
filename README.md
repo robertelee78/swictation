@@ -591,9 +591,62 @@ threshold = 0.25  # Default optimized value (lower = more sensitive, higher = be
 ## **Documentation** 📚
 
 - **[Swictation Architecture](docs/architecture.md)** - Swictation Architecture
+- **[Display Server Guide](docs/display-servers.md)** - X11/Wayland technical deep dive
+- **[Tool Comparison](docs/tool-comparison.md)** - xdotool vs wtype vs ydotool
+- **[Installation by Distribution](docs/installation-by-distro.md)** - Distro-specific setup
+- **[Troubleshooting Guide](docs/troubleshooting-display-servers.md)** - Common issues and solutions
 - **[ONNX Threshold Guide](rust-crates/swictation-vad/ONNX_THRESHOLD_GUIDE.md)** - VAD tuning details
 - **[Tauri UI Architecture](tauri-ui/docs/ARCHITECTURE.md)** - UI system design
 - **[MidStream Transform](external/midstream/)** - Voice command library
+
+---
+
+## **Testing & Validation** 🧪
+
+Swictation includes comprehensive testing tools for validating X11/Wayland support:
+
+### Environment Validation
+
+```bash
+# Quick environment check
+./scripts/validate-x11.sh
+```
+
+**Validates:**
+- Display server detection (X11/Wayland)
+- Tool availability (xdotool/wtype/ydotool)
+- Expected tool selection for your environment
+- Permission requirements (ydotool input group)
+
+### Diagnostic Information
+
+```bash
+# Collect diagnostic data for troubleshooting
+./scripts/diagnose.sh
+```
+
+**Gathers:**
+- Environment variables
+- System information
+- Tool installations
+- Daemon logs
+- Process information
+- Configuration files
+
+Creates shareable diagnostic report for bug reports.
+
+### Manual Testing Guide
+
+For comprehensive validation of X11/Wayland support:
+
+📖 **[X11 Validation Guide](docs/testing/x11-validation-guide.md)**
+
+Step-by-step testing procedures including:
+- Pre-reboot baseline (Wayland)
+- X11 session setup
+- 8 comprehensive test scenarios
+- Performance benchmarking
+- Bug reporting procedures
 
 ---
 
