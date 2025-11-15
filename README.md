@@ -1,6 +1,6 @@
 # Swictation
 
-**High-performance voice-to-text dictation daemon for Linux/Wayland with GPU acceleration**
+**High-performance voice-to-text dictation daemon for Linux (X11/Wayland) with GPU acceleration**
 
 > Pure Rust implementation with VAD-triggered auto-transcription, sub-second latency, and complete privacy.
 
@@ -16,16 +16,31 @@
 
 - ✅ **NVIDIA GPU** with 4GB+ VRAM (RTX A1000/3050/4060 or better)
   - Uses ~2.2GB VRAM typical, ~3.5GB peak with FP16 optimization
-- ✅ **Linux** with Sway/Wayland compositor (Ubuntu 24.04+ recommended)
+- ✅ **Linux** with X11 or Wayland (Ubuntu 24.04+ recommended)
 - ✅ **Node.js** 18+ (for npm installation)
-- ✅ **System tools:** wtype, wl-clipboard, CUDA 11.8+
+- ✅ **Text injection tool:** xdotool (X11), wtype (Wayland), or ydotool (universal)
+- ✅ **System tools:** wl-clipboard (optional), CUDA 11.8+
 
 ```bash
 # Install system dependencies (Ubuntu/Debian 24.04+)
-sudo apt install wtype wl-clipboard pipewire nvidia-cuda-toolkit
+# For X11 (most users, fastest):
+sudo apt install xdotool pipewire nvidia-cuda-toolkit
+
+# For Wayland (GNOME - Ubuntu 24.04 default):
+sudo apt install ydotool pipewire nvidia-cuda-toolkit
+sudo usermod -aG input $USER  # Required for ydotool
+# Then log out and log back in
+
+# For Wayland (KDE/Sway/Hyprland):
+sudo apt install wtype pipewire nvidia-cuda-toolkit
 
 # Install system dependencies (Arch/Manjaro)
-sudo pacman -S wtype wl-clipboard pipewire cuda
+# Choose based on your environment (X11/Wayland/GNOME)
+sudo pacman -S xdotool pipewire cuda  # X11
+sudo pacman -S wtype pipewire cuda    # Wayland (non-GNOME)
+sudo pacman -S ydotool pipewire cuda  # Wayland (GNOME) or universal
+
+# See docs/installation-by-distro.md for complete guide
 ```
 
 ### GPU Support
@@ -193,7 +208,7 @@ external/midstream/         # Text transformation (Git submodule)
 - 🎯 **Sub-Second Latency** - Real-time text injection with full segment accuracy
 - 🔒 **100% Privacy** - All processing on local GPU, no cloud
 - ⚡ **GPU Optimized** - Silero VAD v6 (ONNX) + Parakeet-TDT-1.1B (CUDA)
-- 🌊 **Wayland Native** - wtype text injection, no X11 dependencies
+- 🖥️ **Display Server Support** - Automatic detection: X11 (xdotool), Wayland (wtype/ydotool), GNOME Wayland (ydotool)
 - ⌨️ **Hotkey Control** - `$mod+Shift+d` toggle via global-hotkey crate
 - 🔄 **systemd Integration** - Auto-start with Sway
 - 🦀 **Pure Rust** - Native performance, memory safety, zero Python dependency hell
@@ -203,7 +218,7 @@ external/midstream/         # Text transformation (Git submodule)
 - **VAD Model:** Silero VAD v6 (~630KB, ort 2.0.0-rc.10, threshold: 0.25 optimized for real-time)
 - **Text Transform:** MidStream Rust crate (~1µs latency)
 - **Audio Capture:** cpal with PipeWire backend
-- **Text Injection:** wtype (Wayland) with wl-clipboard fallback
+- **Text Injection:** Auto-selects xdotool (X11), wtype (Wayland), or ydotool (GNOME/universal)
 - **Daemon Runtime:** Tokio async with state machine
 - **ONNX Runtime:** Direct ort crate bindings (CUDA 11.8+)
 - **Hotkeys:** global-hotkey crate (cross-platform)
@@ -350,22 +365,92 @@ Includes:
 - **CPU:** x86_64 processor
 
 ### Software
-- **OS:** Linux with Sway/i3-compatible Wayland compositor
+- **OS:** Linux with X11 or Wayland display server
 - **NVIDIA Driver:** 535+ (CUDA 11.8+ compatible)
 - **Audio:** PipeWire or PulseAudio
 - **Rust:** Latest stable toolchain
 
 ### Build Dependencies
 ```bash
-# System packages (Arch/Manjaro)
-sudo pacman -S wtype wl-clipboard pipewire cuda
+# System packages (Arch/Manjaro) - Choose based on environment
+sudo pacman -S xdotool pipewire cuda        # X11
+sudo pacman -S wtype pipewire cuda          # Wayland (KDE/Sway/Hyprland)
+sudo pacman -S ydotool pipewire cuda        # Wayland (GNOME) or universal
 
-# System packages (Ubuntu/Debian)
-sudo apt install wtype wl-clipboard pipewire nvidia-cuda-toolkit
+# System packages (Ubuntu/Debian) - Choose based on environment
+sudo apt install xdotool pipewire nvidia-cuda-toolkit      # X11 (majority of users)
+sudo apt install wtype pipewire nvidia-cuda-toolkit        # Wayland (KDE/Sway/Hyprland)
+sudo apt install ydotool pipewire nvidia-cuda-toolkit      # Wayland (GNOME - Ubuntu 24.04 default)
+
+# For ydotool, also grant permissions:
+sudo usermod -aG input $USER  # Then log out and log back in
 
 # Rust toolchain
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
+
+---
+
+## **Display Server Support** 🖥️
+
+Swictation **automatically detects** your display server (X11 or Wayland) and selects the best text injection tool.
+
+### Supported Environments
+
+| Environment | Tool | Installation |
+|-------------|------|--------------|
+| **X11** (80-90% of users) | xdotool | `sudo apt install xdotool` |
+| **Wayland (GNOME)** Ubuntu/Fedora default | ydotool | `sudo apt install ydotool` + permissions |
+| **Wayland (KDE/Sway/Hyprland)** | wtype | `sudo apt install wtype` |
+| **Universal** (works everywhere) | ydotool | `sudo apt install ydotool` + permissions |
+
+### Quick Setup by Distribution
+
+**Ubuntu 24.04 (GNOME Wayland):**
+```bash
+sudo apt install ydotool
+sudo usermod -aG input $USER
+# Log out and log back in
+```
+
+**Ubuntu 22.04 / Linux Mint (X11):**
+```bash
+sudo apt install xdotool
+# No permissions needed
+```
+
+**Fedora (GNOME Wayland):**
+```bash
+sudo dnf install ydotool
+sudo usermod -aG input $USER
+# Log out and log back in
+```
+
+**Arch + Sway/Hyprland:**
+```bash
+sudo pacman -S wtype
+# No permissions needed
+```
+
+### How It Works
+
+1. **Detects environment** via `XDG_SESSION_TYPE`, `WAYLAND_DISPLAY`, `DISPLAY`
+2. **Detects desktop** via `XDG_CURRENT_DESKTOP` (checks for GNOME specifically)
+3. **Checks available tools** using `which xdotool/wtype/ydotool`
+4. **Selects best tool:**
+   - X11 → xdotool (fastest ~10ms)
+   - Wayland + GNOME → ydotool (only option, ~50ms)
+   - Wayland + others → wtype (fast ~15ms)
+
+**No configuration needed** - it just works!
+
+### For More Information
+
+- **Complete guide:** [docs/display-servers.md](docs/display-servers.md)
+- **Tool comparison:** [docs/tool-comparison.md](docs/tool-comparison.md)
+- **Installation by distro:** [docs/installation-by-distro.md](docs/installation-by-distro.md)
+- **Troubleshooting:** [docs/troubleshooting-display-servers.md](docs/troubleshooting-display-servers.md)
+- **Window manager configs:** [docs/window-manager-configs.md](docs/window-manager-configs.md)
 
 ---
 
