@@ -201,9 +201,9 @@ impl HotkeyManager {
 
         #[cfg(not(feature = "sway-integration"))]
         {
-            warn!("Sway detected but sway-integration feature not enabled");
-            warn!("Hotkeys disabled - use IPC/CLI for control or rebuild with:");
-            warn!("  cargo build --features sway-integration");
+            warn!("Sway detected but built with --no-default-features (minimal build)");
+            warn!("Hotkeys disabled - use IPC/CLI for control");
+            warn!("For full Sway support, rebuild with default features (recommended)");
             Ok(None)
         }
     }

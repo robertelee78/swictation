@@ -52,6 +52,7 @@ windows = { version = "0.58", features = ["Win32_Graphics_Direct3D12"], optional
 metal = { version = "0.29", optional = true }
 
 [features]
-default = []
+default = ["sway-integration"]  # Full platform support by default (X11, Wayland, Sway)
 gpu-info = ["windows", "metal"]
-sway-integration = ["swayipc"]  # Enable Sway-specific IPC integration
+sway-integration = ["swayipc"]  # Sway/Wayland IPC integration
+minimal = []  # Minimal build without Sway support (embedded systems only)
