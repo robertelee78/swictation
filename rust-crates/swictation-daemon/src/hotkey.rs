@@ -172,32 +172,44 @@ impl HotkeyManager {
     /// Note: Sway does not support dynamic hotkey registration via IPC.
     /// We check if hotkeys exist in ~/.config/sway/config and auto-configure if needed.
     fn new_sway_ipc(_config: HotkeyConfig) -> Result<Option<Self>> {
-        // Check if we can connect to Sway
-        match swayipc::Connection::new() {
-            Ok(_) => {
-                info!("✓ Connected to Sway compositor");
+        #[cfg(feature = "sway-integration")]
+        {
+            // Check if we can connect to Sway
+            match swayipc::Connection::new() {
+                Ok(_) => {
+                    info!("✓ Connected to Sway compositor");
 
-                // Don't auto-configure - let users add hotkeys manually
-                info!("");
-                info!("To add hotkeys, edit ~/.config/sway/config:");
-                info!("  bindsym $mod+Shift+d exec sh -c \"echo 'toggle' | nc -U /tmp/swictation.sock\"");
-                info!("  (Choose your own non-conflicting keys)");
-                info!("");
+                    // Don't auto-configure - let users add hotkeys manually
+                    info!("");
+                    info!("To add hotkeys, edit ~/.config/sway/config:");
+                    info!("  bindsym $mod+Shift+d exec sh -c \"echo 'toggle' | nc -U /tmp/swictation.sock\"");
+                    info!("  (Choose your own non-conflicting keys)");
+                    info!("");
 
-                // We don't actually listen for events via IPC since Sway will
-                // trigger our Unix socket directly. Return None to indicate
-                // that IPC/CLI is the only control method.
-                Ok(None)
+                    // We don't actually listen for events via IPC since Sway will
+                    // trigger our Unix socket directly. Return None to indicate
+                    // that IPC/CLI is the only control method.
+                    Ok(None)
+                }
+                Err(e) => {
+                    warn!("Failed to connect to Sway: {}", e);
+                    warn!("Make sure SWAYSOCK environment variable is set");
+                    Ok(None)
+                }
             }
-            Err(e) => {
-                warn!("Failed to connect to Sway: {}", e);
-                warn!("Make sure SWAYSOCK environment variable is set");
-                Ok(None)
-            }
+        }
+
+        #[cfg(not(feature = "sway-integration"))]
+        {
+            warn!("Sway detected but sway-integration feature not enabled");
+            warn!("Hotkeys disabled - use IPC/CLI for control or rebuild with:");
+            warn!("  cargo build --features sway-integration");
+            Ok(None)
         }
     }
 
     /// Check if Sway config has our hotkeys, add them if not, and reload Sway
+    #[cfg(feature = "sway-integration")]
     fn configure_sway_hotkeys(_config: &HotkeyConfig) -> Result<()> {
         let sway_config_path = std::env::var("HOME")
             .map(|home| format!("{}/.config/sway/config", home))
