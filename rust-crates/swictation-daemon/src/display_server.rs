@@ -18,6 +18,21 @@ use anyhow::Result;
 use std::process::Command;
 use tracing::{debug, info, warn};
 
+/// Trait for environment variable access (enables testing with mock environments)
+/// This is public so tests can implement mock environments
+pub trait EnvProvider {
+    fn get(&self, key: &str) -> Option<String>;
+}
+
+/// Default environment provider using std::env::var
+pub struct SystemEnv;
+
+impl EnvProvider for SystemEnv {
+    fn get(&self, key: &str) -> Option<String> {
+        std::env::var(key).ok()
+    }
+}
+
 /// Display server type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DisplayServer {
@@ -88,10 +103,16 @@ pub enum ConfidenceLevel {
 /// 2. WAYLAND_DISPLAY (Wayland-specific)
 /// 3. DISPLAY (X11 or XWayland)
 pub fn detect_display_server() -> DisplayServerInfo {
-    let session_type = std::env::var("XDG_SESSION_TYPE").ok();
-    let desktop = std::env::var("XDG_CURRENT_DESKTOP").ok();
-    let wayland_display = std::env::var("WAYLAND_DISPLAY").ok();
-    let x11_display = std::env::var("DISPLAY").ok();
+    detect_display_server_with_env(&SystemEnv)
+}
+
+/// Internal detection function that accepts environment provider (for testing)
+/// This is public so integration tests can inject mock environments
+pub fn detect_display_server_with_env(env: &dyn EnvProvider) -> DisplayServerInfo {
+    let session_type = env.get("XDG_SESSION_TYPE");
+    let desktop = env.get("XDG_CURRENT_DESKTOP");
+    let wayland_display = env.get("WAYLAND_DISPLAY");
+    let x11_display = env.get("DISPLAY");
 
     debug!("Environment variables:");
     debug!("  XDG_SESSION_TYPE: {:?}", session_type);

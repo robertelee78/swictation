@@ -3,6 +3,14 @@ name = "swictation-daemon"
 version = "0.2.2"
 edition = "2021"
 
+[lib]
+name = "swictation_daemon"
+path = "src/lib.rs"
+
+[[bin]]
+name = "swictation-daemon"
+path = "src/main.rs"
+
 [dependencies]
 # Internal crates
 swictation-audio = { path = "../swictation-audio" }
