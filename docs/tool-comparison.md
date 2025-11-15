@@ -21,9 +21,11 @@
 | **Key Combinations** | ✅ Excellent | ✅ Excellent | ✅ Good |
 | **Mouse Control** | ✅ Yes | ❌ No | ✅ Yes |
 | **Window Management** | ✅ Yes | ❌ No | ❌ Limited |
-| **Unicode Support** | ✅ Full | ✅ Full | ✅ Full |
-| **Emoji Support** | ✅ Full | ✅ Full | ✅ Full |
+| **Unicode Support¹** | ✅ Full | ✅ Full | ✅ Full |
+| **Emoji Support¹** | ✅ Full | ✅ Full | ✅ Full |
 | **Multi-monitor** | ✅ Yes | ✅ Yes | ✅ Yes |
+
+¹ *Tools support full Unicode, but Swictation's STT engine (Whisper) outputs ASCII only. See [Character Support](#character-support) for details.*
 
 ---
 
@@ -193,27 +195,28 @@ ydotool type "test"  # ERROR: Permission denied
 
 **All three tools:** ✅ Excellent
 
-- Unicode support: Full
-- Emoji support: Yes
+**Tool capabilities:**
+- Unicode support: Full (tools can inject any UTF-8 character)
 - Special characters: Yes
 - Copy-paste: Yes (all support clipboard)
 
+**Swictation STT limitation:**
+- Whisper STT outputs **ASCII only** (A-Z, a-z, 0-9, basic punctuation)
+- No accented characters, foreign scripts, or emojis from voice input
+- End-to-end dictation is English text only
+
 **Example usage:**
 ```bash
-# Simple text
+# ASCII text (what Swictation actually outputs)
 xdotool type "Hello world"
 wtype "Hello world"
 ydotool type "Hello world"
 
-# Unicode
+# Tools CAN inject Unicode, but Swictation's STT won't produce it
+# (These examples show tool capability, not Swictation behavior)
 xdotool type "café résumé naïve"
 wtype "café résumé naïve"
 ydotool type "café résumé naïve"
-
-# Emojis
-xdotool type "😀 🎉 🚀"
-wtype "😀 🎉 🚀"
-ydotool type "😀 🎉 🚀"
 
 # Special keys
 xdotool key Return
@@ -449,6 +452,18 @@ Recommends: wtype
 
 ### Q: What if I don't want to add myself to the input group?
 **A:** Run ydotool with sudo (not recommended for daemons) or use X11 session with xdotool (no permissions needed).
+
+### Q: Do these tools support Unicode/emojis/foreign languages?
+**A:** The tools themselves support full Unicode, but **Swictation's STT engine (Whisper) outputs ASCII only**.
+
+End-to-end dictation is limited to:
+- ✅ English text (A-Z, a-z, 0-9)
+- ✅ Basic punctuation (. , ! ? ; :)
+- ❌ No accented characters (café → cafe)
+- ❌ No foreign scripts (Greek, Cyrillic, Arabic, CJK)
+- ❌ No emojis
+
+This is an STT limitation, not a text injection tool limitation.
 
 ---
 
