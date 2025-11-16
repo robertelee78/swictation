@@ -2,6 +2,23 @@
 
 Command-line interface for managing the Swictation voice dictation daemon.
 
+## ✨ Wayland Support - Fully Automated! ✨
+
+**NEW in v0.4.0**: Swictation now fully supports Wayland-based Linux desktops with **automated installation**:
+
+- ✅ **GNOME Wayland** (Ubuntu 25.10+) - Hotkeys auto-configured
+- ✅ **Sway** - Text injection auto-setup
+- ✅ **GPU Acceleration** - CUDA libraries auto-downloaded
+- ✅ **Service Management** - Auto-enabled systemd service
+
+**One command installation:**
+```bash
+npm install -g swictation --foreground-scripts
+# Everything is configured automatically!
+```
+
+**[→ Complete Wayland Support Guide](https://github.com/robertelee78/swictation/blob/main/docs/WAYLAND_SUPPORT.md)**
+
 ## Features
 
 - 🎤 **Real-time voice transcription** using Parakeet-TDT-1.1B (NVIDIA)
@@ -12,8 +29,8 @@ Command-line interface for managing the Swictation voice dictation daemon.
   - **[→ Full Secretary Mode Guide](https://github.com/robertelee78/swictation/blob/main/docs/secretary-mode.md)**
 - 🔄 **Smart text transformation** - MidStream Rust library (~1µs latency)
 - ⚡ **Low latency** - Pure Rust implementation with CUDA acceleration
-- 🖥️ **Wayland native** - wtype text injection for Sway/Wayland
-- 🎯 **Hotkey support** - toggle recording with $mod+Shift+D
+- 🖥️ **Wayland & X11 Support** - Full dual display server support
+- 🎯 **Hotkey support** - Auto-configured on GNOME, manual setup on Sway
 - 📊 **Real-time metrics** - WPM, latency, GPU/CPU usage
 - 🦀 **Pure Rust daemon** - Zero Python runtime dependencies
 
@@ -38,13 +55,15 @@ Command-line interface for managing the Swictation voice dictation daemon.
 - **VRAM**: 4GB minimum (6GB+ recommended for 1.1B model)
 - **Driver**: NVIDIA proprietary drivers (not nouveau)
 
-**Note**: GPU acceleration libraries (~209MB) are downloaded during installation from a **separate versioned release** (`gpu-libs-v1.0.0`). These are versioned independently from the npm package to avoid duplication across releases.
+**Note**: GPU acceleration libraries (~2.3GB CUDA + cuDNN) are automatically downloaded during installation. These include CUDA runtime and cuDNN libraries optimized for your GPU architecture.
 
-If GPU is not available, Swictation will run in CPU-only mode.
+If GPU is not available, Swictation will run in CPU-only mode (slower transcription).
 
 ## Installation
 
-### Recommended: User-Local Installation (No sudo required)
+### One-Command Installation
+
+**Recommended: User-Local Installation (No sudo required)**
 
 #### If using nvm (Node Version Manager)
 
@@ -54,6 +73,13 @@ If GPU is not available, Swictation will run in CPU-only mode.
 # Just install (nvm manages the prefix)
 npm install -g swictation --foreground-scripts
 ```
+
+**The installation will automatically:**
+1. Download GPU acceleration libraries (~2.3GB, if NVIDIA GPU detected)
+2. Install and configure ydotool (Wayland text injection)
+3. Configure GNOME keyboard shortcuts (if on GNOME Wayland)
+4. Set up and enable systemd service
+5. Start the daemon service
 
 **Important**: If you previously set a custom npm prefix, remove it:
 ```bash
@@ -97,10 +123,13 @@ sudo npm install -g swictation
 - ✅ Works with nvm seamlessly
 
 **Note**: The `--foreground-scripts` flag makes the installation progress visible. The postinstall script will:
-1. Download GPU acceleration libraries (~209MB, if GPU detected)
-2. Generate systemd service files
-3. Set up configuration directories
-4. Test GPU model loading (if GPU detected)
+1. Download GPU acceleration libraries (~2.3GB CUDA + cuDNN, if NVIDIA GPU detected)
+2. Install and configure ydotool (Wayland text injection)
+3. Set up uinput kernel module and permissions
+4. Configure GNOME keyboard shortcuts (if on GNOME Wayland)
+5. Generate systemd service files with GPU library paths
+6. Enable and start the daemon service
+7. Test GPU model loading (if GPU detected)
 
 ### Installation Options
 
@@ -122,24 +151,30 @@ SKIP_MODEL_TEST=1 npm install -g swictation --foreground-scripts
 
 ## Quick Start
 
-1. **Initial setup** (configures systemd and hotkeys):
-   ```bash
-   swictation setup
-   ```
+**GNOME Wayland (Ubuntu 25.10+)**: Everything is auto-configured! Just start using it:
+```bash
+# Installation already configured everything, just start using:
+swictation status         # Check daemon is running
+# Press Super+Shift+D to toggle recording (already configured!)
+```
 
-2. **Start the service**:
-   ```bash
-   swictation start
-   ```
+**Sway/Other Compositors**: Add hotkey binding to your config (see Hotkey Configuration section), then:
+```bash
+swictation status         # Check daemon is running
+# Use your configured hotkey to toggle recording
+```
 
-3. **Launch the UI** (optional):
-   ```bash
-   swictation start --ui
-   ```
+**Manual Setup** (if needed):
+```bash
+swictation setup          # Configure systemd service
+swictation start          # Start the daemon
+swictation toggle         # Toggle recording via command
+```
 
-4. **Toggle recording**:
-   - Use hotkey: `Super+Shift+D`
-   - Or command: `swictation toggle`
+**Optional UI**:
+```bash
+swictation start --ui     # Launch with visual interface
+```
 
 ## Commands
 
@@ -150,22 +185,24 @@ SKIP_MODEL_TEST=1 npm install -g swictation --foreground-scripts
 - `swictation setup` - Configure systemd and hotkeys
 - `swictation help` - Show help message
 
-## System Requirements
+## Display Server Support
 
-### Currently Supported
+### Fully Supported (Automated Setup)
+- ✅ **GNOME Wayland** (Ubuntu 25.10+) - Keyboard shortcuts auto-configured
+- ✅ **Sway** - Text injection auto-setup, manual hotkey configuration
+- ✅ **X11** - Traditional X11 support with xdotool
+
+### System Requirements
 - **OS**: Linux x64
 - **Distribution**: Ubuntu 24.04 LTS or newer (GLIBC 2.39+)
   - ✅ Ubuntu 24.04 LTS (Noble Numbat)
-  - ✅ Ubuntu 25.10+ (Questing Quetzal)
+  - ✅ Ubuntu 25.10+ (Questing Quetzal) - **Recommended for Wayland**
   - ✅ Debian 13+ (Trixie)
   - ✅ Fedora 39+
   - ❌ Ubuntu 22.04 LTS - NOT supported (GLIBC 2.35 too old)
 - **Node.js**: 18.0.0 or higher
-- **Python**: 3.8+ (for model downloads via HuggingFace CLI)
-- **Storage**: 9.43 GB for AI models
-- **Display Server**: Wayland (Sway/i3-compatible compositors)
-- **GPU**: NVIDIA with 4GB+ VRAM (CUDA 11.8+) or CPU-only mode
-- **Window Managers**: Sway, i3, Hyprland
+- **Storage**: ~12 GB total (AI models + GPU libraries)
+- **GPU**: NVIDIA with 4GB+ VRAM (CUDA 12.x) or CPU-only mode
 
 ### GPU Requirements (1.1B Model - Recommended)
 For optimal performance with the 1.1B model (62.8x realtime speed):
@@ -174,41 +211,26 @@ For optimal performance with the 1.1B model (62.8x realtime speed):
 - **Compute Capability**: 7.0+ (Turing architecture or newer)
 - **ONNX Runtime**: onnxruntime-gpu 1.16.0+
 
-### Python Environment
-The 1.1B GPU-accelerated model requires ONNX Runtime GPU:
-
-```bash
-pip3 install onnxruntime-gpu
-```
-
-**CRITICAL**: The postinstall script automatically detects ONNX Runtime and configures the systemd service. If detection fails, you'll need to manually set `ORT_DYLIB_PATH` (see Troubleshooting below).
+### GPU Acceleration
+GPU acceleration libraries (CUDA + cuDNN) are **automatically downloaded** during npm installation. No manual CUDA installation required!
 
 ### Runtime Dependencies
-- **Required**:
-  - GLIBC 2.39+ (Ubuntu 24.04+)
-  - libasound2 (ALSA sound library)
-  - systemd (service management)
-  - wtype (Wayland text injection)
-  - wl-clipboard (Wayland clipboard)
-  - PipeWire or PulseAudio (audio capture)
-- **Optional**:
-  - netcat (nc) - For socket-based control
 
-### Install Dependencies
+**Automatically Installed by npm postinstall:**
+- ydotool (Wayland text injection) - Auto-installed on Wayland systems
+- netcat (IPC socket communication) - Auto-installed
 
-**Ubuntu/Debian**:
+**Pre-installed on most systems:**
+- GLIBC 2.39+ (Ubuntu 24.04+)
+- libasound2 (ALSA sound library)
+- systemd (service management)
+- PipeWire or PulseAudio (audio capture)
+
+**For X11 systems (optional):**
 ```bash
-sudo apt install wtype wl-clipboard pipewire netcat-openbsd
-```
-
-**Arch Linux**:
-```bash
-sudo pacman -S wtype wl-clipboard pipewire gnu-netcat
-```
-
-**Fedora**:
-```bash
-sudo dnf install wtype wl-clipboard pipewire nmap-ncat
+sudo apt install xdotool  # Ubuntu/Debian
+sudo pacman -S xdotool    # Arch Linux
+sudo dnf install xdotool  # Fedora
 ```
 
 ## Configuration
@@ -217,15 +239,28 @@ Configuration file is located at `~/.config/swictation/config.toml`
 
 ### Hotkey Configuration
 
-**Sway** (`~/.config/sway/config`):
-```
-bindsym Super+Shift+d exec echo '{"action":"toggle"}' | nc -U /tmp/swictation.sock
-```
+**GNOME Wayland**: ✅ **Automatically configured during installation!**
+- Default hotkey: `Super+Shift+D`
+- Visible in: Settings → Keyboard → View and Customize Shortcuts
+- **No manual configuration needed**
 
-**i3** (`~/.config/i3/config`):
+**Sway** - Add to `~/.config/sway/config`:
+```bash
+# Swictation toggle
+bindsym $mod+Shift+d exec sh -c 'echo "{\"action\": \"toggle\"}" | nc -U /tmp/swictation.sock'
+
+# Optional: Push-to-talk
+bindsym $mod+Space exec sh -c 'echo "{\"action\": \"ptt_press\"}" | nc -U /tmp/swictation.sock'
+bindsym --release $mod+Space exec sh -c 'echo "{\"action\": \"ptt_release\"}" | nc -U /tmp/swictation.sock'
 ```
+Then reload: `swaymsg reload`
+
+**X11 (i3, etc.)** - Add to config:
+```bash
 bindsym Mod4+Shift+d exec echo '{"action":"toggle"}' | nc -U /tmp/swictation.sock
 ```
+
+**[→ See Complete Wayland Support Guide](https://github.com/robertelee78/swictation/blob/main/docs/WAYLAND_SUPPORT.md)** for detailed setup and troubleshooting.
 
 ## Architecture
 
@@ -235,9 +270,76 @@ Swictation consists of three main components:
 2. **UI** (`swictation-ui`) - Tauri application for metrics and control
 3. **CLI** (`swictation`) - Node.js command-line interface
 
+## Verification
+
+After installation, verify everything is working:
+
+```bash
+# Run comprehensive verification script
+./node_modules/swictation/scripts/verify-installation.sh
+
+# Or check manually
+swictation status        # Check daemon status
+systemctl --user status swictation-daemon.service
+journalctl --user -u swictation-daemon -n 50  # View logs
+```
+
+**Expected on Wayland:**
+- ✓ Wayland detected
+- ✓ GNOME/Sway detected (as applicable)
+- ✓ GPU libraries installed (if NVIDIA GPU present)
+- ✓ ydotool installed
+- ✓ uinput module loaded
+- ✓ User in 'input' group
+- ✓ GNOME keyboard shortcut configured (if GNOME)
+- ✓ Service enabled and running
+- ✓ IPC socket responding
+
 ## Troubleshooting
 
-### Installation Issues
+### Wayland-Specific Issues
+
+**Text not typing after transcription**:
+```bash
+# 1. Verify ydotool permissions
+sg input -c 'ydotool type "test"'
+
+# 2. Check group membership (may need logout/login)
+groups | grep input
+
+# 3. Verify uinput permissions
+ls -l /dev/uinput
+# Should show: crw-rw---- 1 root input
+
+# 4. Re-run setup if needed
+./node_modules/swictation/scripts/setup-ydotool.sh
+```
+
+**GNOME: Hotkey not working (types "D" instead)**:
+```bash
+# Verify shortcut configuration
+gsettings get org.gnome.settings-daemon.plugins.media-keys custom-keybindings
+
+# Re-configure if needed
+./node_modules/swictation/scripts/setup-gnome-shortcuts.sh
+
+# Check in Settings → Keyboard → View and Customize Shortcuts
+# Look for "Swictation Toggle"
+```
+
+**Slow transcription (20-30 seconds instead of <1 second)**:
+This means CPU mode instead of GPU. **Always start daemon via systemctl**, not manually!
+```bash
+# Restart via systemctl (has correct LD_LIBRARY_PATH)
+systemctl --user restart swictation-daemon.service
+
+# Check logs for GPU detection
+journalctl --user -u swictation-daemon.service | grep CUDA
+# Expected: "Successfully registered `CUDAExecutionProvider`"
+# Expected: "cuDNN version: 91501"
+```
+
+### General Installation Issues
 
 #### "Cannot see postinstall output"
 **Solution**: Use the `--foreground-scripts` flag:
@@ -290,70 +392,17 @@ arecord -d 5 test.wav && aplay test.wav
 ```
 
 ### Text not being typed
-- **Wayland**: Ensure `wtype` is installed and compositor supports input injection
+- **Wayland**: See "Wayland-Specific Issues" section above
+- **X11**: Ensure `xdotool` is installed
 - Check logs: `journalctl --user -u swictation-daemon -f`
 
-### "100% blank predictions" or empty transcriptions
+### Audio device issues
 
-**Cause**: Missing ONNX Runtime library path in systemd service.
-
-**Solution**: The postinstall script should automatically detect this. If it fails, manually add to `~/.config/systemd/user/swictation-daemon.service`:
-
-```ini
-[Service]
-Environment="ORT_DYLIB_PATH=/path/to/onnxruntime/capi/libonnxruntime.so.X.Y.Z"
-```
-
-To find your ONNX Runtime path:
+**Only 1 audio device detected (should see 4+)**:
+The systemd service should automatically import PulseAudio/PipeWire environment variables. Verify the service is running:
 ```bash
-python3 -c "import onnxruntime; import os; print(os.path.join(os.path.dirname(onnxruntime.__file__), 'capi'))"
-ls -la /path/from/above/libonnxruntime.so*
+systemctl --user status swictation-daemon.service
 ```
-
-Then reload and restart:
-```bash
-systemctl --user daemon-reload
-systemctl --user restart swictation-daemon
-```
-
-### Extremely slow performance (15+ seconds per transcription)
-
-**Cause**: Missing CUDA library paths or using INT8 quantized models on GPU.
-
-**Current behavior**: Should be 62.8x realtime (0.16s for 10s audio) with 1.1B FP32 model on GPU.
-
-**Solution 1 - Check CUDA paths**: Verify in `~/.config/systemd/user/swictation-daemon.service`:
-```ini
-Environment="LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/lib/node_modules/swictation/lib/native"
-```
-
-**Solution 2 - Verify using FP32 models**: Check logs for "Using FP32 model for GPU":
-```bash
-journalctl --user -u swictation-daemon -f
-```
-
-If you see "Using INT8 quantized model", the system is incorrectly using quantized models on GPU (no CUDA kernels). This should be auto-detected but can be forced in `~/.config/swictation/config.toml`:
-```toml
-stt_model_override = "1.1b-gpu"  # Forces FP32 models
-```
-
-After changes:
-```bash
-systemctl --user daemon-reload
-systemctl --user restart swictation-daemon
-```
-
-### Only 1 audio device detected (should see 4+)
-
-**Cause**: Missing PulseAudio/PipeWire session variables.
-
-**Solution**: Verify in `~/.config/systemd/user/swictation-daemon.service`:
-```ini
-# Import full user environment for PulseAudio
-ImportEnvironment=
-```
-
-This imports all user session variables including `PULSE_SERVER`, `DBUS_SESSION_BUS_ADDRESS`, etc.
 
 ### Real-time transcription not working (only transcribes at end)
 
@@ -383,7 +432,10 @@ journalctl --user -u swictation-daemon -n 50
 
 | Platform | Status | Notes |
 |----------|--------|-------|
-| Linux x64 + NVIDIA GPU | ✅ Supported | Full functionality with CUDA |
+| **Linux Wayland (GNOME)** | ✅ **Fully Supported** | Auto-configured hotkeys, ydotool setup |
+| **Linux Wayland (Sway)** | ✅ **Fully Supported** | Auto ydotool setup, manual hotkeys |
+| **Linux X11** | ✅ Supported | Traditional X11 support |
+| **NVIDIA GPU Acceleration** | ✅ Supported | Auto-downloaded CUDA + cuDNN |
 | Linux AMD GPU | 🚧 Planned | ROCm support |
 | macOS (Apple Silicon/Intel) | 🚧 Planned | CoreML/Metal execution providers |
 | Windows + NVIDIA | 🚧 Planned | CUDA support |
@@ -417,7 +469,14 @@ MIT
 
 Contributions are welcome! Please read our [Contributing Guide](https://github.com/yourusername/swictation/blob/main/CONTRIBUTING.md) for details.
 
+## Additional Resources
+
+- **[Wayland Support Guide](https://github.com/robertelee78/swictation/blob/main/docs/WAYLAND_SUPPORT.md)** - Complete Wayland setup and troubleshooting
+- **[Secretary Mode Guide](https://github.com/robertelee78/swictation/blob/main/docs/secretary-mode.md)** - Natural language commands reference
+- **[Testing & Validation Guide](https://github.com/robertelee78/swictation/blob/main/docs/testing/README.md)** - Display server testing procedures
+
 ## Support
 
-- Issues: https://github.com/yourusername/swictation/issues
-- Discussions: https://github.com/yourusername/swictation/discussions
+- Issues: https://github.com/robertelee78/swictation/issues
+- Discussions: https://github.com/robertelee78/swictation/discussions
+- Source Code: https://github.com/robertelee78/swictation

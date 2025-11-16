@@ -1249,6 +1249,144 @@ function recommendOptimalModel(capabilities) {
   }
 }
 
+/**
+ * Phase 5: Wayland-specific setup (ydotool + GNOME shortcuts)
+ * Detects Wayland and offers automated setup for text injection and hotkeys
+ */
+async function setupWaylandIntegration() {
+  const isWayland = process.env.WAYLAND_DISPLAY || process.env.XDG_SESSION_TYPE === 'wayland';
+
+  if (!isWayland) {
+    log('cyan', '\nℹ X11 detected - ydotool not needed');
+    return { ydotoolSetup: false, gnomeShortcuts: false };
+  }
+
+  log('cyan', '\n📱 Wayland detected - setting up text injection...');
+
+  const results = {
+    ydotoolSetup: false,
+    gnomeShortcuts: false
+  };
+
+  // Check if ydotool is installed
+  try {
+    execSync('which ydotool', { stdio: 'ignore' });
+    log('green', '✓ ydotool already installed');
+    results.ydotoolSetup = true;
+  } catch {
+    log('yellow', '⚠️  ydotool not installed (required for text injection on Wayland)');
+    log('cyan', '\n📦 Installing ydotool automatically...');
+
+    try {
+      const setupScript = path.join(__dirname, 'scripts', 'setup-ydotool.sh');
+      if (fs.existsSync(setupScript)) {
+        execSync(`bash "${setupScript}"`, { stdio: 'inherit' });
+        results.ydotoolSetup = true;
+        log('green', '✓ ydotool setup completed');
+      } else {
+        log('yellow', '  Setup script not found, skipping auto-install');
+        log('cyan', '  Run manually: sudo apt install ydotool');
+      }
+    } catch (err) {
+      log('yellow', `  ⚠️  Automated setup failed: ${err.message}`);
+      log('cyan', '  Install manually: sudo apt install ydotool');
+      log('cyan', '  Or run: ./scripts/setup-ydotool.sh');
+    }
+  }
+
+  // Check if GNOME and offer keyboard shortcut setup
+  const isGnome = (process.env.XDG_CURRENT_DESKTOP === 'ubuntu:GNOME' ||
+                   process.env.XDG_CURRENT_DESKTOP === 'GNOME');
+
+  if (isGnome) {
+    log('cyan', '\n⌨️  GNOME Wayland detected - configuring keyboard shortcuts...');
+
+    try {
+      const setupScript = path.join(__dirname, 'scripts', 'setup-gnome-shortcuts.sh');
+      if (fs.existsSync(setupScript)) {
+        execSync(`bash "${setupScript}"`, { stdio: 'inherit' });
+        results.gnomeShortcuts = true;
+        log('green', '✓ GNOME keyboard shortcuts configured');
+        log('cyan', '  Hotkey: Super+Shift+D to toggle recording');
+      } else {
+        log('yellow', '  Setup script not found, skipping');
+      }
+    } catch (err) {
+      log('yellow', `  ⚠️  Could not auto-configure shortcuts: ${err.message}`);
+      log('cyan', '  Run manually: ./scripts/setup-gnome-shortcuts.sh');
+    }
+  } else if (process.env.SWAYSOCK && process.env.XDG_CURRENT_DESKTOP?.toLowerCase().includes('sway')) {
+    log('cyan', '\n⌨️  Sway detected - hotkeys require manual configuration');
+    log('cyan', '  Add to ~/.config/sway/config:');
+    log('cyan', '  bindsym $mod+Shift+d exec sh -c \'echo "{\\"action\\": \\"toggle\\"}" | nc -U /tmp/swictation.sock\'');
+  }
+
+  return results;
+}
+
+/**
+ * Phase 6: Auto-enable and start systemd service
+ * Enables service to start on login and attempts to start it now
+ */
+async function enableAndStartService() {
+  log('cyan', '\n🚀 Enabling systemd service...');
+
+  const serviceName = 'swictation-daemon.service';
+  const results = {
+    enabled: false,
+    started: false
+  };
+
+  try {
+    // Enable service (start on login)
+    try {
+      execSync(`systemctl --user enable ${serviceName}`, { stdio: 'ignore' });
+      log('green', '✓ Service enabled (will start on login)');
+      results.enabled = true;
+    } catch (err) {
+      log('yellow', `  ⚠️  Could not enable service: ${err.message}`);
+      log('cyan', '  You can enable manually: systemctl --user enable swictation-daemon.service');
+    }
+
+    // Try to start service now
+    log('cyan', '\n▶️  Starting daemon service...');
+    try {
+      execSync(`systemctl --user start ${serviceName}`, { stdio: 'pipe' });
+
+      // Wait a moment for service to initialize
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      // Check if service started successfully
+      try {
+        const status = execSync(`systemctl --user is-active ${serviceName}`, { encoding: 'utf8' }).trim();
+        if (status === 'active') {
+          log('green', '✓ Daemon started successfully');
+          results.started = true;
+        } else {
+          log('yellow', `  Service status: ${status}`);
+        }
+      } catch {
+        log('yellow', '  ⚠️  Service may not be running');
+        log('cyan', '  Check status: systemctl --user status swictation-daemon.service');
+      }
+    } catch (err) {
+      // Service start may fail if models aren't downloaded yet - this is expected
+      if (err.message.includes('models') || err.message.includes('No such file')) {
+        log('cyan', '  ℹ Service will start after downloading models');
+        log('cyan', '  Download models: swictation download-model 1.1b-gpu');
+      } else {
+        log('yellow', `  ⚠️  Could not start service: ${err.message}`);
+        log('cyan', '  Start manually: swictation start');
+      }
+    }
+  } catch (err) {
+    log('yellow', `⚠️  Service setup failed: ${err.message}`);
+    log('cyan', 'Service can be started manually after model download');
+  }
+
+  return results;
+}
+
 function showNextSteps() {
   log('green', '\n✨ Swictation installed successfully!');
 
@@ -1414,6 +1552,14 @@ async function main() {
     // Phase 4: Generate systemd services
     log('cyan', '\n═══ Phase 4: Service Installation ═══');
     generateSystemdService(ortLibPath);
+
+    // Phase 5: Wayland-specific setup (ydotool + GNOME shortcuts)
+    log('cyan', '\n═══ Phase 5: Wayland Integration ═══');
+    const waylandResults = await setupWaylandIntegration();
+
+    // Phase 6: Auto-enable and start systemd service
+    log('cyan', '\n═══ Phase 6: Service Activation ═══');
+    const serviceResults = await enableAndStartService();
 
     // Final checks and next steps
     checkDependencies();

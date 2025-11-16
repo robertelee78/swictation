@@ -37,15 +37,39 @@ enum HotkeyDisplayServer {
 /// Uses shared detection module and adds Sway-specific logic
 fn detect_hotkey_server() -> HotkeyDisplayServer {
     // Check for Sway specifically (wlroots-based compositor with IPC)
+    // IMPORTANT: Check both SWAYSOCK and XDG_CURRENT_DESKTOP to avoid false positives
+    // (SWAYSOCK can be set even when not in Sway session)
     if std::env::var("SWAYSOCK").is_ok() {
-        return HotkeyDisplayServer::Sway;
+        // Verify we're actually in Sway by checking XDG_CURRENT_DESKTOP
+        if let Ok(desktop) = std::env::var("XDG_CURRENT_DESKTOP") {
+            if desktop.to_lowercase().contains("sway") {
+                return HotkeyDisplayServer::Sway;
+            }
+            // SWAYSOCK set but not in Sway - fall through to base detection
+        } else {
+            // No XDG_CURRENT_DESKTOP but SWAYSOCK exists - try to connect to verify
+            #[cfg(feature = "sway-integration")]
+            {
+                if swayipc::Connection::new().is_ok() {
+                    return HotkeyDisplayServer::Sway;
+                }
+            }
+        }
     }
 
     // Use shared display server detection for X11/Wayland
     let base_info = detect_display_server_base();
     match base_info.server_type {
         BaseDisplayServer::X11 => HotkeyDisplayServer::X11,
-        BaseDisplayServer::Wayland => HotkeyDisplayServer::Wayland,
+        BaseDisplayServer::Wayland => {
+            // Check for GNOME Wayland specifically - global-hotkey may work
+            if base_info.is_gnome_wayland {
+                // Try global-hotkey backend on GNOME (may work despite Wayland)
+                HotkeyDisplayServer::Wayland // Will try global-hotkey, fall back to manual if fails
+            } else {
+                HotkeyDisplayServer::Wayland
+            }
+        }
         BaseDisplayServer::Unknown => HotkeyDisplayServer::Headless,
     }
 }
@@ -87,13 +111,36 @@ impl HotkeyManager {
                 Self::new_sway_ipc(config)
             }
             HotkeyDisplayServer::Wayland => {
-                warn!("Generic Wayland compositor detected");
-                warn!("Global hotkeys not supported - compositor-specific integration required");
-                warn!("Please configure hotkeys in your compositor to call:");
-                warn!("  - Toggle: echo 'toggle' | nc -U /tmp/swictation.sock");
-                warn!("  - PTT press: echo 'ptt_press' | nc -U /tmp/swictation.sock");
-                warn!("  - PTT release: echo 'ptt_release' | nc -U /tmp/swictation.sock");
-                Ok(None)
+                // Check if we're on GNOME Wayland
+                let base_info = detect_display_server_base();
+                if base_info.is_gnome_wayland {
+                    info!("GNOME Wayland detected");
+                    info!("⚠️  Wayland security prevents apps from capturing global hotkeys");
+                    info!("Configure GNOME keyboard shortcuts instead:");
+                    info!("");
+                    info!("Option 1 - Automatic setup:");
+                    info!("  Run: gsettings set org.gnome.settings-daemon.plugins.media-keys \\");
+                    info!("       custom-keybindings \"['/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/swictation-toggle/']\"");
+                    info!("  Then configure the shortcut with your preferred key combination");
+                    info!("");
+                    info!("Option 2 - Manual setup:");
+                    info!("  1. Open Settings → Keyboard → View and Customize Shortcuts");
+                    info!("  2. Scroll to bottom and click '+ Add Shortcut'");
+                    info!("  3. Name: Swictation Toggle");
+                    info!("  4. Command: sh -c 'echo toggle | nc -U /tmp/swictation.sock'");
+                    info!("  5. Set shortcut: Press Super+Shift+D (or your preferred keys)");
+                    info!("");
+                    info!("Using IPC/CLI control only (hotkeys via GNOME shortcuts)");
+                    Ok(None)
+                } else {
+                    warn!("Generic Wayland compositor detected");
+                    warn!("Global hotkeys not supported - compositor-specific integration required");
+                    warn!("Please configure hotkeys in your compositor to call:");
+                    warn!("  - Toggle: echo 'toggle' | nc -U /tmp/swictation.sock");
+                    warn!("  - PTT press: echo 'ptt_press' | nc -U /tmp/swictation.sock");
+                    warn!("  - PTT release: echo 'ptt_release' | nc -U /tmp/swictation.sock");
+                    Ok(None)
+                }
             }
             HotkeyDisplayServer::Headless => {
                 warn!("No display server detected (headless mode)");
