@@ -284,22 +284,107 @@ Based on these patterns, the MidStream transformation layer needs:
 
 ---
 
-## 7. Differences from Other Models
+## 7. Model Comparison: 0.6B vs 1.1B
+
+### ⚠️ CRITICAL DIFFERENCE: Inference Backend Behavior
+
+**The two Parakeet-TDT models behave COMPLETELY differently** due to their inference backends:
+
+| Model | Backend | Capitalization | Punctuation | Secretary Mode Compatible |
+|-------|---------|----------------|-------------|---------------------------|
+| **1.1B INT8** | Direct ONNX Runtime | ❌ None (all lowercase) | ❌ None | ✅ Yes (raw output) |
+| **0.6B** | Sherpa-RS | ✅ Auto-added | ✅ Auto-added | ⚠️ Requires stripping |
+
+### 1.1B Model (Direct ONNX Runtime)
+
+**Test Input:** "Hello world. Testing, one, two, three."
+
+**Acoustic Loop Results:**
+```
+Raw STT Output:   "low world"  (lowercase, no punctuation)
+After Transform:  "Low world"  (Secretary Mode + capitalization)
+
+Raw STT Output:   "testing one two three"
+After Transform:  "Testing 1 2 3"  (number transformation working)
+```
+
+**Characteristics:**
+- ✅ Outputs pure lowercase text
+- ✅ No automatic punctuation
+- ✅ No automatic capitalization
+- ✅ Perfect for Secretary Mode (1950s dictation)
+- ✅ Numbers as words ("one two three")
+- ✅ Behavior matches documentation
+
+### 0.6B Model (Sherpa-RS)
+
+**Test Input:** Same audio file
+
+**Acoustic Loop Results:**
+```
+Raw STT Output:   "Low world. Testing. One, two, three."
+                  ^^^       ^         ^^^^ ^^^  ^^^  ^^^^
+                  Capitalized + Auto-punctuation added!
+```
+
+**Characteristics:**
+- ⚠️ Auto-capitalizes first letters
+- ⚠️ Auto-adds periods, commas
+- ⚠️ Capitalizes numbers ("One" not "one")
+- ❌ Breaks Secretary Mode without preprocessing
+- ⚠️ Post-processing added by sherpa-rs library
+
+**Secretary Mode Problem:**
+```
+User says:        "hello comma world period"
+Sherpa-RS outputs: "Hello, comma world period."  (auto-comma after Hello!)
+Transform adds:    "Hello,, world period."       (double comma!)
+```
+
+### Fix: Punctuation Stripping (v0.4.2+)
+
+The daemon now strips auto-added formatting before Secretary Mode:
+
+```rust
+let cleaned_text = text
+    .to_lowercase()          // Remove auto-capitalization
+    .replace(",", "")        // Remove auto-commas
+    .replace(".", "")        // Remove auto-periods
+    .replace("?", "")        // etc...
+```
+
+This normalizes both models to lowercase + no punctuation before transformation.
+
+### Recommendation
+
+**For Secretary Mode:**
+- ✅ **1.1B Model Preferred** - Native raw output, no preprocessing needed
+- ⚠️ **0.6B Model OK** - Works with v0.4.2+ stripping fix
+
+**For Standard Dictation:**
+- ✅ **0.6B Model** - Auto-formatting saves post-processing
+- ⚠️ **1.1B Model** - Requires capitalization pipeline
+
+---
+
+## 8. Differences from Other Models
 
 ### vs. Dragon NaturallySpeaking
 - **Dragon:** Auto-capitalizes sentences, inserts punctuation heuristically
-- **Parakeet:** Literal transcription, no automatic formatting
+- **Parakeet 1.1B:** Literal transcription, no automatic formatting
+- **Parakeet 0.6B:** Similar to Dragon (auto-formatting via sherpa-rs)
 
 ### vs. Whisper
 - **Whisper:** May add some punctuation, varies by model size
-- **Parakeet:** Consistent literal behavior, no punctuation inference
+- **Parakeet 1.1B:** Consistent literal behavior, no punctuation
+- **Parakeet 0.6B:** Adds punctuation/capitalization (sherpa-rs post-processing)
 
 ### vs. Canary-1B
 - **Comparison needed:** Task documented but not yet tested side-by-side
 
 ---
 
-## 8. Testing Methodology
+## 9. Testing Methodology
 
 ### Data Collection
 - **Source:** systemd journal logs from production daemon
@@ -320,7 +405,7 @@ Based on these patterns, the MidStream transformation layer needs:
 
 ---
 
-## 9. Implementation Recommendations
+## 10. Implementation Recommendations
 
 ### Secretary Dictation Mode Strategy
 
@@ -350,7 +435,7 @@ The transformation layer should:
 
 ---
 
-## 10. Known Edge Cases
+## 11. Known Edge Cases
 
 ### Ambiguous Commands
 - "period" at end of sentence vs. "period" meaning the punctuation
@@ -369,7 +454,7 @@ The transformation layer should:
 
 ---
 
-## 11. Quirks & Workarounds
+## 12. Quirks & Workarounds
 
 ### Double Spacing
 After VAD segments, text is injected without automatic spacing:
@@ -390,7 +475,7 @@ Needed: State machine in transformation layer
 
 ---
 
-## 12. Next Steps
+## 13. Next Steps
 
 ### Immediate Actions
 1. ✅ **Document patterns** (this file)
@@ -406,7 +491,7 @@ Needed: State machine in transformation layer
 
 ---
 
-## 13. References
+## 14. References
 
 - **Daemon config:** `/opt/swictation/rust-crates/swictation-daemon/src/config.rs`
 - **VAD settings:** `threshold=0.25, min_silence=0.8s`
