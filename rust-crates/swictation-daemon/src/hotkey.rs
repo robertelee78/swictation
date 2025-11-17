@@ -315,20 +315,13 @@ impl HotkeyManager {
             .context("Failed to create config backup")?;
         debug!("Created backup at: {}", backup_path);
 
-        // Append hotkeys to config
+        // Append hotkeys to config (simplified - just toggle)
         let hotkey_config = format!(
             r#"
-# Swictation voice-to-text hotkeys (auto-configured)
-# Toggle: {}
-# Push-to-talk: {}
+# Swictation
 bindsym {} exec swictation toggle
-bindsym {} exec sh -c "echo '{{\"action\":\"toggle\"}}' | nc -U $XDG_RUNTIME_DIR/swictation.sock"
-bindsym --release {} exec sh -c "echo '{{\"action\":\"toggle\"}}' | nc -U $XDG_RUNTIME_DIR/swictation.sock"
 "#,
-            config.toggle, config.push_to_talk,
-            toggle_key,
-            ptt_key,
-            ptt_key
+            toggle_key
         );
 
         std::fs::write(&sway_config_path, format!("{}{}", config_content, hotkey_config))
