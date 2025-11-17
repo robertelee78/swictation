@@ -8,7 +8,7 @@
 use anyhow::{Context, Result};
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState, hotkey::{HotKey, Code, Modifiers}};
 use tokio::sync::mpsc;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::config::HotkeyConfig;
 use crate::display_server::{detect_display_server as detect_display_server_base, DisplayServer as BaseDisplayServer};
@@ -218,7 +218,7 @@ impl HotkeyManager {
     ///
     /// Note: Sway does not support dynamic hotkey registration via IPC.
     /// We check if hotkeys exist in ~/.config/sway/config and auto-configure if needed.
-    fn new_sway_ipc(_config: HotkeyConfig) -> Result<Option<Self>> {
+    fn new_sway_ipc(config: HotkeyConfig) -> Result<Option<Self>> {
         #[cfg(feature = "sway-integration")]
         {
             // Check if we can connect to Sway
@@ -226,12 +226,21 @@ impl HotkeyManager {
                 Ok(_) => {
                     info!("✓ Connected to Sway compositor");
 
-                    // Don't auto-configure - let users add hotkeys manually
-                    info!("");
-                    info!("To add hotkeys, edit ~/.config/sway/config:");
-                    info!("  bindsym $mod+Shift+d exec sh -c \"echo 'toggle' | nc -U /tmp/swictation.sock\"");
-                    info!("  (Choose your own non-conflicting keys)");
-                    info!("");
+                    // Try to auto-configure hotkeys in Sway config
+                    match Self::configure_sway_hotkeys(&config) {
+                        Ok(()) => {
+                            info!("✓ Sway hotkeys configured successfully");
+                            info!("Hotkeys will work after Sway reload or next login");
+                        }
+                        Err(e) => {
+                            warn!("Could not auto-configure Sway hotkeys: {}", e);
+                            info!("");
+                            info!("To add hotkeys manually, edit ~/.config/sway/config:");
+                            info!("  bindsym $mod+Shift+d exec sh -c \"echo 'toggle' | nc -U /tmp/swictation.sock\"");
+                            info!("  (Choose your own non-conflicting keys)");
+                            info!("");
+                        }
+                    }
 
                     // We don't actually listen for events via IPC since Sway will
                     // trigger our Unix socket directly. Return None to indicate
@@ -257,14 +266,20 @@ impl HotkeyManager {
 
     /// Check if Sway config has our hotkeys, add them if not, and reload Sway
     #[cfg(feature = "sway-integration")]
-    fn configure_sway_hotkeys(_config: &HotkeyConfig) -> Result<()> {
-        let sway_config_path = std::env::var("HOME")
-            .map(|home| format!("{}/.config/sway/config", home))
-            .context("HOME environment variable not set")?;
+    fn configure_sway_hotkeys(config: &HotkeyConfig) -> Result<()> {
+        let home = std::env::var("HOME").context("HOME environment variable not set")?;
+        let sway_config_dir = format!("{}/.config/sway", home);
+        let sway_config_path = format!("{}/config", sway_config_dir);
+
+        // Ensure config directory exists
+        if !std::path::Path::new(&sway_config_dir).exists() {
+            warn!("Sway config directory does not exist: {}", sway_config_dir);
+            return Err(anyhow::anyhow!("Sway config directory not found"));
+        }
 
         // Read current config
         let config_content = std::fs::read_to_string(&sway_config_path)
-            .context("Failed to read Sway config")?;
+            .context("Failed to read Sway config - file may not exist")?;
 
         // Check if our hotkeys already exist
         if config_content.contains("# Swictation voice-to-text hotkeys") {
@@ -272,16 +287,40 @@ impl HotkeyManager {
             return Ok(());
         }
 
+        // Parse the configured hotkeys to Sway format
+        let toggle_key = config.toggle.replace("Super", "$mod").replace("+", "+");
+        let ptt_key = config.push_to_talk.replace("Super", "$mod").replace("+", "+");
+
+        // Check for potential conflicts
+        if config_content.contains(&format!("bindsym {}", toggle_key)) {
+            warn!("Hotkey {} may conflict with existing binding", toggle_key);
+        }
+        if config_content.contains(&format!("bindsym {}", ptt_key)) {
+            warn!("Hotkey {} may conflict with existing binding", ptt_key);
+        }
+
         info!("Adding Swictation hotkeys to Sway config...");
+
+        // Create backup
+        let backup_path = format!("{}.swictation.backup", sway_config_path);
+        std::fs::copy(&sway_config_path, &backup_path)
+            .context("Failed to create config backup")?;
+        debug!("Created backup at: {}", backup_path);
 
         // Append hotkeys to config
         let hotkey_config = format!(
             r#"
-# Swictation voice-to-text hotkeys
-bindsym $mod+Shift+d exec sh -c "echo 'toggle' | nc -U /tmp/swictation.sock"
-bindsym $mod+Space exec sh -c "echo 'ptt_press' | nc -U /tmp/swictation.sock"
-bindsym --release $mod+Space exec sh -c "echo 'ptt_release' | nc -U /tmp/swictation.sock"
-"#
+# Swictation voice-to-text hotkeys (auto-configured)
+# Toggle: {}
+# Push-to-talk: {}
+bindsym {} exec sh -c "echo 'toggle' | nc -U /tmp/swictation.sock"
+bindsym {} exec sh -c "echo 'ptt_press' | nc -U /tmp/swictation.sock"
+bindsym --release {} exec sh -c "echo 'ptt_release' | nc -U /tmp/swictation.sock"
+"#,
+            config.toggle, config.push_to_talk,
+            toggle_key,
+            ptt_key,
+            ptt_key
         );
 
         std::fs::write(&sway_config_path, format!("{}{}", config_content, hotkey_config))
