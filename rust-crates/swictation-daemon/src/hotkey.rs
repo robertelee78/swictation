@@ -116,21 +116,27 @@ impl HotkeyManager {
                 if base_info.is_gnome_wayland {
                     info!("GNOME Wayland detected");
                     info!("⚠️  Wayland security prevents apps from capturing global hotkeys");
-                    info!("Configure GNOME keyboard shortcuts instead:");
-                    info!("");
-                    info!("Option 1 - Automatic setup:");
-                    info!("  Run: gsettings set org.gnome.settings-daemon.plugins.media-keys \\");
-                    info!("       custom-keybindings \"['/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/swictation-toggle/']\"");
-                    info!("  Then configure the shortcut with your preferred key combination");
-                    info!("");
-                    info!("Option 2 - Manual setup:");
-                    info!("  1. Open Settings → Keyboard → View and Customize Shortcuts");
-                    info!("  2. Scroll to bottom and click '+ Add Shortcut'");
-                    info!("  3. Name: Swictation Toggle");
-                    info!("  4. Command: swictation toggle");
-                    info!("     (or: echo '{{\"action\":\"toggle\"}}' | nc -U $XDG_RUNTIME_DIR/swictation.sock)");
-                    info!("  5. Set shortcut: Press Super+Shift+D (or your preferred keys)");
-                    info!("");
+
+                    // Try to auto-configure hotkeys via gsettings
+                    match Self::configure_gnome_hotkeys(&config) {
+                        Ok(()) => {
+                            info!("✓ GNOME keyboard shortcuts configured successfully");
+                            info!("Hotkeys are now active - use Super+Shift+D to toggle");
+                        }
+                        Err(e) => {
+                            warn!("Could not auto-configure GNOME hotkeys: {}", e);
+                            info!("");
+                            info!("To configure manually:");
+                            info!("  1. Open Settings → Keyboard → View and Customize Shortcuts");
+                            info!("  2. Scroll to bottom and click '+ Add Shortcut'");
+                            info!("  3. Name: Swictation Toggle");
+                            info!("  4. Command: swictation toggle");
+                            info!("     (or: echo '{{\"action\":\"toggle\"}}' | nc -U $XDG_RUNTIME_DIR/swictation.sock)");
+                            info!("  5. Set shortcut: Press Super+Shift+D (or your preferred keys)");
+                            info!("");
+                        }
+                    }
+
                     info!("Using IPC/CLI control only (hotkeys via GNOME shortcuts)");
                     Ok(None)
                 } else {
@@ -344,6 +350,122 @@ bindsym --release {} exec sh -c "echo '{{\"action\":\"toggle\"}}' | nc -U $XDG_R
         Ok(())
     }
 
+    /// Configure GNOME keyboard shortcuts via gsettings
+    fn configure_gnome_hotkeys(config: &HotkeyConfig) -> Result<()> {
+        use std::process::Command;
+
+        // Check if gsettings is available
+        let gsettings_check = Command::new("which")
+            .arg("gsettings")
+            .output()
+            .context("Failed to check for gsettings")?;
+
+        if !gsettings_check.status.success() {
+            return Err(anyhow::anyhow!("gsettings command not found - cannot auto-configure GNOME shortcuts"));
+        }
+
+        info!("Configuring GNOME keyboard shortcuts via gsettings...");
+
+        // Define the custom keybinding path
+        let custom_path = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/swictation-toggle/";
+
+        // Get current custom keybindings list
+        let current_bindings_output = Command::new("gsettings")
+            .args(["get", "org.gnome.settings-daemon.plugins.media-keys", "custom-keybindings"])
+            .output()
+            .context("Failed to get current custom keybindings")?;
+
+        let current_bindings = String::from_utf8_lossy(&current_bindings_output.stdout);
+        let current_bindings = current_bindings.trim();
+
+        // Check if our binding already exists
+        if current_bindings.contains("swictation-toggle") {
+            info!("✓ Swictation shortcuts already configured in GNOME");
+            return Ok(());
+        }
+
+        // Parse existing bindings and add ours
+        let new_bindings = if current_bindings == "@as []" || current_bindings.is_empty() {
+            // No existing bindings
+            format!("['{}']", custom_path)
+        } else {
+            // Add to existing bindings - remove the closing bracket and append
+            let trimmed = current_bindings.trim_start_matches('[').trim_end_matches(']');
+            if trimmed.is_empty() {
+                format!("['{}']", custom_path)
+            } else {
+                format!("[{}, '{}']", trimmed, custom_path)
+            }
+        };
+
+        // Convert hotkey format from our config to GNOME format
+        // Our format: "Super+Shift+D" -> GNOME format: "<Super><Shift>d"
+        let toggle_binding = convert_to_gnome_binding(&config.toggle)?;
+
+        // Determine the command to use
+        let socket_path = std::env::var("XDG_RUNTIME_DIR")
+            .map(|dir| format!("{}/swictation.sock", dir))
+            .unwrap_or_else(|_| {
+                let home = std::env::var("HOME").unwrap_or_else(|_| String::from("~"));
+                format!("{}/.local/share/swictation/swictation.sock", home)
+            });
+
+        let command = format!("sh -c \"echo '{{\\\"action\\\":\\\"toggle\\\"}}' | nc -U {}\"", socket_path);
+
+        // Set the custom keybinding properties
+        info!("Setting custom keybinding at: {}", custom_path);
+
+        let schema_path = format!("org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:{}", custom_path);
+
+        // Set name
+        let name_result = Command::new("gsettings")
+            .args(["set", &schema_path, "name", "Swictation Toggle"])
+            .output()
+            .context("Failed to set keybinding name")?;
+
+        if !name_result.status.success() {
+            return Err(anyhow::anyhow!("Failed to set keybinding name: {}",
+                String::from_utf8_lossy(&name_result.stderr)));
+        }
+
+        // Set command
+        let cmd_result = Command::new("gsettings")
+            .args(["set", &schema_path, "command", &command])
+            .output()
+            .context("Failed to set keybinding command")?;
+
+        if !cmd_result.status.success() {
+            return Err(anyhow::anyhow!("Failed to set keybinding command: {}",
+                String::from_utf8_lossy(&cmd_result.stderr)));
+        }
+
+        // Set binding
+        let binding_result = Command::new("gsettings")
+            .args(["set", &schema_path, "binding", &toggle_binding])
+            .output()
+            .context("Failed to set keybinding")?;
+
+        if !binding_result.status.success() {
+            return Err(anyhow::anyhow!("Failed to set keybinding: {}",
+                String::from_utf8_lossy(&binding_result.stderr)));
+        }
+
+        // Add our binding to the list
+        let list_result = Command::new("gsettings")
+            .args(["set", "org.gnome.settings-daemon.plugins.media-keys", "custom-keybindings", &new_bindings])
+            .output()
+            .context("Failed to update custom keybindings list")?;
+
+        if !list_result.status.success() {
+            return Err(anyhow::anyhow!("Failed to update custom keybindings list: {}",
+                String::from_utf8_lossy(&list_result.stderr)));
+        }
+
+        info!("✓ GNOME keyboard shortcut configured: {}", toggle_binding);
+
+        Ok(())
+    }
+
     /// Get next hotkey event (async)
     pub async fn next_event(&mut self) -> Option<HotkeyEvent> {
         match &mut self.backend {
@@ -360,6 +482,47 @@ impl Drop for HotkeyManager {
             let _ = manager.unregister(ptt_hotkey.clone());
         }
     }
+}
+
+/// Convert hotkey format to GNOME binding format
+/// Our format: "Super+Shift+D" -> GNOME format: "<Super><Shift>d"
+fn convert_to_gnome_binding(hotkey: &str) -> Result<String> {
+    let parts: Vec<&str> = hotkey.split('+').map(|p| p.trim()).collect();
+
+    if parts.is_empty() {
+        anyhow::bail!("Empty hotkey string");
+    }
+
+    let mut modifiers = Vec::new();
+    let mut key = String::new();
+
+    for part in parts {
+        match part.to_lowercase().as_str() {
+            "ctrl" | "control" => modifiers.push("Control"),
+            "shift" => modifiers.push("Shift"),
+            "alt" => modifiers.push("Alt"),
+            "super" | "win" | "cmd" | "meta" => modifiers.push("Super"),
+            k => {
+                // The key should be lowercase in GNOME format
+                key = k.to_lowercase();
+            }
+        }
+    }
+
+    if key.is_empty() {
+        anyhow::bail!("No key found in hotkey string");
+    }
+
+    // Build GNOME format: <Super><Shift>d
+    let mut result = String::new();
+    for modifier in modifiers {
+        result.push('<');
+        result.push_str(modifier);
+        result.push('>');
+    }
+    result.push_str(&key);
+
+    Ok(result)
 }
 
 /// Parse hotkey string like "Ctrl+Shift+R" into HotKey
@@ -477,6 +640,26 @@ mod tests {
         let hotkey = parse_hotkey("Ctrl+Space").unwrap();
         assert!(hotkey.mods.contains(Modifiers::CONTROL));
         assert_eq!(hotkey.key, Code::Space);
+    }
+
+    #[test]
+    fn test_convert_to_gnome_binding() {
+        // Test single modifier
+        assert_eq!(convert_to_gnome_binding("Super+D").unwrap(), "<Super>d");
+        assert_eq!(convert_to_gnome_binding("Ctrl+C").unwrap(), "<Control>c");
+        assert_eq!(convert_to_gnome_binding("Alt+F4").unwrap(), "<Alt>f4");
+
+        // Test multiple modifiers
+        assert_eq!(convert_to_gnome_binding("Super+Shift+D").unwrap(), "<Super><Shift>d");
+        assert_eq!(convert_to_gnome_binding("Ctrl+Shift+R").unwrap(), "<Control><Shift>r");
+        assert_eq!(convert_to_gnome_binding("Ctrl+Alt+Delete").unwrap(), "<Control><Alt>delete");
+
+        // Test case insensitivity
+        assert_eq!(convert_to_gnome_binding("super+shift+d").unwrap(), "<Super><Shift>d");
+
+        // Test alternative modifier names
+        assert_eq!(convert_to_gnome_binding("Win+D").unwrap(), "<Super>d");
+        assert_eq!(convert_to_gnome_binding("Control+C").unwrap(), "<Control>c");
     }
 
     #[test]
