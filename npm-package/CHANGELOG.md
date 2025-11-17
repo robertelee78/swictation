@@ -1,5 +1,49 @@
 # Changelog
 
+## [0.4.5] - 2025-11-16
+
+### Added
+- **NVIDIA hibernation support detection**: Automatic detection of laptops with NVIDIA GPUs
+  - Detects laptop systems via battery presence in `/sys/class/power_supply/`
+  - Checks for NVIDIA GPU using `nvidia-smi`
+  - Verifies current hibernation configuration status
+  - Phase 7 added to postinstall process for automatic detection
+  - Warns users during installation if configuration needed
+
+- **Interactive NVIDIA hibernation setup**: `swictation setup` now configures NVIDIA hibernation
+  - Prompts user to configure NVIDIA power management
+  - Creates `/etc/modprobe.d/nvidia-power-management.conf`
+  - Sets `NVreg_PreserveVideoMemoryAllocations=1` kernel parameter
+  - Updates initramfs automatically (Ubuntu/Debian/Fedora/Arch support)
+  - Notifies user that reboot is required
+
+- **New system detection utilities**: `npm-package/src/utils/system-detect.js`
+  - `isLaptop()` - Battery-based laptop detection
+  - `hasNvidiaGpu()` - NVIDIA GPU detection
+  - `isNvidiaConfigured()` - Kernel parameter verification
+  - `detectDistribution()` - Auto-detect Ubuntu/Debian/Fedora/Arch
+  - `nvidiaModprobeConfigExists()` - Config file check
+
+- **Comprehensive test suite**: `npm-package/tests/test-nvidia-hibernation.js`
+  - Tests all detection functions
+  - Validates logic consistency
+  - Provides diagnostic information
+  - 6/6 tests passing (100% success rate)
+
+- **Full documentation**: `docs/nvidia-hibernation-support.md`
+  - Problem description and root cause analysis
+  - Manual configuration steps
+  - Verification procedures
+  - Distribution-specific notes
+  - Comprehensive troubleshooting guide
+
+### Fixed
+- Prevents GPU defunct state after laptop hibernation (CUDA errors 719/999)
+- Automatically preserves GPU memory allocations during suspend/hibernation cycles
+
+### Changed
+- Updated `package.json` to include `tests/` directory in published files
+
 ## [0.3.14] - 2025-11-13
 
 ### Fixed
