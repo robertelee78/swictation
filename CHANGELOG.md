@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.8] - 2025-11-17
+
+### Fixed
+- **Sway Tray Icon State Sync** - Fixed tray icon not changing colors when toggling between idle/recording by updating socket path to use `$XDG_RUNTIME_DIR/swictation.sock` instead of hardcoded `/tmp/swictation.sock`
+
+### Changed
+- **Simplified Sway Config Generation** - Hotkey config now uses `swictation toggle` command instead of direct socket communication
+- **Auto-Configure GNOME Wayland Hotkeys** - Added automatic gsettings configuration for GNOME Wayland hotkeys
+- **Auto-Install System Dependencies** - Improved postinstall script to automatically detect and install missing system dependencies based on environment
+
 ## [0.4.7] - 2025-11-16
 
 ### Added
