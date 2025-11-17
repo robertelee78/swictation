@@ -11,6 +11,7 @@ mod ipc;
 mod hotkey;
 mod text_injection;
 mod display_server;
+mod capitalization;
 
 use anyhow::{Context, Result};
 use tracing::{info, error, warn};

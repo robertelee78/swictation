@@ -15,6 +15,7 @@ use swictation_metrics::{MetricsCollector, SegmentMetrics};
 use swictation_broadcaster::MetricsBroadcaster;
 
 use crate::config::DaemonConfig;
+use crate::capitalization::{apply_capitalization, process_capital_commands};
 use crate::gpu::get_gpu_memory_mb;
 
 /// Pipeline state
@@ -372,14 +373,23 @@ impl Pipeline {
                                 // Transform voice commands → symbols (Midstream)
                                 // "hello comma world" → "hello, world"
                                 let transform_start = Instant::now();
-                                let transformed = transform(&text);
+
+                                // Step 1: Process capital commands first ("capital r robert" → "Robert")
+                                let with_capitals = process_capital_commands(&text);
+
+                                // Step 2: Transform punctuation ("comma" → ",")
+                                let transformed = transform(&with_capitals);
+
+                                // Step 3: Apply automatic capitalization rules
+                                let capitalized = apply_capitalization(&transformed);
+
                                 let transform_latency = transform_start.elapsed().as_micros() as f64;
 
-                                info!("Transcribed: {} → {}", text, transformed);
+                                info!("Transcribed: {} → {}", text, capitalized);
 
                                 // Track segment metrics (ephemeral - no text stored in DB)
-                                let word_count = transformed.split_whitespace().count() as i32;
-                                let char_count = transformed.len() as i32;
+                                let word_count = capitalized.split_whitespace().count() as i32;
+                                let char_count = capitalized.len() as i32;
 
                                 // Get current session ID
                                 let current_session_id = *session_id.lock().unwrap();
@@ -395,14 +405,14 @@ impl Pipeline {
                                         duration_s,
                                         words: word_count,
                                         characters: char_count,
-                                        text: transformed.clone(), // Will be ignored since store_text=false
+                                        text: capitalized.clone(), // Will be ignored since store_text=false
                                         vad_latency_ms: vad_latency,
                                         audio_save_latency_ms: 0.0, // Not tracking this yet
                                         stt_latency_ms: stt_latency,
                                         transform_latency_us: transform_latency,
                                         injection_latency_ms: 0.0, // Will be tracked later when injecting
                                         total_latency_ms,
-                                        transformations_count: if text != transformed { 1 } else { 0 },
+                                        transformations_count: if text != capitalized { 1 } else { 0 },
                                         keyboard_actions_count: 0, // Could be tracked in text injection
                                     };
 
@@ -416,7 +426,7 @@ impl Pipeline {
                                         let wpm = (word_count as f64 / (duration_s / 60.0)).min(300.0); // Cap at 300 WPM
                                         tokio::spawn({
                                             let broadcaster = broadcaster_ref.clone();
-                                            let text_clone = transformed.clone();
+                                            let text_clone = capitalized.clone();
                                             async move {
                                                 broadcaster.add_transcription(
                                                     text_clone,
@@ -433,10 +443,10 @@ impl Pipeline {
                                 // This fixes: "hello world" + "testing" → "hello worldtesting" (NO SPACE)
                                 //        AND: "hello world." + "testing" → "hello world.testing" (NO SPACE AFTER PUNCTUATION)
                                 // Solution: ALWAYS add trailing space (proper secretary would leave space after punctuation)
-                                let final_text = if transformed.ends_with(char::is_whitespace) {
-                                    transformed  // Already has trailing whitespace
+                                let final_text = if capitalized.ends_with(char::is_whitespace) {
+                                    capitalized  // Already has trailing whitespace
                                 } else {
-                                    format!("{} ", transformed)  // Add space for next chunk (even after punctuation)
+                                    format!("{} ", capitalized)  // Add space for next chunk (even after punctuation)
                                 };
 
                                 let _ = tx.send(Ok(final_text));
@@ -507,14 +517,23 @@ impl Pipeline {
                 if !text.is_empty() {
                     // Transform voice commands → symbols (Midstream)
                     let transform_start = Instant::now();
-                    let transformed = transform(&text);
+
+                    // Step 1: Process capital commands first
+                    let with_capitals = process_capital_commands(&text);
+
+                    // Step 2: Transform punctuation
+                    let transformed = transform(&with_capitals);
+
+                    // Step 3: Apply automatic capitalization rules
+                    let capitalized = apply_capitalization(&transformed);
+
                     let transform_latency = transform_start.elapsed().as_micros() as f64;
 
-                    info!("Flushed transcription: {} → {}", text, transformed);
+                    info!("Flushed transcription: {} → {}", text, capitalized);
 
                     // Track segment metrics
-                    let word_count = transformed.split_whitespace().count() as i32;
-                    let char_count = transformed.len() as i32;
+                    let word_count = capitalized.split_whitespace().count() as i32;
+                    let char_count = capitalized.len() as i32;
 
                     let current_session_id = *self.session_id.lock().unwrap();
 
@@ -529,14 +548,14 @@ impl Pipeline {
                             duration_s,
                             words: word_count,
                             characters: char_count,
-                            text: transformed.clone(),
+                            text: capitalized.clone(),
                             vad_latency_ms: vad_latency,
                             audio_save_latency_ms: 0.0,
                             stt_latency_ms: stt_latency,
                             transform_latency_us: transform_latency,
                             injection_latency_ms: 0.0,
                             total_latency_ms,
-                            transformations_count: if text != transformed { 1 } else { 0 },
+                            transformations_count: if text != capitalized { 1 } else { 0 },
                             keyboard_actions_count: 0,
                         };
 
@@ -549,7 +568,7 @@ impl Pipeline {
                             let wpm = (word_count as f64 / (duration_s / 60.0)).min(300.0);
                             tokio::spawn({
                                 let broadcaster = broadcaster_ref.clone();
-                                let text_clone = transformed.clone();
+                                let text_clone = capitalized.clone();
                                 async move {
                                     broadcaster.add_transcription(
                                         text_clone,
@@ -563,7 +582,7 @@ impl Pipeline {
                     }
 
                     // Send through transcription channel
-                    let _ = self.tx.send(Ok(transformed));
+                    let _ = self.tx.send(Ok(capitalized));
                 }
             }
         }
