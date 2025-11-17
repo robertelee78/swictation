@@ -305,6 +305,58 @@ function createDirectories() {
   }
 }
 
+/**
+ * Detect system package manager
+ * @returns {object} Package manager info with install command
+ */
+function detectPackageManager() {
+  const managers = [
+    { cmd: 'apt', name: 'apt', installCmd: 'sudo apt update && sudo apt install -y' },
+    { cmd: 'dnf', name: 'dnf', installCmd: 'sudo dnf install -y' },
+    { cmd: 'pacman', name: 'pacman', installCmd: 'sudo pacman -S --noconfirm' },
+    { cmd: 'zypper', name: 'zypper', installCmd: 'sudo zypper install -y' }
+  ];
+
+  for (const manager of managers) {
+    try {
+      execSync(`which ${manager.cmd}`, { stdio: 'ignore' });
+      return manager;
+    } catch {
+      // Try next manager
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Install a package using the system package manager
+ * @param {string} packageName - Package name to install
+ * @param {string} displayName - Display name for logging
+ * @returns {boolean} Success status
+ */
+function installPackage(packageName, displayName) {
+  const pkgManager = detectPackageManager();
+
+  if (!pkgManager) {
+    log('yellow', `  ⚠️  No supported package manager found (apt/dnf/pacman/zypper)`);
+    log('cyan', `  Please install ${displayName} manually`);
+    return false;
+  }
+
+  log('cyan', `  Installing ${displayName} via ${pkgManager.name}...`);
+
+  try {
+    execSync(`${pkgManager.installCmd} ${packageName}`, { stdio: 'inherit' });
+    log('green', `  ✓ ${displayName} installed successfully`);
+    return true;
+  } catch (err) {
+    log('yellow', `  ⚠️  Failed to install ${displayName}: ${err.message}`);
+    log('cyan', `  Install manually: ${pkgManager.installCmd} ${packageName}`);
+    return false;
+  }
+}
+
 function checkDependencies() {
   const optional = [];
   const required = [];
@@ -1301,72 +1353,183 @@ function recommendOptimalModel(capabilities) {
  * Phase 5: Wayland-specific setup (ydotool + GNOME shortcuts)
  * Detects Wayland and offers automated setup for text injection and hotkeys
  */
+/**
+ * Phase 5: Auto-install system dependencies based on detected environment
+ * Detects display server (X11/Wayland), desktop environment, and installs required packages
+ */
 async function setupWaylandIntegration() {
+  log('cyan', '\n🔍 Detecting system environment...');
+
   const isWayland = process.env.WAYLAND_DISPLAY || process.env.XDG_SESSION_TYPE === 'wayland';
-
-  if (!isWayland) {
-    log('cyan', '\nℹ X11 detected - ydotool not needed');
-    return { ydotoolSetup: false, gnomeShortcuts: false };
-  }
-
-  log('cyan', '\n📱 Wayland detected - setting up text injection...');
+  const isGnome = (process.env.XDG_CURRENT_DESKTOP === 'ubuntu:GNOME' ||
+                   process.env.XDG_CURRENT_DESKTOP === 'GNOME');
+  const isSway = process.env.SWAYSOCK && process.env.XDG_CURRENT_DESKTOP?.toLowerCase().includes('sway');
+  const isKDE = process.env.XDG_CURRENT_DESKTOP?.toLowerCase().includes('kde');
 
   const results = {
-    ydotoolSetup: false,
+    displayServer: isWayland ? 'wayland' : 'x11',
+    desktopEnvironment: isGnome ? 'gnome' : (isSway ? 'sway' : (isKDE ? 'kde' : 'unknown')),
+    textInjectionTool: null,
+    pipewireInstalled: false,
     gnomeShortcuts: false
   };
 
-  // Check if ydotool is installed
-  try {
-    execSync('which ydotool', { stdio: 'ignore' });
-    log('green', '✓ ydotool already installed');
-    results.ydotoolSetup = true;
-  } catch {
-    log('yellow', '⚠️  ydotool not installed (required for text injection on Wayland)');
-    log('cyan', '\n📦 Installing ydotool automatically...');
+  // Display detection results
+  log('green', `✓ Display Server: ${results.displayServer.toUpperCase()}`);
+  log('green', `✓ Desktop Environment: ${results.desktopEnvironment.toUpperCase()}`);
+
+  // 1. Install text injection tool based on environment
+  if (isWayland) {
+    log('cyan', '\n📱 Wayland detected - setting up text injection...');
+
+    if (isGnome) {
+      // GNOME Wayland needs ydotool with full setup (udev, input group, etc.)
+      try {
+        execSync('which ydotool', { stdio: 'ignore' });
+        log('green', '✓ ydotool already installed');
+        results.textInjectionTool = 'ydotool';
+      } catch {
+        log('yellow', '⚠️  ydotool not installed (required for GNOME Wayland)');
+        log('cyan', '\n📦 Installing ydotool with full setup...');
+
+        try {
+          const setupScript = path.join(__dirname, 'scripts', 'setup-ydotool.sh');
+          if (fs.existsSync(setupScript)) {
+            execSync(`bash "${setupScript}"`, { stdio: 'inherit' });
+            results.textInjectionTool = 'ydotool';
+            log('green', '✓ ydotool setup completed');
+          } else {
+            log('yellow', '  Setup script not found, falling back to direct install');
+            if (installPackage('ydotool', 'ydotool')) {
+              results.textInjectionTool = 'ydotool';
+              log('yellow', '  ⚠️  Note: May need manual udev/group configuration');
+              log('cyan', '  Run: ./scripts/setup-ydotool.sh for complete setup');
+            }
+          }
+        } catch (err) {
+          log('yellow', `  ⚠️  Automated setup failed: ${err.message}`);
+          log('cyan', '  Install manually: sudo apt install ydotool');
+          log('cyan', '  Or run: ./scripts/setup-ydotool.sh');
+        }
+      }
+
+      // Setup GNOME keyboard shortcuts
+      log('cyan', '\n⌨️  Configuring GNOME keyboard shortcuts...');
+      try {
+        const setupScript = path.join(__dirname, 'scripts', 'setup-gnome-shortcuts.sh');
+        if (fs.existsSync(setupScript)) {
+          execSync(`bash "${setupScript}"`, { stdio: 'inherit' });
+          results.gnomeShortcuts = true;
+          log('green', '✓ GNOME keyboard shortcuts configured');
+          log('cyan', '  Hotkey: Super+Shift+D to toggle recording');
+        } else {
+          log('yellow', '  Setup script not found, skipping');
+        }
+      } catch (err) {
+        log('yellow', `  ⚠️  Could not auto-configure shortcuts: ${err.message}`);
+        log('cyan', '  Run manually: ./scripts/setup-gnome-shortcuts.sh');
+      }
+
+    } else if (isSway || isKDE) {
+      // Sway and KDE Wayland need wtype
+      try {
+        execSync('which wtype', { stdio: 'ignore' });
+        log('green', '✓ wtype already installed');
+        results.textInjectionTool = 'wtype';
+      } catch {
+        log('yellow', `⚠️  wtype not installed (required for ${results.desktopEnvironment.toUpperCase()} Wayland)`);
+        log('cyan', '\n📦 Installing wtype...');
+
+        if (installPackage('wtype', 'wtype')) {
+          results.textInjectionTool = 'wtype';
+        }
+      }
+
+      if (isSway) {
+        log('cyan', '\n⌨️  Sway detected - hotkeys require manual configuration');
+        log('cyan', '  Add to ~/.config/sway/config:');
+        log('cyan', '  bindsym $mod+Shift+d exec sh -c \'echo "{\\"action\\": \\"toggle\\"}" | nc -U /tmp/swictation.sock\'');
+      }
+    } else {
+      // Unknown Wayland compositor - suggest wtype as generic option
+      log('yellow', '\n⚠️  Unknown Wayland compositor detected');
+      log('cyan', '  Attempting to install wtype (generic Wayland text injection)...');
+
+      try {
+        execSync('which wtype', { stdio: 'ignore' });
+        log('green', '✓ wtype already installed');
+        results.textInjectionTool = 'wtype';
+      } catch {
+        if (installPackage('wtype', 'wtype')) {
+          results.textInjectionTool = 'wtype';
+        }
+      }
+    }
+
+  } else {
+    // X11 environment needs xdotool
+    log('cyan', '\n🖥️  X11 detected - setting up text injection...');
 
     try {
-      const setupScript = path.join(__dirname, 'scripts', 'setup-ydotool.sh');
-      if (fs.existsSync(setupScript)) {
-        execSync(`bash "${setupScript}"`, { stdio: 'inherit' });
-        results.ydotoolSetup = true;
-        log('green', '✓ ydotool setup completed');
-      } else {
-        log('yellow', '  Setup script not found, skipping auto-install');
-        log('cyan', '  Run manually: sudo apt install ydotool');
+      execSync('which xdotool', { stdio: 'ignore' });
+      log('green', '✓ xdotool already installed');
+      results.textInjectionTool = 'xdotool';
+    } catch {
+      log('yellow', '⚠️  xdotool not installed (required for X11)');
+      log('cyan', '\n📦 Installing xdotool...');
+
+      if (installPackage('xdotool', 'xdotool')) {
+        results.textInjectionTool = 'xdotool';
       }
-    } catch (err) {
-      log('yellow', `  ⚠️  Automated setup failed: ${err.message}`);
-      log('cyan', '  Install manually: sudo apt install ydotool');
-      log('cyan', '  Or run: ./scripts/setup-ydotool.sh');
     }
   }
 
-  // Check if GNOME and offer keyboard shortcut setup
-  const isGnome = (process.env.XDG_CURRENT_DESKTOP === 'ubuntu:GNOME' ||
-                   process.env.XDG_CURRENT_DESKTOP === 'GNOME');
+  // 2. Check and install pipewire (needed for all environments)
+  log('cyan', '\n🎵 Checking for pipewire (audio system)...');
 
-  if (isGnome) {
-    log('cyan', '\n⌨️  GNOME Wayland detected - configuring keyboard shortcuts...');
+  try {
+    execSync('which pipewire', { stdio: 'ignore' });
+    log('green', '✓ pipewire already installed');
+    results.pipewireInstalled = true;
+  } catch {
+    log('yellow', '⚠️  pipewire not installed (recommended for audio capture)');
+    log('cyan', '\n📦 Installing pipewire...');
 
-    try {
-      const setupScript = path.join(__dirname, 'scripts', 'setup-gnome-shortcuts.sh');
-      if (fs.existsSync(setupScript)) {
-        execSync(`bash "${setupScript}"`, { stdio: 'inherit' });
-        results.gnomeShortcuts = true;
-        log('green', '✓ GNOME keyboard shortcuts configured');
-        log('cyan', '  Hotkey: Super+Shift+D to toggle recording');
-      } else {
-        log('yellow', '  Setup script not found, skipping');
-      }
-    } catch (err) {
-      log('yellow', `  ⚠️  Could not auto-configure shortcuts: ${err.message}`);
-      log('cyan', '  Run manually: ./scripts/setup-gnome-shortcuts.sh');
+    // Different package names for different distros
+    const pkgManager = detectPackageManager();
+    let pipewirePkg = 'pipewire';
+
+    if (pkgManager?.name === 'apt') {
+      pipewirePkg = 'pipewire pipewire-pulse';
+    } else if (pkgManager?.name === 'dnf') {
+      pipewirePkg = 'pipewire pipewire-pulseaudio';
+    } else if (pkgManager?.name === 'pacman') {
+      pipewirePkg = 'pipewire pipewire-pulse';
     }
-  } else if (process.env.SWAYSOCK && process.env.XDG_CURRENT_DESKTOP?.toLowerCase().includes('sway')) {
-    log('cyan', '\n⌨️  Sway detected - hotkeys require manual configuration');
-    log('cyan', '  Add to ~/.config/sway/config:');
-    log('cyan', '  bindsym $mod+Shift+d exec sh -c \'echo "{\\"action\\": \\"toggle\\"}" | nc -U /tmp/swictation.sock\'');
+
+    if (installPackage(pipewirePkg, 'pipewire')) {
+      results.pipewireInstalled = true;
+      log('cyan', '  Note: You may need to restart your session for pipewire to take effect');
+    }
+  }
+
+  // 3. Check for netcat (needed for socket communication)
+  try {
+    execSync('which nc', { stdio: 'ignore' });
+  } catch {
+    log('cyan', '\n🔌 Installing netcat (for CLI communication)...');
+    const pkgManager = detectPackageManager();
+    let netcatPkg = 'netcat';
+
+    if (pkgManager?.name === 'apt') {
+      netcatPkg = 'netcat-openbsd';
+    } else if (pkgManager?.name === 'dnf') {
+      netcatPkg = 'nmap-ncat';
+    } else if (pkgManager?.name === 'pacman') {
+      netcatPkg = 'openbsd-netcat';
+    }
+
+    installPackage(netcatPkg, 'netcat');
   }
 
   return results;
