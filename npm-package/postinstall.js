@@ -5,6 +5,7 @@ const path = require('path');
 const { execSync } = require('child_process');
 const os = require('os');
 const https = require('https');
+const { checkNvidiaHibernationStatus } = require('./src/nvidia-hibernation-setup');
 
 // Environment variable support for model test-loading
 // By default, model testing runs when GPU is detected
@@ -1434,6 +1435,49 @@ async function enableAndStartService() {
   return results;
 }
 
+/**
+ * Phase 7: Check if NVIDIA hibernation configuration is needed
+ * Detects laptop + NVIDIA GPU and checks if hibernation support is configured
+ */
+async function checkNvidiaHibernation() {
+  try {
+    const status = checkNvidiaHibernationStatus();
+
+    if (!status.isLaptop) {
+      log('green', '✓ Not a laptop - NVIDIA hibernation check skipped');
+      return;
+    }
+
+    if (!status.hasNvidiaGpu) {
+      log('cyan', 'ℹ No NVIDIA GPU detected');
+      return;
+    }
+
+    log('green', `✓ Detected: Laptop with NVIDIA GPU`);
+    log('cyan', `  Distribution: ${status.distribution}`);
+
+    if (status.isConfigured) {
+      log('green', '✓ NVIDIA hibernation support already configured');
+      return;
+    }
+
+    // NVIDIA GPU on laptop without hibernation configuration
+    log('yellow', '\n⚠️  NVIDIA Hibernation Support Not Configured');
+    log('yellow', '   Without this, your GPU may enter a defunct state after hibernation,');
+    log('yellow', '   causing CUDA errors (719/999) and requiring a reboot.\n');
+    log('cyan', '   To configure hibernation support, run:');
+    log('green', '   sudo swictation setup\n');
+    log('cyan', '   This will:');
+    log('cyan', '   - Set NVreg_PreserveVideoMemoryAllocations=1');
+    log('cyan', '   - Create /etc/modprobe.d/nvidia-power-management.conf');
+    log('cyan', '   - Update initramfs');
+    log('cyan', '   - Require a reboot\n');
+
+  } catch (err) {
+    log('yellow', `⚠️  Error checking NVIDIA hibernation status: ${err.message}`);
+  }
+}
+
 function showNextSteps() {
   log('green', '\n✨ Swictation installed successfully!');
 
@@ -1646,6 +1690,10 @@ async function main() {
     // Phase 6: Auto-enable and start systemd service
     log('cyan', '\n═══ Phase 6: Service Activation ═══');
     const serviceResults = await enableAndStartService();
+
+    // Phase 7: Check NVIDIA hibernation configuration (laptops only)
+    log('cyan', '\n═══ Phase 7: NVIDIA Hibernation Check ═══');
+    await checkNvidiaHibernation();
 
     // Final checks and next steps
     checkDependencies();

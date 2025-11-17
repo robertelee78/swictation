@@ -46,6 +46,7 @@
     "docs/",
     "templates/",
     "scripts/",
+    "tests/",
     "postinstall.js",
     "README.md"
   ],

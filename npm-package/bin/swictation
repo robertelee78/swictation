@@ -7,6 +7,7 @@ const os = require('os');
 const chalk = require('chalk');
 const inquirer = require('inquirer');
 const which = require('which');
+const { configureNvidiaHibernation, checkNvidiaHibernationStatus } = require('../src/nvidia-hibernation-setup');
 
 // Binary locations
 const binDir = path.join(__dirname, '..');
@@ -246,6 +247,50 @@ async function handleSetup() {
     } catch (err) {
       console.error(chalk.yellow('Warning: Could not enable auto-start'), err.message);
     }
+  }
+
+  // Check for NVIDIA hibernation configuration (laptops only)
+  console.log(chalk.cyan('\n📱 Checking NVIDIA hibernation support...'));
+  const nvidiaStatus = checkNvidiaHibernationStatus();
+
+  if (nvidiaStatus.needsConfiguration) {
+    console.log(chalk.yellow('\n⚠️  NVIDIA hibernation support not configured'));
+    console.log(chalk.gray('   This is required to prevent GPU errors after laptop hibernation'));
+
+    const { configureNvidia } = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'configureNvidia',
+        message: 'Configure NVIDIA hibernation support now? (requires sudo)',
+        default: true
+      }
+    ]);
+
+    if (configureNvidia) {
+      console.log(chalk.cyan('\n🔧 Configuring NVIDIA hibernation support...'));
+      const result = await configureNvidiaHibernation({
+        interactive: false,
+        log: (msg) => console.log(chalk.cyan(msg))
+      });
+
+      if (result.success) {
+        console.log(chalk.green('✓ NVIDIA hibernation configured'));
+        if (result.needsReboot) {
+          console.log(chalk.yellow('⚠️  Reboot required for changes to take effect'));
+        }
+      } else {
+        console.log(chalk.red('✗ Configuration failed:'), result.message);
+      }
+    } else {
+      console.log(chalk.yellow('⚠️  Skipping NVIDIA configuration'));
+      console.log(chalk.cyan('   You can configure later by running: sudo swictation setup'));
+    }
+  } else if (nvidiaStatus.isLaptop && nvidiaStatus.hasNvidiaGpu && nvidiaStatus.isConfigured) {
+    console.log(chalk.green('✓ NVIDIA hibernation support already configured'));
+  } else if (!nvidiaStatus.isLaptop) {
+    console.log(chalk.cyan('ℹ Not a laptop - NVIDIA hibernation check skipped'));
+  } else if (!nvidiaStatus.hasNvidiaGpu) {
+    console.log(chalk.cyan('ℹ No NVIDIA GPU detected'));
   }
 
   console.log(chalk.green('\n✓ Setup complete!'));
