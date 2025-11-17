@@ -598,24 +598,27 @@ async function downloadGPULibraries() {
       fs.mkdirSync(gpuLibsDir, { recursive: true });
     }
 
-    // Check if GPU libs are already installed
-    const requiredLibs = [
-      'libonnxruntime.so.1.20.1',
-      'libonnxruntime_providers_shared.so',
-      'libonnxruntime_providers_cuda.so',
-      'libsherpa-onnx-c-api.so',
-      'libsherpa-onnx-cxx-api.so'
-    ];
+    // Check if GPU libs are already installed by checking metadata file
+    const configDir = path.join(os.homedir(), '.config', 'swictation');
+    const gpuPackageInfoPath = path.join(configDir, 'gpu-package-info.json');
 
-    const existingLibs = requiredLibs.filter(lib =>
-      fs.existsSync(path.join(gpuLibsDir, lib))
-    );
+    let skipDownload = false;
+    if (fs.existsSync(gpuPackageInfoPath)) {
+      try {
+        const existingMetadata = JSON.parse(fs.readFileSync(gpuPackageInfoPath, 'utf8'));
+        if (existingMetadata.version === GPU_LIBS_VERSION && existingMetadata.variant === variant) {
+          skipDownload = true;
+          log('green', `  ✓ GPU libraries v${GPU_LIBS_VERSION} (${variant}) already installed`);
+          log('cyan', `    Location: ${gpuLibsDir}`);
+          log('cyan', `    Installed: ${existingMetadata.installedAt}`);
+          log('cyan', `    Skipping download to save time and bandwidth`);
+        }
+      } catch (err) {
+        log('yellow', `    Warning: Could not read GPU package metadata: ${err.message}`);
+      }
+    }
 
-    if (existingLibs.length === requiredLibs.length) {
-      log('green', `  ✓ GPU libraries v${GPU_LIBS_VERSION} already installed`);
-      log('cyan', `    Location: ${gpuLibsDir}`);
-      log('cyan', `    Skipping download to save time and bandwidth`);
-    } else {
+    if (!skipDownload) {
       // Download tarball
       log('cyan', `  Downloading ${variant} package...`);
       log('cyan', `  URL: ${releaseUrl}`);
@@ -643,34 +646,31 @@ async function downloadGPULibraries() {
       // Cleanup
       fs.unlinkSync(tarPath);
       execSync(`rm -rf "${path.join(tmpDir, variant)}"`, { stdio: 'ignore' });
+
+      // Save GPU package info for systemd service generation
+      const packageMetadata = {
+        variant: packageInfo.variant,
+        architectures: packageInfo.architectures,
+        smVersion: gpuInfo.smVersion,
+        computeCap: gpuInfo.computeCap,
+        gpuName: gpuInfo.gpuName,
+        version: GPU_LIBS_VERSION,
+        libsPath: gpuLibsDir,
+        installedAt: new Date().toISOString()
+      };
+
+      try {
+        fs.writeFileSync(gpuPackageInfoPath, JSON.stringify(packageMetadata, null, 2));
+        log('green', `   ✓ Saved package metadata to ${gpuPackageInfoPath}`);
+      } catch (err) {
+        log('yellow', `   ⚠️  Could not save package metadata: ${err.message}`);
+      }
     }
 
     log('green', '\n✅ GPU acceleration enabled!');
     log('cyan', `   Architecture: ${packageInfo.architectures}`);
     log('cyan', `   Libraries: ${gpuLibsDir}`);
     log('cyan', '   Your system will use CUDA for faster transcription\n');
-
-    // Save GPU package info for systemd service generation
-    const configDir = path.join(os.homedir(), '.config', 'swictation');
-    const gpuPackageInfoPath = path.join(configDir, 'gpu-package-info.json');
-
-    const packageMetadata = {
-      variant: packageInfo.variant,
-      architectures: packageInfo.architectures,
-      smVersion: gpuInfo.smVersion,
-      computeCap: gpuInfo.computeCap,
-      gpuName: gpuInfo.gpuName,
-      version: GPU_LIBS_VERSION,
-      libsPath: gpuLibsDir,
-      installedAt: new Date().toISOString()
-    };
-
-    try {
-      fs.writeFileSync(gpuPackageInfoPath, JSON.stringify(packageMetadata, null, 2));
-      log('green', `   ✓ Saved package metadata to ${gpuPackageInfoPath}`);
-    } catch (err) {
-      log('yellow', `   ⚠️  Could not save package metadata: ${err.message}`);
-    }
 
   } catch (err) {
     log('yellow', `\n⚠️  Failed to download GPU libraries: ${err.message}`);
