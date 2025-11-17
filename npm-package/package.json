@@ -52,7 +52,9 @@
   ],
   "scripts": {
     "postinstall": "node postinstall.js",
-    "test": "node test.js"
+    "test": "node test.js",
+    "build": "./scripts/build-release.sh",
+    "prepublishOnly": "./scripts/build-release.sh"
   },
   "engines": {
     "node": ">=18.0.0"
