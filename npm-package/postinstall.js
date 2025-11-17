@@ -1363,7 +1363,8 @@ async function setupWaylandIntegration() {
   const isWayland = process.env.WAYLAND_DISPLAY || process.env.XDG_SESSION_TYPE === 'wayland';
   const isGnome = (process.env.XDG_CURRENT_DESKTOP === 'ubuntu:GNOME' ||
                    process.env.XDG_CURRENT_DESKTOP === 'GNOME');
-  const isSway = process.env.SWAYSOCK && process.env.XDG_CURRENT_DESKTOP?.toLowerCase().includes('sway');
+  // SWAYSOCK is the definitive Sway indicator (XDG_CURRENT_DESKTOP often not set in Sway)
+  const isSway = !!process.env.SWAYSOCK || process.env.XDG_CURRENT_DESKTOP?.toLowerCase().includes('sway');
   const isKDE = process.env.XDG_CURRENT_DESKTOP?.toLowerCase().includes('kde');
 
   const results = {

@@ -315,7 +315,34 @@ impl HotkeyManager {
             .context("Failed to create config backup")?;
         debug!("Created backup at: {}", backup_path);
 
-        // Append hotkeys to config (simplified - just toggle)
+        // Remove any existing Swictation blocks (clean up old configs)
+        let mut cleaned_content = String::new();
+        let mut in_swictation_block = false;
+
+        for line in config_content.lines() {
+            // Detect start of Swictation block (both old and new formats)
+            if line.contains("# Swictation") || line.contains("#Swictation") {
+                in_swictation_block = true;
+                continue;
+            }
+
+            // Skip lines in Swictation block
+            if in_swictation_block {
+                // End block when we hit a non-swictation line (empty line or different section)
+                if line.trim().is_empty() || (!line.trim_start().starts_with("bindsym") && !line.trim_start().starts_with('#')) {
+                    in_swictation_block = false;
+                    cleaned_content.push_str(line);
+                    cleaned_content.push('\n');
+                }
+                // Skip all swictation-related bindings
+                continue;
+            }
+
+            cleaned_content.push_str(line);
+            cleaned_content.push('\n');
+        }
+
+        // Append new simplified hotkey config
         let hotkey_config = format!(
             r#"
 # Swictation
@@ -324,7 +351,7 @@ bindsym {} exec swictation toggle
             toggle_key
         );
 
-        std::fs::write(&sway_config_path, format!("{}{}", config_content, hotkey_config))
+        std::fs::write(&sway_config_path, format!("{}{}", cleaned_content, hotkey_config))
             .context("Failed to write Sway config")?;
 
         info!("✓ Hotkeys added to Sway config");
