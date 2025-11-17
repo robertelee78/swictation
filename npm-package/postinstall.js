@@ -1198,6 +1198,10 @@ async function testModelsInOrder(gpuInfo, daemonBin, ortLibPath) {
     const result = await testLoadModel(model, daemonBin, ortLibPath);
     if (result.success) {
       log('green', `\n  ✓ Selected: ${model} (verified working)`);
+
+      // Update config with tested model (if config exists and is on "auto")
+      updateConfigWithTestedModel(model);
+
       return {
         recommendedModel: model,
         tested: true,
@@ -1518,6 +1522,45 @@ function showNextSteps() {
   console.log('For more information:');
   log('cyan', '  swictation help');
   console.log('');
+}
+
+/**
+ * Update config.toml with tested/recommended model while preserving user settings
+ * @param {string} testedModel - The model that was successfully tested (e.g., '0.6b-gpu', '1.1b-gpu')
+ */
+function updateConfigWithTestedModel(testedModel) {
+  const configDir = path.join(os.homedir(), '.config', 'swictation');
+  const configPath = path.join(configDir, 'config.toml');
+
+  if (!fs.existsSync(configPath)) {
+    // No config exists, will be created by main()
+    return;
+  }
+
+  try {
+    let configContent = fs.readFileSync(configPath, 'utf8');
+
+    // Parse current config to check if user has customized it
+    const currentOverride = configContent.match(/stt_model_override\s*=\s*"([^"]+)"/);
+
+    if (currentOverride && currentOverride[1] === 'auto') {
+      // Only update if it's still on "auto" - user hasn't customized it
+      configContent = configContent.replace(
+        /stt_model_override\s*=\s*"auto"/,
+        `stt_model_override = "${testedModel}"`
+      );
+
+      fs.writeFileSync(configPath, configContent);
+      log('green', `  ✓ Updated config: stt_model_override = "${testedModel}"`);
+      log('cyan', `    Config file: ${configPath}`);
+    } else if (currentOverride) {
+      log('cyan', `  ℹ Config already customized: stt_model_override = "${currentOverride[1]}"`);
+      log('cyan', `    Recommended model: ${testedModel}`);
+      log('cyan', `    To use tested model, edit: ${configPath}`);
+    }
+  } catch (err) {
+    log('yellow', `  ⚠️  Could not update config: ${err.message}`);
+  }
 }
 
 // Main postinstall process
