@@ -12,6 +12,27 @@ from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QCursor
 from PySide6.QtCore import QObject, Signal, QTimer, QEvent, Qt, Slot
 
 
+def get_socket_path() -> str:
+    """Get socket path using XDG_RUNTIME_DIR or fallback to ~/.local/share/swictation.
+
+    Matches the Rust daemon's socket_utils::get_ipc_socket_path() logic.
+    """
+    # Try XDG_RUNTIME_DIR first (best practice for sockets)
+    runtime_dir = os.environ.get('XDG_RUNTIME_DIR')
+    if runtime_dir and os.path.exists(runtime_dir):
+        return os.path.join(runtime_dir, 'swictation.sock')
+
+    # Fallback to ~/.local/share/swictation/swictation.sock
+    home = os.environ.get('HOME')
+    if home:
+        socket_dir = os.path.join(home, '.local', 'share', 'swictation')
+        os.makedirs(socket_dir, mode=0o700, exist_ok=True)
+        return os.path.join(socket_dir, 'swictation.sock')
+
+    # Final fallback (should rarely happen)
+    return '/tmp/swictation.sock'
+
+
 class TrayEventFilter(QObject):
     """Event filter to intercept tray icon right-clicks before Qt's buggy Wayland handler.
 
@@ -50,6 +71,8 @@ class SwictationTrayApp(QApplication):
 
         # Setup paths
         self.icon_path = Path(__file__).parent.parent.parent / "docs" / "swictation_logo.png"
+        self.socket_path = get_socket_path()
+        print(f"Using socket path: {self.socket_path}")
 
         # Track Tauri UI process
         self.tauri_process = None
@@ -133,7 +156,7 @@ class SwictationTrayApp(QApplication):
         try:
             sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             sock.settimeout(2.0)
-            sock.connect('/tmp/swictation.sock')
+            sock.connect(self.socket_path)
             sock.sendall(json.dumps({'action': 'toggle'}).encode('utf-8'))
             response = sock.recv(1024)
             sock.close()
@@ -172,7 +195,7 @@ class SwictationTrayApp(QApplication):
         try:
             sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             sock.settimeout(0.5)  # Short timeout for status check
-            sock.connect('/tmp/swictation.sock')
+            sock.connect(self.socket_path)
             sock.sendall(json.dumps({'action': 'status'}).encode('utf-8'))
             response = sock.recv(1024)
             sock.close()
