@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.9] - 2025-11-17
+
+### Fixed
+- **Sway Desktop Detection** - Fixed detection to use `SWAYSOCK` as primary indicator (XDG_CURRENT_DESKTOP often not set)
+- **Stale Binary Issue** - Updated daemon binary that was accidentally stuck at commit d332855 in v0.4.8
+
+### Added
+- **Pre-release Build Script** - Automatic `prepublishOnly` hook ensures binaries are always fresh before npm publish
+- **Sway Config Cleanup** - Daemon now removes old Swictation config blocks before adding new ones
+
+### Technical
+- Build script verifies binary integrity with SHA256 checksums
+- Prevents duplicate/conflicting hotkey bindings from accumulating
+
 ## [0.4.8] - 2025-11-17
 
 ### Fixed
