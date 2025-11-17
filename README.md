@@ -64,7 +64,7 @@ Swictation automatically detects your GPU architecture and downloads optimized l
 - Quadro K series
 - System automatically falls back to CPU mode
 
-For more details, see [GPU Library Packages Documentation](docs/GPU_LIBRARY_PACKAGES.md).
+For more details, see [GPU Library Packages Documentation](docs/implementation/gpu-multi-package-guide.md).
 
 ### Installation (Recommended: npm)
 
@@ -81,10 +81,10 @@ npm install -g swictation --foreground-scripts
 
 # The postinstall script will:
 # - Detect your GPU architecture (sm_50-120) and download optimized libraries (~1.5GB)
-# - Measure VRAM and recommend optimal AI model (1.1B for 6GB+, 0.6B for 4GB+)
+# - Measure VRAM and recommend optimal AI model (1.1B for 6GB+, 0.6B for 3.5GB+)
 # - Test-load the model to verify it works (~30-60 seconds)
 # - Install systemd services automatically
-# - Configure Sway/i3 hotkeys
+# - Display hotkey setup instructions (manual configuration required)
 
 # ⏱️  Note: Installation includes model test-loading (30-60s)
 # This verifies GPU/VRAM compatibility before first use
@@ -192,10 +192,12 @@ external/midstream/         # Text transformation (Git submodule)
 - Silero VAD v6 (August 2024, 16% less errors)
 - Parakeet-TDT-1.1B via parakeet-rs (5.77% WER)
 
-**Minimal Python Dependencies:**
-- **Core daemon** is **100% Rust** (no Python in critical path)
-- **Optional Python** for Sway system tray (PySide6) - Wayland compatibility layer
-- **Optional Python** for CLI utilities (config parsing, daemon control)
+**Architecture Details:**
+- **Core transcription daemon** is **100% Rust** (no Python runtime required)
+- **Optional Python utilities** in `src/` directory:
+  - System tray UI (`swictation_tray.py` - PySide6 for Wayland compatibility)
+  - Configuration loader (`config_loader.py` - TOML parsing utilities)
+  - CLI tools (`swictation_cli.py` - daemon control via Unix socket)
 - systemd service executes pure Rust: `swictation-daemon` binary
 - Python not required for transcription - only for optional UI/tools
 
@@ -647,6 +649,44 @@ Step-by-step testing procedures including:
 - 8 comprehensive test scenarios
 - Performance benchmarking
 - Bug reporting procedures
+
+---
+
+## **Advanced Features** 🚀
+
+### Real-time Metrics Broadcasting
+
+Swictation includes a metrics broadcasting system for monitoring and integration:
+
+- **Unix Socket:** `/tmp/swictation_metrics.sock`
+- **Protocol:** JSON messages with performance data
+- **Metrics:** Audio levels, VAD probabilities, transcription latency
+- **Integration:** Connect third-party monitoring tools
+
+### Session Database
+
+Persistent session tracking and analytics:
+
+- **Storage:** SQLite database at `~/.local/share/swictation/metrics.db`
+- **Data:** Recording sessions, performance metrics, usage patterns
+- **Privacy:** All data stored locally, never transmitted
+
+### Memory Pressure Monitoring
+
+Automatic resource management:
+
+- **VRAM Monitoring:** Real-time GPU memory tracking
+- **RAM Monitoring:** System memory usage alerts
+- **Thresholds:** Warnings at 80% usage
+- **Adaptation:** Performance tuning based on available resources
+
+### Keyboard Shortcut Injection
+
+Beyond text, Swictation can inject keyboard shortcuts:
+
+- **Syntax:** `<KEY:ctrl-c>`, `<KEY:alt-tab>`
+- **Use Case:** Voice-controlled application switching
+- **Configuration:** Custom shortcuts in config.toml
 
 ---
 

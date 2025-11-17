@@ -65,8 +65,25 @@ class ModelDownloader {
    */
   checkHuggingFaceCli() {
     try {
-      execSync('hf version', { stdio: 'ignore' });
-      return true;
+      // Try common locations for hf CLI
+      const paths = [
+        'hf',
+        `${os.homedir()}/.local/bin/hf`,
+        '/usr/local/bin/hf',
+        '/usr/bin/hf'
+      ];
+
+      for (const hfPath of paths) {
+        try {
+          execSync(`${hfPath} version`, { stdio: 'ignore' });
+          // Store the working path for later use
+          this.hfPath = hfPath;
+          return true;
+        } catch {
+          // Try next path
+        }
+      }
+      return false;
     } catch {
       return false;
     }
@@ -174,7 +191,7 @@ class ModelDownloader {
       // Note: We don't use --include because it's unreliable with hf CLI
       // Just download all files from the repository
 
-      const proc = spawn('hf', args, {
+      const proc = spawn(this.hfPath || 'hf', args, {
         stdio: this.verbose ? 'inherit' : 'pipe'
       });
 

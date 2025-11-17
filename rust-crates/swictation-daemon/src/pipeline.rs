@@ -374,8 +374,19 @@ impl Pipeline {
                                 // "hello comma world" → "hello, world"
                                 let transform_start = Instant::now();
 
+                                // IMPORTANT: 0.6B model via sherpa-rs adds auto-punctuation/capitalization
+                                // Strip it before Secretary Mode transformation to prevent double punctuation
+                                let cleaned_text = text
+                                    .to_lowercase()  // Remove auto-capitalization
+                                    .replace(",", "")  // Remove auto-added commas
+                                    .replace(".", "")  // Remove auto-added periods
+                                    .replace("?", "")  // Remove auto-added question marks
+                                    .replace("!", "")  // Remove auto-added exclamation points
+                                    .replace(";", "")  // Remove auto-added semicolons
+                                    .replace(":", "");  // Remove auto-added colons
+
                                 // Step 1: Process capital commands first ("capital r robert" → "Robert")
-                                let with_capitals = process_capital_commands(&text);
+                                let with_capitals = process_capital_commands(&cleaned_text);
 
                                 // Step 2: Transform punctuation ("comma" → ",")
                                 let transformed = transform(&with_capitals);
@@ -518,8 +529,19 @@ impl Pipeline {
                     // Transform voice commands → symbols (Midstream)
                     let transform_start = Instant::now();
 
+                    // IMPORTANT: 0.6B model via sherpa-rs adds auto-punctuation/capitalization
+                    // Strip it before Secretary Mode transformation to prevent double punctuation
+                    let cleaned_text = text
+                        .to_lowercase()  // Remove auto-capitalization
+                        .replace(",", "")  // Remove auto-added commas
+                        .replace(".", "")  // Remove auto-added periods
+                        .replace("?", "")  // Remove auto-added question marks
+                        .replace("!", "")  // Remove auto-added exclamation points
+                        .replace(";", "")  // Remove auto-added semicolons
+                        .replace(":", "");  // Remove auto-added colons
+
                     // Step 1: Process capital commands first
-                    let with_capitals = process_capital_commands(&text);
+                    let with_capitals = process_capital_commands(&cleaned_text);
 
                     // Step 2: Transform punctuation
                     let transformed = transform(&with_capitals);
