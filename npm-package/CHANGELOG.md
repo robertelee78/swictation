@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.7] - 2025-11-16
+
+### Added
+- **MidStream SSH Integration** - Updated midstream submodule to use SSH URL for better development workflows
+
+### Fixed
+- **Number Conversion with Year Patterns** - Comprehensive number-to-digit conversion with year pattern support
+- **NVIDIA Hibernation Detection** - Proper GPU hibernation check using `/proc/driver/nvidia/params`
+
+### Documentation
+- Restructured README to eliminate redundancy
+- Added comprehensive task implementation documentation
+
 ## [0.4.6] - 2025-11-16
 
 ### Fixed

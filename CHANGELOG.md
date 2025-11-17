@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.7] - 2025-11-16
+
+### Added
+- **MidStream SSH Integration** - Updated midstream submodule to use SSH URL for better development workflows
+
+### Fixed
+- **Number Conversion with Year Patterns** - Implemented comprehensive number-to-digit conversion with support for year patterns (e.g., "twenty twenty-four" → "2024")
+- **NVIDIA Hibernation Detection** - Fixed GPU hibernation check to properly read `/proc/driver/nvidia/params` instead of unreliable sysfs nodes
+
 ### Changed
 - **Bounded Channels with Backpressure (Issue #1 & #2)**
   - Replaced unbounded channels with bounded capacity limits:
