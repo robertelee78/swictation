@@ -27,7 +27,7 @@ npm install -g swictation --foreground-scripts
   - Say "mr smith said quote hello quote" → Get "Mr. Smith said 'Hello'"
   - Automatic capitalization, punctuation, numbers, quotes, formatting
   - **[→ Full Secretary Mode Guide](https://github.com/robertelee78/swictation/blob/main/docs/secretary-mode.md)**
-- 🔄 **Smart text transformation** - MidStream Rust library (~1µs latency)
+- 🔄 **Smart text transformation** - MidStream Rust library (~5µs latency)
 - ⚡ **Low latency** - Pure Rust implementation with CUDA acceleration
 - 🖥️ **Wayland & X11 Support** - Full dual display server support
 - 🎯 **Hotkey support** - Auto-configured on GNOME, manual setup on Sway

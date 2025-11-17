@@ -297,7 +297,7 @@ Secretary Mode is implemented in the **MidStream text-transform** crate:
 - **Pipeline:** `/rust-crates/swictation-daemon/src/pipeline.rs` (integrates transformation after STT)
 
 ### Performance
-- **Latency:** <1µs per transformation (HashMap O(1) lookup)
+- **Latency:** ~5µs per transformation (HashMap O(1) lookup)
 - **Memory:** Static rules (zero allocation)
 - **Target:** <5ms total transformation latency
 

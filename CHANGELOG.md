@@ -260,7 +260,7 @@ When upgrading from v0.3.0:
   - Capitalization modes (caps on/off, all caps, capital letter)
   - Automatic capitalization (I pronoun, sentence starts, after quotes)
 - **27/27 tests passing** with real voice samples
-- **MidStream text-transform** integration (pure Rust, ~1µs latency)
+- **MidStream text-transform** integration (pure Rust, ~5µs latency)
 - **GPU acceleration support** with CUDA 11.8+
   - Silero VAD v6 with ONNX Runtime
   - Parakeet-TDT models (0.6B and 1.1B)
