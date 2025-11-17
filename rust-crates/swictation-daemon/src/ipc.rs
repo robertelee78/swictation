@@ -52,7 +52,19 @@ impl IpcServer {
         let listener = UnixListener::bind(socket_path)
             .context("Failed to bind Unix socket")?;
 
-        info!("IPC server listening on {}", socket_path);
+        // Set secure permissions (0600 = owner-only access)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let socket_path_buf = std::path::Path::new(socket_path);
+            if socket_path_buf.exists() {
+                let permissions = std::fs::Permissions::from_mode(0o600);
+                std::fs::set_permissions(socket_path_buf, permissions)
+                    .context("Failed to set socket permissions")?;
+            }
+        }
+
+        info!("IPC server listening on {} (permissions: 0600)", socket_path);
 
         Ok(Self { listener, daemon })
     }

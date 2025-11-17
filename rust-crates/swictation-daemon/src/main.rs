@@ -12,9 +12,11 @@ mod hotkey;
 mod text_injection;
 mod display_server;
 mod capitalization;
+mod socket_utils;
 
 use anyhow::{Context, Result};
 use tracing::{info, error, warn};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc};
 use clap::Parser;
@@ -59,9 +61,11 @@ impl Daemon {
     async fn new(config: DaemonConfig, gpu_provider: Option<String>) -> Result<(Self, mpsc::UnboundedReceiver<Result<String>>)> {
         let (pipeline, transcription_rx) = Pipeline::new(config, gpu_provider).await?;
 
-        // Initialize metrics broadcaster
+        // Initialize metrics broadcaster with secure socket path
+        let metrics_socket = socket_utils::get_metrics_socket_path()
+            .context("Failed to get metrics socket path")?;
         let broadcaster = Arc::new(
-            MetricsBroadcaster::new("/tmp/swictation_metrics.sock")
+            MetricsBroadcaster::new(&metrics_socket)
                 .await
                 .context("Failed to create metrics broadcaster")?
         );
@@ -235,7 +239,10 @@ async fn main() -> Result<()> {
     info!("  - VAD: Silero VAD v6 (ort/ONNX)");
     // STT info is logged by pipeline.rs during initialization
     info!("📊 Memory usage: {} MB", get_memory_usage_mb());
-    info!("📡 Metrics broadcaster ready on /tmp/swictation_metrics.sock");
+    info!("📡 Metrics broadcaster ready on {}",
+          socket_utils::get_metrics_socket_path()
+              .unwrap_or_else(|_| PathBuf::from("unknown"))
+              .display());
 
     // Initialize hotkey manager (optional - some compositors don't support it)
     let mut hotkey_manager = HotkeyManager::new(config.hotkeys.clone())
@@ -247,12 +254,15 @@ async fn main() -> Result<()> {
         info!("⚠️  Hotkeys not available - using IPC/CLI control only");
     }
 
-    // Start IPC server for CLI/scripts (optional)
-    let socket_path = config.socket_path.clone();
-    info!("🔌 Starting IPC server on {}", socket_path);
+    // Start IPC server for CLI/scripts (optional) with secure socket path
+    let socket_path = socket_utils::get_ipc_socket_path()
+        .context("Failed to get IPC socket path")?;
+    let socket_path_str = socket_path.to_str()
+        .context("Invalid socket path")?;
+    info!("🔌 Starting IPC server on {}", socket_path_str);
 
     let daemon_clone = Arc::new(daemon);
-    let mut ipc_server = IpcServer::new(&socket_path, daemon_clone.clone())
+    let mut ipc_server = IpcServer::new(socket_path_str, daemon_clone.clone())
         .context("Failed to start IPC server")?;
 
     // Spawn background metrics updater (CPU/GPU monitoring every 1 second)

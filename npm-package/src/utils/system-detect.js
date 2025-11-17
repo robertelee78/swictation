@@ -56,15 +56,25 @@ function hasNvidiaGpu() {
  */
 function isNvidiaConfigured() {
   try {
-    const paramPath = '/sys/module/nvidia/parameters/PreserveVideoMemoryAllocations';
-
-    if (!fs.existsSync(paramPath)) {
-      // Module not loaded or parameter doesn't exist
-      return false;
+    // Method 1: Check /proc/driver/nvidia/params (preferred, always available when driver loaded)
+    const procParamsPath = '/proc/driver/nvidia/params';
+    if (fs.existsSync(procParamsPath)) {
+      const params = fs.readFileSync(procParamsPath, 'utf8');
+      const match = params.match(/PreserveVideoMemoryAllocations:\s*(\d+)/);
+      if (match) {
+        return match[1] === '1';
+      }
     }
 
-    const value = fs.readFileSync(paramPath, 'utf8').trim();
-    return value === '1';
+    // Method 2: Check /sys/module/nvidia/parameters/ (fallback, not always available)
+    const sysParamPath = '/sys/module/nvidia/parameters/PreserveVideoMemoryAllocations';
+    if (fs.existsSync(sysParamPath)) {
+      const value = fs.readFileSync(sysParamPath, 'utf8').trim();
+      return value === '1';
+    }
+
+    // Module not loaded or parameter doesn't exist
+    return false;
   } catch {
     return false;
   }

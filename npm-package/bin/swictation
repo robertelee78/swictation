@@ -8,6 +8,7 @@ const chalk = require('chalk');
 const inquirer = require('inquirer');
 const which = require('which');
 const { configureNvidiaHibernation, checkNvidiaHibernationStatus } = require('../src/nvidia-hibernation-setup');
+const { getIpcSocketPath, getMetricsSocketPath } = require('../src/socket-paths');
 
 // Binary locations
 const binDir = path.join(__dirname, '..');
@@ -153,13 +154,17 @@ async function handleStatus() {
   const daemonActive = isRunning('swictation-daemon');
   console.log(`Daemon: ${daemonActive ? chalk.green('● Active') : chalk.gray('○ Inactive')}`);
 
-  // Check socket
-  const socketExists = fs.existsSync('/tmp/swictation.sock');
+  // Check socket (use new secure path)
+  const ipcSocket = getIpcSocketPath();
+  const socketExists = fs.existsSync(ipcSocket);
   console.log(`Socket: ${socketExists ? chalk.green('● Connected') : chalk.gray('○ Not found')}`);
+  console.log(`  Path: ${chalk.gray(ipcSocket)}`);
 
-  // Check metrics socket
-  const metricsExists = fs.existsSync('/tmp/swictation_metrics.sock');
+  // Check metrics socket (use new secure path)
+  const metricsSocket = getMetricsSocketPath();
+  const metricsExists = fs.existsSync(metricsSocket);
   console.log(`Metrics: ${metricsExists ? chalk.green('● Connected') : chalk.gray('○ Not found')}`);
+  console.log(`  Path: ${chalk.gray(metricsSocket)}`);
 
   // Display system info
   console.log(chalk.gray('─'.repeat(40)));
@@ -220,13 +225,13 @@ async function handleSetup() {
     console.log(chalk.cyan('\nDetected Sway window manager'));
     console.log(chalk.yellow('Add this to your ~/.config/sway/config:'));
     console.log(chalk.gray('─'.repeat(40)));
-    console.log(chalk.white('bindsym Super+Shift+d exec echo \'{"action":"toggle"}\' | nc -U /tmp/swictation.sock'));
+    console.log(chalk.white('bindsym Super+Shift+d exec swictation toggle'));
     console.log(chalk.gray('─'.repeat(40)));
   } else if (wm === 'i3') {
     console.log(chalk.cyan('\nDetected i3 window manager'));
     console.log(chalk.yellow('Add this to your ~/.config/i3/config:'));
     console.log(chalk.gray('─'.repeat(40)));
-    console.log(chalk.white('bindsym Mod4+Shift+d exec echo \'{"action":"toggle"}\' | nc -U /tmp/swictation.sock'));
+    console.log(chalk.white('bindsym Mod4+Shift+d exec swictation toggle'));
     console.log(chalk.gray('─'.repeat(40)));
   }
 
@@ -298,10 +303,11 @@ async function handleSetup() {
 }
 
 async function handleToggle() {
-  // Send toggle command to daemon
+  // Send toggle command to daemon using secure socket path
   try {
     const net = require('net');
-    const client = net.createConnection('/tmp/swictation.sock');
+    const socketPath = getIpcSocketPath();
+    const client = net.createConnection(socketPath);
 
     client.on('connect', () => {
       client.write(JSON.stringify({ action: 'toggle' }));

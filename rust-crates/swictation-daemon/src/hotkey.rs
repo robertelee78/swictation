@@ -127,7 +127,8 @@ impl HotkeyManager {
                     info!("  1. Open Settings → Keyboard → View and Customize Shortcuts");
                     info!("  2. Scroll to bottom and click '+ Add Shortcut'");
                     info!("  3. Name: Swictation Toggle");
-                    info!("  4. Command: sh -c 'echo toggle | nc -U /tmp/swictation.sock'");
+                    info!("  4. Command: swictation toggle");
+                    info!("     (or: echo '{{\"action\":\"toggle\"}}' | nc -U $XDG_RUNTIME_DIR/swictation.sock)");
                     info!("  5. Set shortcut: Press Super+Shift+D (or your preferred keys)");
                     info!("");
                     info!("Using IPC/CLI control only (hotkeys via GNOME shortcuts)");
@@ -136,9 +137,9 @@ impl HotkeyManager {
                     warn!("Generic Wayland compositor detected");
                     warn!("Global hotkeys not supported - compositor-specific integration required");
                     warn!("Please configure hotkeys in your compositor to call:");
-                    warn!("  - Toggle: echo 'toggle' | nc -U /tmp/swictation.sock");
-                    warn!("  - PTT press: echo 'ptt_press' | nc -U /tmp/swictation.sock");
-                    warn!("  - PTT release: echo 'ptt_release' | nc -U /tmp/swictation.sock");
+                    warn!("  - Toggle: swictation toggle");
+                    warn!("     (or: echo '{{\"action\":\"toggle\"}}' | nc -U $XDG_RUNTIME_DIR/swictation.sock)");
+                    warn!("Note: Socket location determined by XDG_RUNTIME_DIR or ~/.local/share/swictation/");
                     Ok(None)
                 }
             }
@@ -236,7 +237,8 @@ impl HotkeyManager {
                             warn!("Could not auto-configure Sway hotkeys: {}", e);
                             info!("");
                             info!("To add hotkeys manually, edit ~/.config/sway/config:");
-                            info!("  bindsym $mod+Shift+d exec sh -c \"echo 'toggle' | nc -U /tmp/swictation.sock\"");
+                            info!("  bindsym $mod+Shift+d exec swictation toggle");
+                            info!("  (or: exec sh -c \"echo '{{\\\"action\\\":\\\"toggle\\\"}}' | nc -U $XDG_RUNTIME_DIR/swictation.sock\")");
                             info!("  (Choose your own non-conflicting keys)");
                             info!("");
                         }
@@ -313,9 +315,9 @@ impl HotkeyManager {
 # Swictation voice-to-text hotkeys (auto-configured)
 # Toggle: {}
 # Push-to-talk: {}
-bindsym {} exec sh -c "echo 'toggle' | nc -U /tmp/swictation.sock"
-bindsym {} exec sh -c "echo 'ptt_press' | nc -U /tmp/swictation.sock"
-bindsym --release {} exec sh -c "echo 'ptt_release' | nc -U /tmp/swictation.sock"
+bindsym {} exec swictation toggle
+bindsym {} exec sh -c "echo '{{\"action\":\"toggle\"}}' | nc -U $XDG_RUNTIME_DIR/swictation.sock"
+bindsym --release {} exec sh -c "echo '{{\"action\":\"toggle\"}}' | nc -U $XDG_RUNTIME_DIR/swictation.sock"
 "#,
             config.toggle, config.push_to_talk,
             toggle_key,

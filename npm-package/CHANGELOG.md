@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.6] - 2025-11-16
+
+### Fixed
+- **NVIDIA hibernation detection**: Fixed `isNvidiaConfigured()` to check `/proc/driver/nvidia/params` first (preferred location, always available when driver loaded), then fall back to `/sys/module/nvidia/parameters/` (not always available). Version 0.4.5 incorrectly reported "NOT CONFIGURED" on systems where the parameter was set but only visible in `/proc/driver/nvidia/params`.
+
 ## [0.4.5] - 2025-11-16
 
 ### Added

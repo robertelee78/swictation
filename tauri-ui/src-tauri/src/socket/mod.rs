@@ -7,8 +7,10 @@
 // - Command socket for daemon control
 
 mod metrics;
+mod socket_utils;
 
 pub use metrics::{MetricsEvent, MetricsSocket};
+pub use socket_utils::{get_ipc_socket_path, get_metrics_socket_path};
 
 use anyhow::{Context, Result};
 use serde_json::Value;

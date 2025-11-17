@@ -51,7 +51,18 @@ impl MetricsBroadcaster {
 
         // Create Unix socket listener
         let listener = UnixListener::bind(&self.socket_path)?;
-        tracing::info!("Metrics broadcaster started on {:?}", self.socket_path);
+
+        // Set secure permissions (0600 = owner-only access)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if self.socket_path.exists() {
+                let permissions = std::fs::Permissions::from_mode(0o600);
+                std::fs::set_permissions(&self.socket_path, permissions)?;
+            }
+        }
+
+        tracing::info!("Metrics broadcaster started on {:?} (permissions: 0600)", self.socket_path);
 
         // Mark as running
         *self.running.write().await = true;

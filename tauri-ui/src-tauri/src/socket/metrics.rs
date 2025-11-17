@@ -8,11 +8,7 @@ use tokio::net::UnixStream;
 use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
 
-/// Path to the metrics broadcast socket
-const METRICS_SOCKET_PATH: &str = "/tmp/swictation_metrics.sock";
-
-/// Path to the command socket for daemon control
-const COMMAND_SOCKET_PATH: &str = "/tmp/swictation.sock";
+use super::socket_utils::{get_metrics_socket_path, get_ipc_socket_path};
 
 /// Reconnection delay after socket disconnect
 const RECONNECT_DELAY_SECS: u64 = 5;
@@ -74,25 +70,28 @@ pub struct MetricsSocket {
 impl MetricsSocket {
     /// Create a new MetricsSocket instance
     pub fn new() -> Self {
+        let socket_path = get_metrics_socket_path();
         Self {
-            socket_path: METRICS_SOCKET_PATH.to_string(),
+            socket_path: socket_path.to_string_lossy().to_string(),
             connected: false,
         }
     }
 
     /// Connect to the metrics socket
     pub async fn connect() -> Result<Self> {
-        let socket_path = METRICS_SOCKET_PATH;
+        let socket_path = get_metrics_socket_path();
+        let socket_path_str = socket_path.to_str()
+            .context("Invalid socket path")?;
 
         // Check if socket exists
-        if !Path::new(socket_path).exists() {
-            anyhow::bail!("Metrics socket does not exist: {}", socket_path);
+        if !socket_path.exists() {
+            anyhow::bail!("Metrics socket does not exist: {}", socket_path_str);
         }
 
-        info!("Connecting to metrics socket: {}", socket_path);
+        info!("Connecting to metrics socket: {}", socket_path_str);
 
         Ok(Self {
-            socket_path: socket_path.to_string(),
+            socket_path: socket_path_str.to_string(),
             connected: false,
         })
     }
@@ -230,17 +229,19 @@ impl MetricsSocket {
 
     /// Send toggle command to daemon control socket
     pub async fn send_toggle_command() -> Result<()> {
-        let command_socket = COMMAND_SOCKET_PATH;
+        let command_socket = get_ipc_socket_path();
+        let command_socket_str = command_socket.to_str()
+            .context("Invalid socket path")?;
 
         // Check if socket exists
-        if !Path::new(command_socket).exists() {
-            anyhow::bail!("Command socket does not exist: {}", command_socket);
+        if !command_socket.exists() {
+            anyhow::bail!("Command socket does not exist: {}", command_socket_str);
         }
 
         info!("Sending toggle command to daemon");
 
         // Connect to command socket
-        let mut stream = UnixStream::connect(command_socket)
+        let mut stream = UnixStream::connect(command_socket_str)
             .await
             .context("Failed to connect to command socket")?;
 
@@ -366,14 +367,14 @@ mod tests {
     #[test]
     fn test_socket_creation() {
         let socket = MetricsSocket::new();
-        assert_eq!(socket.socket_path(), METRICS_SOCKET_PATH);
+        assert!(socket.socket_path().ends_with("swictation_metrics.sock"));
         assert!(!socket.is_connected());
     }
 
     #[test]
     fn test_socket_default() {
         let socket = MetricsSocket::default();
-        assert_eq!(socket.socket_path(), METRICS_SOCKET_PATH);
+        assert!(socket.socket_path().ends_with("swictation_metrics.sock"));
         assert!(!socket.is_connected());
     }
 }
