@@ -58,7 +58,7 @@ struct Daemon {
 }
 
 impl Daemon {
-    async fn new(config: DaemonConfig, gpu_provider: Option<String>) -> Result<(Self, mpsc::UnboundedReceiver<Result<String>>)> {
+    async fn new(config: DaemonConfig, gpu_provider: Option<String>) -> Result<(Self, mpsc::Receiver<Result<String>>)> {
         let (pipeline, transcription_rx) = Pipeline::new(config, gpu_provider).await?;
 
         // Initialize metrics broadcaster with secure socket path

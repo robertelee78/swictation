@@ -41,14 +41,14 @@ pub struct Pipeline {
     /// Metrics broadcaster for real-time updates
     broadcaster: Arc<Mutex<Option<Arc<MetricsBroadcaster>>>>,
 
-    /// Transcription result channel sender
-    tx: mpsc::UnboundedSender<Result<String>>,
+    /// Transcription result channel sender (bounded to prevent OOM)
+    tx: mpsc::Sender<Result<String>>,
 }
 
 impl Pipeline {
     /// Create new pipeline with GPU acceleration
     /// Returns (Pipeline, transcription_receiver)
-    pub async fn new(config: DaemonConfig, gpu_provider: Option<String>) -> Result<(Self, mpsc::UnboundedReceiver<Result<String>>)> {
+    pub async fn new(config: DaemonConfig, gpu_provider: Option<String>) -> Result<(Self, mpsc::Receiver<Result<String>>)> {
         info!("Initializing Audio capture...");
         let audio_config = swictation_audio::AudioConfig {
             sample_rate: 16000,
@@ -256,7 +256,9 @@ impl Pipeline {
             metrics.enable_gpu_monitoring(provider);
         }
 
-        let (tx, rx) = mpsc::unbounded_channel();
+        // Bounded channel for transcription results (capacity: 100 results)
+        // Prevents memory exhaustion if consumer is slow
+        let (tx, rx) = mpsc::channel(100);
 
         let pipeline = Self {
             audio: Arc::new(Mutex::new(audio)),
@@ -281,8 +283,14 @@ impl Pipeline {
         self.is_recording = true;
         info!("Recording started");
 
-        // Create channel for audio chunks (cpal callback → VAD/STT processing)
-        let (audio_tx, mut audio_rx) = mpsc::unbounded_channel::<Vec<f32>>();
+        // Create BOUNDED channel for audio chunks (cpal callback → VAD/STT processing)
+        // Capacity: 20 chunks = 10 seconds at 0.5s/chunk
+        // This prevents memory exhaustion if processing falls behind
+        let (audio_tx, mut audio_rx) = mpsc::channel::<Vec<f32>>(20);
+
+        // Track dropped chunks for metrics
+        let dropped_chunks = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let dropped_chunks_clone = dropped_chunks.clone();
 
         // Set up audio callback to push chunks via channel
         {
@@ -290,15 +298,47 @@ impl Pipeline {
             let audio_tx_clone = audio_tx.clone();
 
             audio.set_chunk_callback(move |chunk| {
-                // This runs in cpal's audio thread
-                let _ = audio_tx_clone.send(chunk);
+                // This runs in cpal's audio thread - must be non-blocking
+                match audio_tx_clone.try_send(chunk) {
+                    Ok(_) => {
+                        // Successfully queued chunk
+                    }
+                    Err(mpsc::error::TrySendError::Full(_)) => {
+                        // Channel full - backpressure activated
+                        // Drop this chunk to prevent blocking audio thread
+                        dropped_chunks_clone.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        eprintln!("WARNING: Audio chunk dropped (processing too slow). Total dropped: {}",
+                                  dropped_chunks_clone.load(std::sync::atomic::Ordering::Relaxed));
+                    }
+                    Err(mpsc::error::TrySendError::Closed(_)) => {
+                        // Channel closed - recording stopped
+                    }
+                }
             });
 
             // Start audio capture (cpal will invoke callback)
             audio.start()?;
         }
 
-        // Clone components for VAD/STT processing thread
+        // Log backpressure warning if chunks are being dropped
+        let dropped_monitor = dropped_chunks.clone();
+        tokio::spawn(async move {
+            let mut last_count = 0u64;
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                let current = dropped_monitor.load(std::sync::atomic::Ordering::Relaxed);
+                if current > last_count {
+                    eprintln!("⚠️  BACKPRESSURE: Dropped {} audio chunks in last 5s (STT cannot keep up with speaker)",
+                              current - last_count);
+                    last_count = current;
+                }
+                if current == 0 {
+                    break; // Recording stopped
+                }
+            }
+        });
+
+        // Clone components for parallel VAD/STT processing
         let vad = self.vad.clone();
         let stt = self.stt.clone();
         let tx = self.tx.clone();
@@ -306,8 +346,12 @@ impl Pipeline {
         let session_id = self.session_id.clone();
         let broadcaster = self.broadcaster.clone();
 
-        // Spawn VAD→STT processing thread (receives audio chunks via channel)
-        tokio::spawn(async move {
+        // Create channel for VAD → STT communication
+        // Capacity: 10 speech segments (allows VAD to detect ahead while STT processes)
+        let (vad_tx, mut stt_rx) = mpsc::channel::<Vec<f32>>(10);
+
+        // Spawn VAD task (processes audio chunks and detects speech segments)
+        let vad_task = tokio::spawn(async move {
             let mut buffer = Vec::with_capacity(16000); // 1 second buffer
             let mut chunk_count = 0;
 
@@ -328,149 +372,169 @@ impl Pipeline {
                     eprintln!("DEBUG: Processing VAD chunk, buffer len: {}, max_amplitude: {:.6}, avg_amplitude: {:.6}",
                               buffer.len(), max_amplitude, avg_amplitude);
 
-                    // Process through VAD
-                    let mut vad_lock = match vad.lock() {
-                        Ok(v) => v,
-                        Err(e) => {
-                            eprintln!("VAD lock error: {}", e);
-                            continue;
-                        }
-                    };
+                    // Process through VAD (scoped to ensure lock is dropped before any async ops)
+                    let vad_result = {
+                        let mut vad_lock = match vad.lock() {
+                            Ok(v) => v,
+                            Err(e) => {
+                                eprintln!("VAD lock error: {}", e);
+                                continue;
+                            }
+                        };
+                        vad_lock.process_audio(&vad_chunk)
+                    }; // vad_lock automatically dropped here
 
-                    match vad_lock.process_audio(&vad_chunk) {
+                    match vad_result {
                         Ok(VadResult::Speech { samples: speech_samples, .. }) => {
                             eprintln!("DEBUG: VAD detected speech! {} samples", speech_samples.len());
 
-                            // Track timing for metrics
-                            let segment_start = Instant::now();
-                            let vad_latency = segment_start.elapsed().as_millis() as f64;
-
-                            drop(vad_lock); // Release VAD lock before STT
-
-                            // Process through STT (full segment with context for accuracy)
-                            let stt_start = Instant::now();
-                            let mut stt_lock = match stt.lock() {
-                                Ok(s) => s,
-                                Err(e) => {
-                                    eprintln!("STT lock error: {}", e);
-                                    continue;
-                                }
-                            };
-
-                            // Use Sherpa-RS recognizer
-                            let result = stt_lock.recognize(&speech_samples).unwrap_or_else(|e| {
-                                eprintln!("STT transcribe error: {}", e);
-                                swictation_stt::RecognitionResult {
-                                    text: String::new(),
-                                    confidence: 0.0,
-                                    processing_time_ms: 0.0,
-                                }
-                            });
-                            let text = result.text;
-                            let stt_latency = stt_start.elapsed().as_millis() as f64;
-
-                            if !text.is_empty() {
-                                // Transform voice commands → symbols (Midstream)
-                                // "hello comma world" → "hello, world"
-                                let transform_start = Instant::now();
-
-                                // IMPORTANT: 0.6B model via sherpa-rs adds auto-punctuation/capitalization
-                                // Strip it before Secretary Mode transformation to prevent double punctuation
-                                let cleaned_text = text
-                                    .to_lowercase()  // Remove auto-capitalization
-                                    .replace(",", "")  // Remove auto-added commas
-                                    .replace(".", "")  // Remove auto-added periods
-                                    .replace("?", "")  // Remove auto-added question marks
-                                    .replace("!", "")  // Remove auto-added exclamation points
-                                    .replace(";", "")  // Remove auto-added semicolons
-                                    .replace(":", "");  // Remove auto-added colons
-
-                                // Step 1: Process capital commands first ("capital r robert" → "Robert")
-                                let with_capitals = process_capital_commands(&cleaned_text);
-
-                                // Step 2: Transform punctuation ("comma" → ",")
-                                let transformed = transform(&with_capitals);
-
-                                // Step 3: Apply automatic capitalization rules
-                                let capitalized = apply_capitalization(&transformed);
-
-                                let transform_latency = transform_start.elapsed().as_micros() as f64;
-
-                                info!("Transcribed: {} → {}", text, capitalized);
-
-                                // Track segment metrics (ephemeral - no text stored in DB)
-                                let word_count = capitalized.split_whitespace().count() as i32;
-                                let char_count = capitalized.len() as i32;
-
-                                // Get current session ID
-                                let current_session_id = *session_id.lock().unwrap();
-
-                                if let Some(sid) = current_session_id {
-                                    let duration_s = (speech_samples.len() as f64) / 16000.0; // samples / sample_rate
-                                    let total_latency_ms = vad_latency + stt_latency + (transform_latency / 1000.0);
-
-                                    let segment = SegmentMetrics {
-                                        segment_id: None,
-                                        session_id: Some(sid),
-                                        timestamp: Some(Utc::now()),
-                                        duration_s,
-                                        words: word_count,
-                                        characters: char_count,
-                                        text: capitalized.clone(), // Will be ignored since store_text=false
-                                        vad_latency_ms: vad_latency,
-                                        audio_save_latency_ms: 0.0, // Not tracking this yet
-                                        stt_latency_ms: stt_latency,
-                                        transform_latency_us: transform_latency,
-                                        injection_latency_ms: 0.0, // Will be tracked later when injecting
-                                        total_latency_ms,
-                                        transformations_count: if text != capitalized { 1 } else { 0 },
-                                        keyboard_actions_count: 0, // Could be tracked in text injection
-                                    };
-
-                                    // Add segment to metrics
-                                    if let Err(e) = metrics.lock().unwrap().add_segment(segment) {
-                                        eprintln!("Failed to add segment metrics: {}", e);
-                                    }
-
-                                    // Broadcast transcription to UI clients
-                                    if let Some(ref broadcaster_ref) = *broadcaster.lock().unwrap() {
-                                        let wpm = (word_count as f64 / (duration_s / 60.0)).min(300.0); // Cap at 300 WPM
-                                        tokio::spawn({
-                                            let broadcaster = broadcaster_ref.clone();
-                                            let text_clone = capitalized.clone();
-                                            async move {
-                                                broadcaster.add_transcription(
-                                                    text_clone,
-                                                    wpm,
-                                                    total_latency_ms,
-                                                    word_count,
-                                                ).await;
-                                            }
-                                        });
-                                    }
-                                }
-
-                                // Add trailing space between VAD chunks (always, unless already has whitespace)
-                                // This fixes: "hello world" + "testing" → "hello worldtesting" (NO SPACE)
-                                //        AND: "hello world." + "testing" → "hello world.testing" (NO SPACE AFTER PUNCTUATION)
-                                // Solution: ALWAYS add trailing space (proper secretary would leave space after punctuation)
-                                let final_text = if capitalized.ends_with(char::is_whitespace) {
-                                    capitalized  // Already has trailing whitespace
-                                } else {
-                                    format!("{} ", capitalized)  // Add space for next chunk (even after punctuation)
-                                };
-
-                                let _ = tx.send(Ok(final_text));
+                            // Send speech segment to STT task (non-blocking with backpressure)
+                            if let Err(e) = vad_tx.send(speech_samples).await {
+                                eprintln!("Failed to send speech segment to STT task: {}", e);
+                                break; // STT task has terminated
                             }
                         }
                         Ok(VadResult::Silence) => {
                             eprintln!("DEBUG: VAD detected silence");
                             // Skip silence (VAD ensures we only transcribe speech segments)
-                            // This preserves context for better STT accuracy
                         }
                         Err(e) => {
                             eprintln!("VAD error: {}", e);
                         }
+                    }
+                }
+            }
+        });
+
+        // Spawn STT task (processes speech segments from VAD in parallel)
+        let stt_task = tokio::spawn(async move {
+            while let Some(speech_samples) = stt_rx.recv().await {
+                eprintln!("DEBUG: STT processing {} samples", speech_samples.len());
+
+                // Process through STT (scoped to ensure lock is dropped before any async ops)
+                let stt_start = Instant::now();
+                let (text, stt_latency) = {
+                    let mut stt_lock = match stt.lock() {
+                        Ok(s) => s,
+                        Err(e) => {
+                            eprintln!("STT lock error: {}", e);
+                            continue;
+                        }
+                    };
+
+                    // Use Sherpa-RS recognizer
+                    let result = stt_lock.recognize(&speech_samples).unwrap_or_else(|e| {
+                        eprintln!("STT transcribe error: {}", e);
+                        swictation_stt::RecognitionResult {
+                            text: String::new(),
+                            confidence: 0.0,
+                            processing_time_ms: 0.0,
+                        }
+                    });
+                    let text = result.text;
+                    let stt_latency = stt_start.elapsed().as_millis() as f64;
+                    (text, stt_latency)
+                }; // stt_lock automatically dropped here
+
+                if !text.is_empty() {
+                    // Transform voice commands → symbols (Midstream)
+                    // "hello comma world" → "hello, world"
+                    let transform_start = Instant::now();
+
+                    // IMPORTANT: 0.6B model via sherpa-rs adds auto-punctuation/capitalization
+                    // Strip it before Secretary Mode transformation to prevent double punctuation
+                    let cleaned_text = text
+                        .to_lowercase()  // Remove auto-capitalization
+                        .replace(",", "")  // Remove auto-added commas
+                        .replace(".", "")  // Remove auto-added periods
+                        .replace("?", "")  // Remove auto-added question marks
+                        .replace("!", "")  // Remove auto-added exclamation points
+                        .replace(";", "")  // Remove auto-added semicolons
+                        .replace(":", "");  // Remove auto-added colons
+
+                    // Step 1: Process capital commands first ("capital r robert" → "Robert")
+                    let with_capitals = process_capital_commands(&cleaned_text);
+
+                    // Step 2: Transform punctuation ("comma" → ",")
+                    let transformed = transform(&with_capitals);
+
+                    // Step 3: Apply automatic capitalization rules
+                    let capitalized = apply_capitalization(&transformed);
+
+                    let transform_latency = transform_start.elapsed().as_micros() as f64;
+
+                    info!("Transcribed: {} → {}", text, capitalized);
+
+                    // Track segment metrics (ephemeral - no text stored in DB)
+                    let word_count = capitalized.split_whitespace().count() as i32;
+                    let char_count = capitalized.len() as i32;
+
+                    // Get current session ID (scoped to ensure lock is dropped)
+                    let current_session_id = {
+                        *session_id.lock().unwrap()
+                    };
+
+                    if let Some(sid) = current_session_id {
+                        let duration_s = (speech_samples.len() as f64) / 16000.0; // samples / sample_rate
+                        // Note: VAD latency not tracked in parallel mode (VAD runs independently)
+                        let total_latency_ms = stt_latency + (transform_latency / 1000.0);
+
+                        let segment = SegmentMetrics {
+                            segment_id: None,
+                            session_id: Some(sid),
+                            timestamp: Some(Utc::now()),
+                            duration_s,
+                            words: word_count,
+                            characters: char_count,
+                            text: capitalized.clone(), // Will be ignored since store_text=false
+                            vad_latency_ms: 0.0, // Not tracked in parallel mode
+                            audio_save_latency_ms: 0.0,
+                            stt_latency_ms: stt_latency,
+                            transform_latency_us: transform_latency,
+                            injection_latency_ms: 0.0,
+                            total_latency_ms,
+                            transformations_count: if text != capitalized { 1 } else { 0 },
+                            keyboard_actions_count: 0,
+                        };
+
+                        // Add segment to metrics (scoped to ensure lock is dropped)
+                        {
+                            if let Err(e) = metrics.lock().unwrap().add_segment(segment) {
+                                eprintln!("Failed to add segment metrics: {}", e);
+                            }
+                        }
+
+                        // Broadcast transcription to UI clients (scoped to ensure lock is dropped)
+                        let broadcaster_clone = {
+                            broadcaster.lock().unwrap().as_ref().map(|b| b.clone())
+                        };
+
+                        if let Some(broadcaster_ref) = broadcaster_clone {
+                            let wpm = (word_count as f64 / (duration_s / 60.0)).min(300.0); // Cap at 300 WPM
+                            tokio::spawn({
+                                let text_clone = capitalized.clone();
+                                async move {
+                                    broadcaster_ref.add_transcription(
+                                        text_clone,
+                                        wpm,
+                                        total_latency_ms,
+                                        word_count,
+                                    ).await;
+                                }
+                            });
+                        }
+                    }
+
+                    // Add trailing space between speech segments
+                    let final_text = if capitalized.ends_with(char::is_whitespace) {
+                        capitalized
+                    } else {
+                        format!("{} ", capitalized)
+                    };
+
+                    // Send transcription (bounded channel - will block if consumer is slow)
+                    if let Err(e) = tx.send(Ok(final_text)).await {
+                        eprintln!("Failed to send transcription (consumer dropped): {}", e);
                     }
                 }
             }
@@ -603,8 +667,10 @@ impl Pipeline {
                         }
                     }
 
-                    // Send through transcription channel
-                    let _ = self.tx.send(Ok(capitalized));
+                    // Send through transcription channel (bounded - provides backpressure)
+                    if let Err(e) = self.tx.send(Ok(capitalized)).await {
+                        eprintln!("Failed to send flushed transcription: {}", e);
+                    }
                 }
             }
         }

@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::env;
 use std::path::PathBuf;
 
+use crate::socket_utils;
+
 /// Get default model directory using XDG Base Directory spec
 /// Falls back to ~/.local/share/swictation/models/
 /// Can be overridden with SWICTATION_MODEL_PATH environment variable
@@ -107,9 +109,15 @@ pub struct DaemonConfig {
 
 impl Default for DaemonConfig {
     fn default() -> Self {
+        // Get socket path from XDG_RUNTIME_DIR or fallback
+        let socket_path = socket_utils::get_ipc_socket_path()
+            .unwrap_or_else(|_| std::path::PathBuf::from("/tmp/swictation.sock"))
+            .to_string_lossy()
+            .to_string();
+
         Self {
             config_path: Self::default_config_path(),
-            socket_path: "/tmp/swictation.sock".to_string(),
+            socket_path,
             vad_model_path: get_default_vad_model_path(),
             vad_min_silence: 0.8,
             vad_min_speech: 0.25,

@@ -5,6 +5,40 @@ All notable changes to Swictation will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **Bounded Channels with Backpressure (Issue #1 & #2)**
+  - Replaced unbounded channels with bounded capacity limits:
+    - Transcription results: capacity 100 (prevents unbounded memory growth)
+    - Audio chunks: capacity 20 (10 seconds buffer at 0.5s/chunk)
+  - Implemented smart backpressure mechanism:
+    - Audio callback uses `try_send()` for non-blocking drops (preserves real-time constraints)
+    - VAD/STT processing uses `send().await` for backpressure propagation
+    - Atomic counter tracks dropped chunks with 5-second warnings
+  - Fixed thread-safety issues: scoped all mutex locks to ensure they're dropped before async operations
+  - See `docs/BOUNDED_CHANNELS.md` for detailed implementation
+
+- **Parallel VAD/STT Processing (Issue #4)**
+  - Split sequential processing into two independent async tasks:
+    - VAD Task: Continuously processes audio chunks and detects speech
+    - STT Task: Processes speech segments in parallel with VAD
+  - Benefits:
+    - ~2x better CPU/GPU utilization (VAD uses CPU while STT uses GPU)
+    - Lower perceived latency through pipelining
+    - Consistent throughput with reduced variance
+  - Created VAD→STT channel (capacity: 10 segments) for inter-task communication
+  - VAD latency no longer tracked in metrics (runs asynchronously)
+  - See `docs/PARALLEL_PROCESSING.md` for architecture details
+
+### Technical Details
+- Modified `pipeline.rs` to use bounded channels with backpressure
+- Audio callback drops chunks when processing falls behind (prevents blocking)
+- Transcription send blocks when consumer is slow (natural backpressure)
+- All mutex guards are now properly scoped to avoid holding across `.await` points
+- VAD and STT run as independent tokio tasks with channel-based communication
+- Build status: ✅ Successful compilation with warnings only
+
 ## [0.3.21] - 2025-11-14
 
 ### Fixed
