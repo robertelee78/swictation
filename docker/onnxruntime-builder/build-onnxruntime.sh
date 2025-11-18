@@ -10,6 +10,8 @@
 #   CUDA_ARCHITECTURES - Override architectures (default: from arg1)
 #   BUILD_CONFIG       - Release or Debug (default: Release)
 #   SKIP_TESTS         - Set to 1 to skip tests (default: 1)
+#   CUDA_VERSION       - CUDA version (default: 12.9, use 11.8 for Maxwell)
+#   CUDNN_HOME         - cuDNN location (default: /usr)
 
 set -e  # Exit on error
 set -u  # Exit on undefined variable
@@ -18,11 +20,15 @@ set -u  # Exit on undefined variable
 CUDA_ARCHITECTURES="${1:-90}"
 BUILD_CONFIG="${BUILD_CONFIG:-Release}"
 SKIP_TESTS="${SKIP_TESTS:-1}"
+CUDA_VERSION="${CUDA_VERSION:-12.9}"
+CUDNN_HOME="${CUDNN_HOME:-/usr}"
 
 echo "================================================"
 echo "ONNX Runtime Multi-Architecture Builder"
 echo "================================================"
 echo "CUDA Architectures: ${CUDA_ARCHITECTURES}"
+echo "CUDA Version: ${CUDA_VERSION}"
+echo "cuDNN Home: ${CUDNN_HOME}"
 echo "Build Config: ${BUILD_CONFIG}"
 echo "Skip Tests: ${SKIP_TESTS}"
 echo "================================================"
@@ -41,15 +47,23 @@ echo "This will take 45-70 minutes depending on number of architectures..."
 BUILD_ARGS=(
     --config "${BUILD_CONFIG}"
     --build_shared_lib
-    --parallel
+    --parallel $(nproc)
+    --compile_no_warning_as_error
     --use_cuda
-    --cuda_version 12.9
+    --cuda_version "${CUDA_VERSION}"
     --cuda_home /usr/local/cuda
-    --cudnn_home /usr
+    --cudnn_home "${CUDNN_HOME}"
     --cmake_extra_defines "CMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHITECTURES}"
     --cmake_extra_defines "CMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc"
+    --cmake_extra_defines "CMAKE_BUILD_TYPE=${BUILD_CONFIG}"
     --allow_running_as_root
 )
+
+# Disable contrib ops for CUDA 11.8 due to bfloat16 incompatibility
+if [[ "${CUDA_VERSION}" == "11.8" ]]; then
+    echo "CUDA 11.8 detected - disabling contrib ops (bfloat16 incompatible)"
+    BUILD_ARGS+=(--disable_contrib_ops)
+fi
 
 # Skip tests if requested (saves 30-50% build time)
 if [ "${SKIP_TESTS}" = "1" ]; then
