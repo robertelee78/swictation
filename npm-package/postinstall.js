@@ -1705,7 +1705,92 @@ async function checkNvidiaHibernation() {
   }
 }
 
-function showNextSteps() {
+/**
+ * Check if a specific model is already downloaded
+ * @param {string} modelName - Model name (e.g., '0.6b-gpu', '1.1b-gpu', 'cpu-only')
+ * @returns {boolean}
+ */
+function isModelDownloaded(modelName) {
+  const modelDir = path.join(os.homedir(), '.local', 'share', 'swictation', 'models');
+
+  // Map model names to directory names
+  const modelDirs = {
+    '0.6b': 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-onnx',
+    '0.6b-gpu': 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-onnx',
+    '1.1b': 'sherpa-onnx-nemo-parakeet-tdt-1.1b-v3-onnx',
+    '1.1b-gpu': 'sherpa-onnx-nemo-parakeet-tdt-1.1b-v3-onnx',
+    'cpu-only': 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-onnx-int8'
+  };
+
+  const targetDir = modelDirs[modelName];
+  if (!targetDir) return false;
+
+  const modelPath = path.join(modelDir, targetDir);
+  if (!fs.existsSync(modelPath)) return false;
+
+  // Verify required model files exist
+  const requiredFiles = ['encoder.onnx', 'decoder.onnx', 'tokens.txt'];
+  for (const file of requiredFiles) {
+    const filePath = path.join(modelPath, file);
+    // For INT8 models, check for .int8.onnx variants
+    const int8FilePath = path.join(modelPath, file.replace('.onnx', '.int8.onnx'));
+
+    if (!fs.existsSync(filePath) && !fs.existsSync(int8FilePath)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/**
+ * Auto-download recommended model if not present
+ * @param {string} recommendedModel - Model to download (e.g., '0.6b-gpu')
+ */
+async function autoDownloadModel(recommendedModel) {
+  // Check if model already exists
+  if (isModelDownloaded(recommendedModel)) {
+    log('green', `✓ Recommended model (${recommendedModel}) already downloaded`);
+    return true;
+  }
+
+  log('cyan', `\n📥 Auto-downloading recommended model: ${recommendedModel}`);
+  log('cyan', '   This is a one-time download (may take a few minutes)...\n');
+
+  try {
+    const ModelDownloader = require(path.join(__dirname, 'lib', 'model-downloader.js'));
+
+    // Map model names to downloader keys
+    const modelMap = {
+      '0.6b-gpu': '0.6b',
+      '0.6b': '0.6b',
+      '1.1b-gpu': '1.1b',
+      '1.1b': '1.1b',
+      'cpu-only': '0.6b'  // CPU-only uses same 0.6b model
+    };
+
+    const modelKey = modelMap[recommendedModel];
+    if (!modelKey) {
+      log('yellow', `⚠️  Unknown model type: ${recommendedModel}`);
+      return false;
+    }
+
+    const downloader = new ModelDownloader({ force: false });
+
+    // Download VAD + recommended model
+    await downloader.downloadModels(['vad', modelKey]);
+
+    log('green', '\n✓ Model downloaded successfully!');
+    return true;
+  } catch (err) {
+    log('yellow', `⚠️  Auto-download failed: ${err.message}`);
+    log('cyan', '   You can download manually later with:');
+    log('green', `   swictation download-model ${recommendedModel}`);
+    return false;
+  }
+}
+
+async function showNextSteps() {
   log('green', '\n✨ Swictation installed successfully!');
 
   // Try to read GPU info from detection
@@ -1769,27 +1854,39 @@ function showNextSteps() {
   }
   console.log('');
 
-  log('cyan', 'Next steps:');
-  console.log('  1. Download recommended AI model:');
-  log('cyan', '     pip install "huggingface_hub[cli]"  # Required for downloads');
-  if (recommendation.model !== 'cpu-only') {
-    log('green', `     swictation download-model ${recommendation.model}`);
-  } else {
-    log('green', '     swictation download-model 0.6b  # Recommended for CPU');
+  // Auto-download model if not present
+  const modelDownloaded = await autoDownloadModel(recommendation.model);
+
+  // Only show manual download instructions if auto-download failed
+  if (!modelDownloaded) {
+    log('cyan', 'Next steps:');
+    console.log('  1. Download recommended AI model:');
+    log('cyan', '     pip install "huggingface_hub[cli]"  # Required for downloads');
+    if (recommendation.model !== 'cpu-only') {
+      log('green', `     swictation download-model ${recommendation.model}`);
+    } else {
+      log('green', '     swictation download-model 0.6b  # Recommended for CPU');
+    }
+    console.log('');
+    console.log('     Or download all models (9.43 GB):');
+    log('cyan', '     swictation download-models');
+    console.log('');
   }
-  console.log('');
-  console.log('     Or download all models (9.43 GB):');
-  log('cyan', '     swictation download-models');
-  console.log('');
-  console.log('  2. Run initial setup:');
-  log('cyan', '     swictation setup');
-  console.log('');
-  console.log('  3. Start the service:');
-  log('cyan', '     swictation start');
-  console.log('');
-  console.log('  4. Toggle recording with:');
-  log('cyan', '     swictation toggle');
-  console.log('');
+
+  // Show setup steps (only if model download succeeded or skipped)
+  if (modelDownloaded || isModelDownloaded(recommendation.model)) {
+    log('cyan', 'Next steps:');
+    console.log('  1. Run initial setup:');
+    log('cyan', '     swictation setup');
+    console.log('');
+    console.log('  2. Start the service:');
+    log('cyan', '     swictation start');
+    console.log('');
+    console.log('  3. Toggle recording with:');
+    log('cyan', '     swictation toggle');
+    console.log('');
+  }
+
   console.log('For more information:');
   log('cyan', '  swictation help');
   console.log('');

@@ -230,9 +230,36 @@ async fn main() -> Result<()> {
 
     // Initialize daemon with models loaded
     info!("🔧 Initializing pipeline (this may take a moment)...");
-    let (daemon, mut transcription_rx) = Daemon::new(config.clone(), gpu_provider.clone())
-        .await
-        .context("Failed to initialize daemon")?;
+    let (daemon, mut transcription_rx) = match Daemon::new(config.clone(), gpu_provider.clone()).await {
+        Ok(result) => result,
+        Err(e) => {
+            let err_msg = format!("{:#}", e);
+
+            // Check if error is about missing model files
+            if err_msg.contains("No such file or directory") ||
+               err_msg.contains("model") && err_msg.contains("not found") ||
+               err_msg.contains("Failed to load") {
+
+                error!("❌ Failed to load AI model");
+                error!("");
+                error!("The required AI model files were not found.");
+                error!("Please download the recommended model for your system:");
+                error!("");
+                error!("  swictation download-model 0.6b-gpu    # For 4GB+ VRAM GPUs");
+                error!("  swictation download-model 1.1b-gpu    # For 6GB+ VRAM GPUs");
+                error!("  swictation download-model 0.6b        # For CPU-only systems");
+                error!("");
+                error!("Or download all models:");
+                error!("  swictation download-models");
+                error!("");
+
+                return Err(e.context("AI models not found - run 'swictation download-model' first"));
+            }
+
+            // For other errors, just pass through
+            return Err(e.context("Failed to initialize daemon"));
+        }
+    };
 
     info!("✓ Pipeline initialized successfully");
     info!("  - Audio: 16000 Hz, 1 channel");
