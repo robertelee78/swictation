@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Maxwell GPU Support (CUDA 11.8)** - Full support for older Maxwell architecture GPUs
+  - Custom ONNX Runtime 1.23.2 built with CUDA 11.8 + cuDNN 8.9.7
+  - Supports compute capability 5.0-5.3 (GTX 750 Ti, GTX 900 series, Quadro M2200, etc.)
+  - Legacy GPU library package (cuda-libs-legacy.tar.gz) with sm_50-70 support
+  - Automatic detection and library selection for Maxwell GPUs
+  - Verified working on Quadro M2200 (4GB VRAM, sm_52) with 0.6b-gpu model
+  - See `docs/maxwell_gpu_solution_plan.md` for technical details
+
+- **Automatic AI Model Download** - Models now download automatically during npm install
+  - Intelligent model detection: checks if recommended model already exists
+  - Auto-downloads ONLY the recommended model based on GPU/VRAM detection
+  - No more "Next steps" wall of text when model already present
+  - Graceful fallback to manual instructions if auto-download fails
+  - Uses existing ModelDownloader for consistent behavior
+  - First install: Downloads VAD + recommended model (~3-6GB one-time)
+  - Subsequent installs: Detects existing model, skips download
+
+### Changed
+- **Improved Daemon Error Messages** - Missing models now show helpful instructions
+  - Detects model loading failures on daemon startup
+  - Shows clear error message with appropriate download commands
+  - Prevents cryptic "file not found" errors
+  - Suggests correct model for user's GPU configuration
+
+### Fixed
+- **Maxwell GPU Inference** - Confirmed working with CUDA 11.8 + cuDNN 8.9.7
+  - 0.6b-gpu model runs efficiently on 4GB VRAM Maxwell GPUs
+  - Audio transcription accuracy verified with microphone settings
+  - VRAM usage stable at 85-87% during inference
+  - No compatibility issues with modern ONNX Runtime features
+
+### Technical Details
+- ONNX Runtime 1.23.2 built with:
+  - CUDA 11.8.0 (last version supporting sm_50)
+  - cuDNN 8.9.7.29 for CUDA 11.x
+  - Compute capabilities: sm_50, sm_52, sm_53, sm_60, sm_61, sm_70
+- GPU library selection logic:
+  - Maxwell (sm_50-70) → cuda-libs-legacy.tar.gz (CUDA 11.8)
+  - Turing/Ampere (sm_75-86) → cuda-libs-modern.tar.gz (CUDA 12.6)
+  - Ada/Hopper/Blackwell (sm_89-120) → cuda-libs-latest.tar.gz (CUDA 12.6)
+- Model download integration:
+  - `isModelDownloaded()` - Verifies encoder.onnx, decoder.onnx, tokens.txt
+  - `autoDownloadModel()` - Downloads via ModelDownloader if not present
+  - Daemon startup check - Shows helpful error if models missing
+
+### Documentation
+- Added `docs/maxwell_gpu_investigation_2025-11-18.md` - Initial investigation findings
+- Added `docs/maxwell_gpu_solution_plan.md` - Implementation plan and decisions
+- Added `docs/testing_stt_inference_standalone.md` - Debugging guide for STT issues
+- Updated `docs/phase1_implementation_plan.md` - Maxwell GPU implementation phases
+
 ## [0.4.9] - 2025-11-17
 
 ### Fixed
