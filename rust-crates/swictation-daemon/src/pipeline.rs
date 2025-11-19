@@ -9,7 +9,7 @@ use chrono::Utc;
 
 use swictation_audio::AudioCapture;
 use swictation_vad::{VadConfig, VadDetector, VadResult};
-use swictation_stt::{SttEngine, Recognizer, OrtRecognizer};
+use swictation_stt::{SttEngine, OrtRecognizer};
 use midstreamer_text_transform::transform;
 use swictation_metrics::{MetricsCollector, SegmentMetrics};
 use swictation_broadcaster::MetricsBroadcaster;
@@ -78,9 +78,9 @@ impl Pipeline {
 
         // ADAPTIVE MODEL SELECTION based on GPU VRAM availability
         // Decision tree:
-        //   ≥4GB VRAM → 1.1B INT8 GPU (peak 3.5GB + 596MB headroom)
-        //   ≥1.5GB VRAM → 0.6B GPU (peak 1.2GB + 336MB headroom)
-        //   <1.5GB or no GPU → 0.6B CPU fallback
+        //   ≥6GB VRAM → 1.1B INT8 GPU (requires ~6GB for safety)
+        //   ≥3.5GB VRAM → 0.6B GPU (fits in 4GB with headroom)
+        //   <3.5GB or no GPU → 0.6B CPU fallback
         //
         // Config override: stt_model_override can force a specific model:
         //   "auto" = VRAM-based selection (default)
@@ -104,24 +104,24 @@ impl Pipeline {
                     SttEngine::Parakeet1_1B(ort_recognizer)
                 }
                 "0.6b-gpu" => {
-                    info!("  Loading Parakeet-TDT-0.6B via sherpa-rs (GPU, forced)...");
-                    let recognizer = Recognizer::new(&config.stt_0_6b_model_path, true)
+                    info!("  Loading Parakeet-TDT-0.6B via ONNX Runtime (GPU, forced)...");
+                    let ort_recognizer = OrtRecognizer::new(&config.stt_0_6b_model_path, true)
                         .map_err(|e| anyhow::anyhow!(
                             "Failed to load 0.6B GPU model from {}. \
                             \nError: {}", config.stt_0_6b_model_path.display(), e
                         ))?;
                     info!("✓ Parakeet-TDT-0.6B loaded successfully (GPU, forced)");
-                    SttEngine::Parakeet0_6B(recognizer)
+                    SttEngine::Parakeet0_6B(ort_recognizer)
                 }
                 "0.6b-cpu" => {
-                    info!("  Loading Parakeet-TDT-0.6B via sherpa-rs (CPU, forced)...");
-                    let recognizer = Recognizer::new(&config.stt_0_6b_model_path, false)
+                    info!("  Loading Parakeet-TDT-0.6B via ONNX Runtime (CPU, forced)...");
+                    let ort_recognizer = OrtRecognizer::new(&config.stt_0_6b_model_path, false)
                         .map_err(|e| anyhow::anyhow!(
                             "Failed to load 0.6B CPU model from {}. \
                             \nError: {}", config.stt_0_6b_model_path.display(), e
                         ))?;
                     info!("✓ Parakeet-TDT-0.6B loaded successfully (CPU, forced)");
-                    SttEngine::Parakeet0_6B(recognizer)
+                    SttEngine::Parakeet0_6B(ort_recognizer)
                 }
                 _ => {
                     return Err(anyhow::anyhow!(
@@ -140,9 +140,9 @@ impl Pipeline {
             if let Some(vram) = vram_mb {
             info!("Detected GPU with {}MB VRAM", vram);
 
-                if vram >= 4096 {
+                if vram >= 6000 {
                     // High VRAM: Use 1.1B INT8 model for best quality (5.77% WER)
-                    info!("✓ Sufficient VRAM for 1.1B INT8 model (requires ≥4GB)");
+                    info!("✓ Sufficient VRAM for 1.1B INT8 model (requires ≥6GB)");
                     info!("  Loading Parakeet-TDT-1.1B-INT8 via ONNX Runtime...");
 
                     let ort_recognizer = OrtRecognizer::new(&config.stt_1_1b_model_path, true)
@@ -159,32 +159,32 @@ impl Pipeline {
                     info!("✓ Parakeet-TDT-1.1B-INT8 loaded successfully (GPU)");
                     SttEngine::Parakeet1_1B(ort_recognizer)
 
-                } else if vram >= 1536 {
+                } else if vram >= 3500 {
                     // Moderate VRAM: Use 0.6B GPU for good quality (7-8% WER)
-                    info!("✓ Sufficient VRAM for 0.6B GPU model (requires ≥1.5GB)");
-                    info!("  Loading Parakeet-TDT-0.6B via sherpa-rs (GPU)...");
+                    info!("✓ Sufficient VRAM for 0.6B GPU model (requires ≥3.5GB)");
+                    info!("  Loading Parakeet-TDT-0.6B via ONNX Runtime (GPU)...");
 
-                    let recognizer = Recognizer::new(&config.stt_0_6b_model_path, true)
+                    let ort_recognizer = OrtRecognizer::new(&config.stt_0_6b_model_path, true)
                         .map_err(|e| anyhow::anyhow!(
                             "Failed to load 0.6B GPU model despite {}MB VRAM. \
                             \nTroubleshooting:\
                             \n  1. Verify model files: ls {}\
                             \n  2. Check CUDA availability: nvidia-smi\
-                            \n  3. Verify sherpa-rs CUDA support\
+                            \n  3. Verify ONNX Runtime CUDA support\
                             \n  4. Try CPU fallback by setting stt_model_override=\"0.6b-cpu\" in config\
                             \nError: {}", vram, config.stt_0_6b_model_path.display(), e
                         ))?;
 
                     info!("✓ Parakeet-TDT-0.6B loaded successfully (GPU)");
-                    SttEngine::Parakeet0_6B(recognizer)
+                    SttEngine::Parakeet0_6B(ort_recognizer)
 
                 } else {
                     // Low VRAM: Fall back to CPU
-                    warn!("⚠️  Only {}MB VRAM available (need ≥1.5GB for GPU)", vram);
+                    warn!("⚠️  Only {}MB VRAM available (need ≥3.5GB for GPU)", vram);
                     warn!("  Falling back to CPU mode (slower but functional)");
-                    info!("  Loading Parakeet-TDT-0.6B via sherpa-rs (CPU)...");
+                    info!("  Loading Parakeet-TDT-0.6B via ONNX Runtime (CPU)...");
 
-                    let recognizer = Recognizer::new(&config.stt_0_6b_model_path, false)
+                    let ort_recognizer = OrtRecognizer::new(&config.stt_0_6b_model_path, false)
                         .map_err(|e| anyhow::anyhow!(
                             "Failed to load 0.6B CPU model. \
                             \nTroubleshooting:\
@@ -195,15 +195,15 @@ impl Pipeline {
                         ))?;
 
                     info!("✓ Parakeet-TDT-0.6B loaded successfully (CPU)");
-                    SttEngine::Parakeet0_6B(recognizer)
+                    SttEngine::Parakeet0_6B(ort_recognizer)
                 }
             } else {
                 // No GPU detected: Fall back to CPU
                 warn!("⚠️  No GPU detected (nvidia-smi failed or no NVIDIA GPU)");
                 warn!("  Falling back to CPU mode (slower but functional)");
-                info!("  Loading Parakeet-TDT-0.6B via sherpa-rs (CPU)...");
+                info!("  Loading Parakeet-TDT-0.6B via ONNX Runtime (CPU)...");
 
-                let recognizer = Recognizer::new(&config.stt_0_6b_model_path, false)
+                let ort_recognizer = OrtRecognizer::new(&config.stt_0_6b_model_path, false)
                     .map_err(|e| anyhow::anyhow!(
                         "Failed to load 0.6B CPU model. \
                         \nTroubleshooting:\
@@ -214,7 +214,7 @@ impl Pipeline {
                     ))?;
 
                 info!("✓ Parakeet-TDT-0.6B loaded successfully (CPU)");
-                SttEngine::Parakeet0_6B(recognizer)
+                SttEngine::Parakeet0_6B(ort_recognizer)
             }
         };
 

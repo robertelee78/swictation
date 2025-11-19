@@ -76,7 +76,8 @@ ENV LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
 # Verify CUDA 11.8 installation
 RUN nvcc --version && echo "CUDA 11.8 verified"
 
-# Download ONNX Runtime v1.23.2 source archive (more reliable than git clone)
+# Download ONNX Runtime v1.23.2 (latest stable, no sherpa-onnx version constraints)
+# Using latest ONNX Runtime since we removed sherpa-onnx dependency
 WORKDIR /workspace
 RUN wget https://github.com/microsoft/onnxruntime/archive/refs/tags/v1.23.2.tar.gz \
     && tar -xzf v1.23.2.tar.gz \

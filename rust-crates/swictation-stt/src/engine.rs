@@ -1,13 +1,13 @@
 //! Unified STT engine interface supporting multiple model implementations
 
 use crate::error::Result;
-use crate::recognizer::{Recognizer, RecognitionResult};
+use crate::recognizer::RecognitionResult;
 use crate::recognizer_ort::OrtRecognizer;
 
 /// Unified STT engine supporting multiple Parakeet-TDT model implementations
 ///
-/// This enum provides a common interface for both the 0.6B model (via sherpa-rs)
-/// and the 1.1B INT8 model (via direct ONNX Runtime).
+/// This enum provides a common interface for both the 0.6B and 1.1B models
+/// via direct ONNX Runtime (no sherpa-rs dependency).
 ///
 /// # Model Selection
 ///
@@ -28,12 +28,12 @@ use crate::recognizer_ort::OrtRecognizer;
 ///
 /// // Moderate GPU (≥1.5GB VRAM) - use 0.6B GPU
 /// let engine = SttEngine::Parakeet0_6B(
-///     Recognizer::new("/opt/swictation/models/parakeet-tdt-0.6b-v3-onnx", true)?
+///     OrtRecognizer::new("/opt/swictation/models/parakeet-tdt-0.6b-v3-onnx", true)?
 /// );
 ///
 /// // CPU fallback - use 0.6B CPU
 /// let engine = SttEngine::Parakeet0_6B(
-///     Recognizer::new("/opt/swictation/models/parakeet-tdt-0.6b-v3-onnx", false)?
+///     OrtRecognizer::new("/opt/swictation/models/parakeet-tdt-0.6b-v3-onnx", false)?
 /// );
 ///
 /// println!("Loaded: {} ({}, {})",
@@ -43,13 +43,13 @@ use crate::recognizer_ort::OrtRecognizer;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub enum SttEngine {
-    /// 0.6B model via sherpa-rs (CPU or GPU)
+    /// 0.6B model via direct ONNX Runtime (CPU or GPU)
     ///
     /// - **GPU mode**: Requires ≥1.5GB VRAM (peak: 1.2GB)
     /// - **CPU mode**: Requires ~960MB RAM
     /// - **Latency**: 100-150ms (GPU), 200-400ms (CPU)
     /// - **WER**: 7-8%
-    Parakeet0_6B(Recognizer),
+    Parakeet0_6B(OrtRecognizer),
 
     /// 1.1B model via direct ONNX Runtime (GPU only, INT8 quantized)
     ///
@@ -81,21 +81,21 @@ impl SttEngine {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn recognize(&mut self, audio: &[f32]) -> Result<RecognitionResult> {
-        match self {
-            SttEngine::Parakeet0_6B(r) => r.recognize(audio),
-            SttEngine::Parakeet1_1B(r) => {
-                // OrtRecognizer returns String, need to wrap in RecognitionResult
-                let start = std::time::Instant::now();
-                let text = r.recognize_samples(audio)?;
-                let processing_time_ms = start.elapsed().as_secs_f64() * 1000.0;
+        // Both variants now use OrtRecognizer
+        let r = match self {
+            SttEngine::Parakeet0_6B(r) => r,
+            SttEngine::Parakeet1_1B(r) => r,
+        };
 
-                Ok(RecognitionResult {
-                    text,
-                    confidence: 1.0, // OrtRecognizer doesn't provide confidence
-                    processing_time_ms,
-                })
-            }
-        }
+        let start = std::time::Instant::now();
+        let text = r.recognize_samples(audio)?;
+        let processing_time_ms = start.elapsed().as_secs_f64() * 1000.0;
+
+        Ok(RecognitionResult {
+            text,
+            confidence: 1.0, // OrtRecognizer doesn't provide confidence
+            processing_time_ms,
+        })
     }
 
     /// Get model name for logging/metrics
@@ -131,15 +131,15 @@ impl SttEngine {
     /// - `"GPU"` if using GPU acceleration
     /// - `"CPU"` if using CPU-only inference
     pub fn backend(&self) -> &str {
+        // Both variants now use OrtRecognizer, check is_gpu()
         match self {
-            SttEngine::Parakeet0_6B(r) => {
+            SttEngine::Parakeet0_6B(r) | SttEngine::Parakeet1_1B(r) => {
                 if r.is_gpu() {
                     "GPU"
                 } else {
                     "CPU"
                 }
             }
-            SttEngine::Parakeet1_1B(_) => "GPU", // 1.1B is always GPU
         }
     }
 
@@ -164,7 +164,13 @@ impl SttEngine {
     /// ```
     pub fn vram_required_mb(&self) -> u64 {
         match self {
-            SttEngine::Parakeet1_1B(_) => 4096, // 4GB minimum for 1.1B INT8
+            SttEngine::Parakeet1_1B(r) => {
+                if r.is_gpu() {
+                    4096 // 4GB minimum for 1.1B INT8 GPU
+                } else {
+                    0 // CPU doesn't require VRAM (though 1.1B is typically GPU-only)
+                }
+            }
             SttEngine::Parakeet0_6B(r) => {
                 if r.is_gpu() {
                     1536 // 1.5GB minimum for 0.6B GPU

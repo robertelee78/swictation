@@ -29,6 +29,50 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
+/// Model configuration for different Parakeet-TDT variants
+#[derive(Debug, Clone, Copy)]
+struct ModelConfig {
+    /// Decoder hidden state size (512 for 0.6B, 640 for 1.1B)
+    decoder_hidden_size: usize,
+    /// Number of mel features (128 for 0.6B, 80 for 1.1B)
+    n_mel_features: usize,
+    /// Whether encoder expects transposed input
+    transpose_input: bool,
+    /// Model variant name for logging
+    model_name: &'static str,
+}
+
+impl ModelConfig {
+    fn for_0_6b() -> Self {
+        Self {
+            decoder_hidden_size: 512,
+            n_mel_features: 128,
+            transpose_input: true,
+            model_name: "Parakeet-TDT-0.6B",
+        }
+    }
+
+    fn for_1_1b() -> Self {
+        Self {
+            decoder_hidden_size: 640,
+            n_mel_features: 80,
+            transpose_input: false,
+            model_name: "Parakeet-TDT-1.1B",
+        }
+    }
+
+    /// Auto-detect from model path
+    fn detect_from_path(path: &Path) -> Self {
+        let path_str = path.to_string_lossy();
+        if path_str.contains("1.1b") || path_str.contains("1-1b") {
+            Self::for_1_1b()
+        } else {
+            // Default to 0.6B (more common, lower VRAM)
+            Self::for_0_6b()
+        }
+    }
+}
+
 /// Direct ONNX Runtime recognizer for Parakeet-TDT models (0.6B and 1.1B)
 pub struct OrtRecognizer {
     encoder: Session,
@@ -39,11 +83,13 @@ pub struct OrtRecognizer {
     unk_id: i64,
     model_path: PathBuf,
     audio_processor: AudioProcessor,
-    // Decoder RNN states (2, batch, 640)
+    // Decoder RNN states - size depends on model variant (512 for 0.6B, 640 for 1.1B)
     decoder_state1: Option<Array3<f32>>,
     decoder_state2: Option<Array3<f32>>,
-    // Whether encoder expects transposed input (batch, features, time) vs (batch, time, features)
-    transpose_input: bool,
+    // Model configuration (determines hidden sizes, mel features, etc.)
+    config: ModelConfig,
+    // GPU mode flag
+    use_gpu: bool,
 }
 
 impl OrtRecognizer {
@@ -235,50 +281,15 @@ impl OrtRecognizer {
             .map_err(|e| SttError::ModelLoadError(format!("Failed to restore original directory: {}", e)))?;
         info!("Restored working directory to {}", original_dir.display());
 
-        // Detect encoder input format by inspecting input shape
-        // 0.6B: (batch, 128 features, time) - NEEDS transpose
-        // 1.1B: (batch, 80 time, features) - NO transpose
-        let encoder_inputs = encoder.inputs.iter().map(|i| i.name.as_str()).collect::<Vec<_>>();
-        info!("Encoder inputs: {:?}", encoder_inputs);
+        // Auto-detect model configuration from path
+        let config = ModelConfig::detect_from_path(&model_path);
 
-        let audio_signal_input = encoder.inputs.iter()
-            .find(|i| i.name == "audio_signal")
-            .ok_or_else(|| SttError::ModelLoadError("Encoder missing audio_signal input".to_string()))?;
+        info!("Detected {} model", config.model_name);
+        info!("  Decoder hidden size: {}", config.decoder_hidden_size);
+        info!("  Mel features: {}", config.n_mel_features);
+        info!("  Transpose input: {}", config.transpose_input);
 
-        // Extract tensor dimensions from the input metadata
-        // ort 2.0.0-rc.10 API: input.input_type contains shape information
-        info!("Audio signal input type: {:?}", audio_signal_input.input_type);
-
-        // For now, use a simple heuristic: check if tokens.txt exists to determine model size
-        // 1.1B models have 1025 tokens, 0.6B models have 1025 tokens too, so check model dir name
-        let transpose_input = if model_path.to_string_lossy().contains("1.1b") ||
-                                  model_path.to_string_lossy().contains("1-1b") {
-            info!("Detected 1.1B model from path - using natural format (no transpose)");
-            false
-        } else if model_path.to_string_lossy().contains("0.6b") ||
-                   model_path.to_string_lossy().contains("0-6b") {
-            info!("Detected 0.6B model from path - using transposed format");
-            true
-        } else {
-            // Fallback: default to transpose for safety (0.6B is more common)
-            info!("Could not determine model version from path, defaulting to transpose");
-            true
-        };
-
-        // Auto-detect mel feature count based on model size
-        // 1.1B model needs 80 mel features, 0.6B model needs 128 mel features
-        let n_mel_features = if model_path.to_string_lossy().contains("1.1b") ||
-                                 model_path.to_string_lossy().contains("1-1b") {
-            use crate::audio::N_MEL_FEATURES_1_1B;
-            info!("Detected 1.1B model - using {} mel features", N_MEL_FEATURES_1_1B);
-            N_MEL_FEATURES_1_1B
-        } else {
-            use crate::audio::N_MEL_FEATURES;
-            info!("Detected 0.6B model or unknown - using {} mel features", N_MEL_FEATURES);
-            N_MEL_FEATURES
-        };
-
-        let audio_processor = AudioProcessor::with_mel_features(n_mel_features)?;
+        let audio_processor = AudioProcessor::with_mel_features(config.n_mel_features)?;
 
         Ok(Self {
             encoder,
@@ -291,8 +302,18 @@ impl OrtRecognizer {
             audio_processor,
             decoder_state1: None,
             decoder_state2: None,
-            transpose_input,
+            config,
+            use_gpu,
         })
+    }
+
+    /// Check if GPU mode is enabled
+    ///
+    /// # Returns
+    ///
+    /// `true` if CUDA execution provider is enabled, `false` for CPU-only
+    pub fn is_gpu(&self) -> bool {
+        self.use_gpu
     }
 
     /// Load tokens from tokens.txt
@@ -840,22 +861,23 @@ impl OrtRecognizer {
         .map_err(|e| SttError::InferenceError(format!("Failed to create target_length tensor: {}", e)))?;
 
         // Initialize or reuse decoder states
+        let hidden_size = self.config.decoder_hidden_size;
         if self.decoder_state1.is_none() {
-            // Initialize states to zeros: (2, batch, 640)
-            self.decoder_state1 = Some(Array3::zeros((2, batch_size, 640)));
-            self.decoder_state2 = Some(Array3::zeros((2, 1, 640)));
+            // Initialize states to zeros: (2, batch, hidden_size)
+            self.decoder_state1 = Some(Array3::zeros((2, batch_size, hidden_size)));
+            self.decoder_state2 = Some(Array3::zeros((2, 1, hidden_size)));
         }
 
         let state1_data = self.decoder_state1.as_ref().unwrap().as_slice().unwrap().to_vec();
         let state1 = Tensor::from_array((
-            vec![2, batch_size, 640],
+            vec![2, batch_size, hidden_size],
             state1_data.into_boxed_slice(),
         ))
         .map_err(|e| SttError::InferenceError(format!("Failed to create state1 tensor: {}", e)))?;
 
         let state2_data = self.decoder_state2.as_ref().unwrap().as_slice().unwrap().to_vec();
         let state2 = Tensor::from_array((
-            vec![2, 1, 640],
+            vec![2, 1, hidden_size],
             state2_data.into_boxed_slice(),
         ))
         .map_err(|e| SttError::InferenceError(format!("Failed to create state2 tensor: {}", e)))?;
@@ -881,7 +903,7 @@ impl OrtRecognizer {
         debug!("🔍 Attempting to extract decoder LSTM states from outputs...");
         debug!("   outputs.len() = {}", outputs.len());
 
-        // outputs[2] is the new state (2, batch, 640)
+        // outputs[2] is the new state (2, batch, hidden_size)
         if let Ok((state_shape, state_data)) = outputs[2].try_extract_tensor::<f32>() {
             debug!("✅ Successfully extracted state1: shape={:?}, data_len={}", state_shape, state_data.len());
             let state_min = state_data.iter().fold(f32::INFINITY, |a, &b| a.min(b));
@@ -897,7 +919,7 @@ impl OrtRecognizer {
             debug!("❌ FAILED to extract state1 from outputs[2] - LSTM states NOT UPDATING!");
         }
 
-        // outputs[3] is the second state (2, batch, 640)
+        // outputs[3] is the second state (2, batch, hidden_size)
         if let Ok((state_shape, state_data)) = outputs[3].try_extract_tensor::<f32>() {
             debug!("✅ Successfully extracted state2: shape={:?}, data_len={}", state_shape, state_data.len());
             let state_min = state_data.iter().fold(f32::INFINITY, |a, &b| a.min(b));
@@ -913,7 +935,7 @@ impl OrtRecognizer {
             debug!("❌ FAILED to extract state2 from outputs[3] - LSTM states NOT UPDATING!");
         }
 
-        // Extract the last timestep: shape is (batch, 640, seq_len), we want (640,)
+        // Extract the last timestep: shape is (batch, hidden_size, seq_len), we want (hidden_size,)
         let batch = shape[0] as usize;
         let hidden_size = shape[1] as usize;
         let seq = shape[2] as usize;
@@ -949,7 +971,7 @@ impl OrtRecognizer {
         .map_err(|e| SttError::InferenceError(format!("Failed to create encoder input for joiner: {}", e)))?;
 
         let decoder_input = Tensor::from_array((
-            vec![1, decoder_out.len(), 1],  // (batch, 640, 1)
+            vec![1, decoder_out.len(), 1],  // (batch, hidden_size, 1)
             decoder_out.to_vec().into_boxed_slice(),
         ))
         .map_err(|e| SttError::InferenceError(format!("Failed to create decoder input for joiner: {}", e)))?;
@@ -961,7 +983,7 @@ impl OrtRecognizer {
             .map_err(|e| SttError::InferenceError(format!("Joiner inference failed: {}", e)))?;
 
         // Extract logits from 4D tensor (batch, frames, frames, vocab_size)
-        // With inputs (1, 1024, 1) and (1, 640, 1), output is (1, 1, 1, 1030)
+        // With inputs (1, 1024, 1) and (1, hidden_size, 1), output is (1, 1, 1, vocab_size)
         let logits_tensor = &outputs[0];
         let (shape, data) = logits_tensor
             .try_extract_tensor::<f32>()
