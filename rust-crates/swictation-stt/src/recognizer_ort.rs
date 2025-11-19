@@ -520,9 +520,11 @@ impl OrtRecognizer {
     /// 4. Greedy selection picks highest probability token
     /// 5. Loop until blank or end-of-sequence
     fn greedy_search_decode(&mut self, chunks: &[Array2<f32>]) -> Result<String> {
+        eprintln!("🎯 greedy_search_decode() called with {} chunks", chunks.len());
         let mut all_tokens = Vec::new();
 
         // Reset decoder states at the start of the FIRST chunk only
+        eprintln!("   Resetting decoder states...");
         self.decoder_state1 = None;
         self.decoder_state2 = None;
 
@@ -536,12 +538,16 @@ impl OrtRecognizer {
         let mut total_blank_predictions = 0;
         let mut total_nonblank_predictions = 0;
 
+        eprintln!("   Starting chunk loop...");
+
         for (chunk_idx, chunk) in chunks.iter().enumerate() {
             eprintln!("\n📦 Processing chunk {}/{}", chunk_idx + 1, chunks.len());
+            eprintln!("   Chunk shape: {:?}", chunk.shape());
 
             // Run encoder
+            eprintln!("   Calling run_encoder()...");
             let encoder_out = self.run_encoder(chunk)?;
-            eprintln!("   Encoder output shape: {:?}", encoder_out.shape());
+            eprintln!("   ✅ Encoder finished! Output shape: {:?}", encoder_out.shape());
 
             // Decode each frame with greedy search
             // Pass both the decoder_out and token from previous chunk
@@ -700,12 +706,29 @@ impl OrtRecognizer {
         let mut nonblank_count = 0_usize;
 
         // C++ line 121: Main loop with skip-based advancement
+        eprintln!("🔄 Starting decode loop: num_frames={}", num_frames);
+        let mut iteration_count = 0;
         while t < num_frames {
+            iteration_count += 1;
+            if iteration_count > 100000 {
+                eprintln!("❌ INFINITE LOOP DETECTED after 100k iterations! t={}, num_frames={}", t, num_frames);
+                break;
+            }
+            if iteration_count % 1000 == 0 {
+                eprintln!("⚠️  Loop iteration {}: t={}/{} frames, tokens={}", iteration_count, t, num_frames, tokens.len());
+            }
+
             // C++ line 122-124: Extract single encoder frame
             let encoder_frame = encoder_out.slice(s![0, .., t]).to_owned();
 
             // C++ line 126-127: Run joiner ONCE per frame iteration (NOT in a loop!)
+            if iteration_count <= 5 {
+                eprintln!("   Iteration {}: calling run_joiner() for frame {}", iteration_count, t);
+            }
             let logits = self.run_joiner(&encoder_frame, &decoder_out)?;
+            if iteration_count <= 5 {
+                eprintln!("   Iteration {}: run_joiner() returned", iteration_count);
+            }
 
             // C++ line 136-141: Split logits into token and duration
             let logits_slice = logits.as_slice().unwrap();
@@ -805,6 +828,9 @@ impl OrtRecognizer {
             // This matches the reference implementation's "Don't advance yet" logic
             if skip > 0 {
                 t += skip;
+            } else if iteration_count % 100 == 0 {
+                eprintln!("⚠️  Skip=0 at iteration {}, t={}, y={}, blank_id={}, tokens_this_frame={}",
+                         iteration_count, t, y, blank_id, tokens_this_frame);
             }
             // Otherwise stay at same frame to potentially emit more tokens
         }
