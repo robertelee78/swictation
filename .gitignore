@@ -277,3 +277,6 @@ node_modules/
 swictation-gpu-libs.tar.gz
 docker/onnxruntime-builder/output/
 rust-crates/bin/
+# Build artifacts
+docker/onnxruntime-builder/*.tar.xz
+docker/onnxruntime-builder/onnxruntime-*/
