@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+These features are implemented and committed but not yet published to npm.
+
 ### Added
 - **Maxwell GPU Support (CUDA 11.8)** - Full support for older Maxwell architecture GPUs
   - Custom ONNX Runtime 1.23.2 built with CUDA 11.8 + cuDNN 8.9.7
