@@ -870,6 +870,9 @@ function generateSystemdService(ortLibPath) {
         }
       }
 
+      // Detect CUDA paths upfront (needed for logging)
+      const detectedCudaPaths = detectCudaLibraryPaths();
+
       if (variant === 'legacy') {
         // LEGACY (Maxwell, Pascal, Volta): Use ONNX Runtime 1.23.2 from gpu-libs (CUDA 11.8)
         const gpuLibsDir = path.join(os.homedir(), '.local', 'share', 'swictation', 'gpu-libs');
@@ -885,16 +888,14 @@ function generateSystemdService(ortLibPath) {
           log('yellow', `  ⚠️  Legacy ONNX Runtime not found at ${legacyOrtPath}`);
           log('yellow', '     Falling back to npm bundled ONNX Runtime');
           finalOrtLibPath = ortLibPath;
-          const cudaPaths = detectCudaLibraryPaths();
           const nativeLibPath = detectNpmNativeLibPath();
-          finalLdLibraryPath = [...cudaPaths, nativeLibPath].join(':');
+          finalLdLibraryPath = [...detectedCudaPaths, nativeLibPath].join(':');
         }
       } else {
         // LATEST/MODERN: Use npm bundled ONNX Runtime (CUDA 12)
         finalOrtLibPath = ortLibPath;
-        const cudaPaths = detectCudaLibraryPaths();
         const nativeLibPath = detectNpmNativeLibPath();
-        finalLdLibraryPath = [...cudaPaths, nativeLibPath].join(':');
+        finalLdLibraryPath = [...detectedCudaPaths, nativeLibPath].join(':');
         log('cyan', `  Using npm bundled ONNX Runtime: ${finalOrtLibPath}`);
       }
 
@@ -913,9 +914,9 @@ function generateSystemdService(ortLibPath) {
       template = template.replace(/__LD_LIBRARY_PATH__/g, cleanLdPath);
       log('cyan', `  LD_LIBRARY_PATH set to: ${cleanLdPath}`);
 
-      if (cudaPaths.length > 0) {
-        log('cyan', `  Detected ${cudaPaths.length} CUDA library path(s):`);
-        cudaPaths.forEach(p => log('cyan', `    ${p}`));
+      if (detectedCudaPaths.length > 0) {
+        log('cyan', `  Detected ${detectedCudaPaths.length} CUDA library path(s):`);
+        detectedCudaPaths.forEach(p => log('cyan', `    ${p}`));
       } else {
         log('yellow', '  ⚠️  No CUDA libraries detected (CPU-only mode)');
       }
