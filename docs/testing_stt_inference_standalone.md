@@ -80,3 +80,23 @@ Path on dad's system:
 export ORT_DYLIB_PATH=/home/jrl/.local/share/swictation/gpu-libs/libonnxruntime.so
 export LD_LIBRARY_PATH=/home/jrl/.local/share/swictation/gpu-libs:/usr/local/cuda-11.8/lib64
 ```
+
+### VRAM Limitation - CRITICAL
+
+The 0.6B model uses **~3.4 GB VRAM** when loaded. On 4GB GPUs (Quadro M2200):
+- **Cannot run daemon and test program simultaneously**
+- Stop daemon first: `systemctl --user stop swictation-daemon.service`
+- Check VRAM: `nvidia-smi` (should show ~6 MiB used after stopping)
+- Run test with freed VRAM
+- Restart daemon: `systemctl --user start swictation-daemon.service`
+
+**Error symptom**: `BFCArena::AllocateRawInternal() Failed to allocate memory` during model load
+
+### Verified Maxwell GPU Test Results
+
+Tested on Quadro M2200 (Nov 19, 2025):
+- ✅ Model loads successfully with daemon stopped
+- ✅ Encoder processes 10000-frame chunks (1250 output frames)
+- ✅ Correct transcription: "Ask not what your country can do for you. Ask what you can do for your country."
+- ✅ Uses CUDA 11.8 + cuDNN 8.9.7 (ONNX Runtime 1.23.2)
+- ✅ Same behavior as modern GPUs - Maxwell support confirmed working
