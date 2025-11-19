@@ -1,3 +1,0 @@
-docker: invalid reference format
-
-Run 'docker run --help' for more information
