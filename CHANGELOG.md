@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-These features are implemented and committed but not yet published to npm.
+## [0.4.24] - 2025-11-19
 
 ### Added
 - **Maxwell GPU Support (CUDA 11.8)** - Full support for older Maxwell architecture GPUs
