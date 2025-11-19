@@ -45,7 +45,7 @@ struct ModelConfig {
 impl ModelConfig {
     fn for_0_6b() -> Self {
         Self {
-            decoder_hidden_size: 512,
+            decoder_hidden_size: 640,  // Both 0.6B and 1.1B use 640 hidden size
             n_mel_features: 128,
             transpose_input: true,
             model_name: "Parakeet-TDT-0.6B",
