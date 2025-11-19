@@ -852,25 +852,66 @@ function generateSystemdService(ortLibPath) {
       const installDir = __dirname; // npm package installation directory
       template = template.replace(/__INSTALL_DIR__/g, installDir);
 
-      if (ortLibPath) {
-        template = template.replace(/__ORT_DYLIB_PATH__/g, ortLibPath);
+      // CRITICAL: Detect GPU variant to determine which ONNX Runtime to use
+      const configDir = path.join(os.homedir(), '.config', 'swictation');
+      const gpuPackageInfoPath = path.join(configDir, 'gpu-package-info.json');
+
+      let finalOrtLibPath, finalLdLibraryPath;
+      let variant = 'latest'; // default
+
+      // Try to read GPU package info to get variant
+      if (fs.existsSync(gpuPackageInfoPath)) {
+        try {
+          const metadata = JSON.parse(fs.readFileSync(gpuPackageInfoPath, 'utf8'));
+          variant = metadata.variant || 'latest';
+          log('cyan', `  Detected GPU package variant: ${variant}`);
+        } catch (err) {
+          log('yellow', `  Warning: Could not read GPU package metadata: ${err.message}`);
+        }
+      }
+
+      if (variant === 'legacy') {
+        // LEGACY (Maxwell, Pascal, Volta): Use ONNX Runtime 1.23.2 from gpu-libs (CUDA 11.8)
+        const gpuLibsDir = path.join(os.homedir(), '.local', 'share', 'swictation', 'gpu-libs');
+        const legacyOrtPath = path.join(gpuLibsDir, 'libonnxruntime.so');
+
+        if (fs.existsSync(legacyOrtPath)) {
+          finalOrtLibPath = legacyOrtPath;
+          // LD_LIBRARY_PATH only needs gpu-libs (includes all CUDA 11.8 libs)
+          finalLdLibraryPath = gpuLibsDir;
+          log('cyan', `  Using LEGACY ONNX Runtime 1.23.2: ${finalOrtLibPath}`);
+          log('cyan', `  Using LEGACY CUDA 11.8 libraries: ${finalLdLibraryPath}`);
+        } else {
+          log('yellow', `  ⚠️  Legacy ONNX Runtime not found at ${legacyOrtPath}`);
+          log('yellow', '     Falling back to npm bundled ONNX Runtime');
+          finalOrtLibPath = ortLibPath;
+          const cudaPaths = detectCudaLibraryPaths();
+          const nativeLibPath = detectNpmNativeLibPath();
+          finalLdLibraryPath = [...cudaPaths, nativeLibPath].join(':');
+        }
+      } else {
+        // LATEST/MODERN: Use npm bundled ONNX Runtime (CUDA 12)
+        finalOrtLibPath = ortLibPath;
+        const cudaPaths = detectCudaLibraryPaths();
+        const nativeLibPath = detectNpmNativeLibPath();
+        finalLdLibraryPath = [...cudaPaths, nativeLibPath].join(':');
+        log('cyan', `  Using npm bundled ONNX Runtime: ${finalOrtLibPath}`);
+      }
+
+      // CRITICAL: Trim all whitespace and newlines from paths to prevent malformed service file
+      if (finalOrtLibPath) {
+        const cleanPath = finalOrtLibPath.trim().replace(/[\r\n]/g, '');
+        template = template.replace(/__ORT_DYLIB_PATH__/g, cleanPath);
+        log('cyan', `  ORT_DYLIB_PATH set to: ${cleanPath}`);
       } else {
         log('yellow', '⚠️  Warning: ORT_DYLIB_PATH not detected');
         log('yellow', '   Service file will contain placeholder - you must set it manually');
       }
 
-      // Detect CUDA library paths dynamically
-      const cudaPaths = detectCudaLibraryPaths();
-
-      // CRITICAL: Detect actual npm installation path (nvm vs system-wide)
-      // This ensures LD_LIBRARY_PATH points to the right location
-      const nativeLibPath = detectNpmNativeLibPath();
-
-      // Build LD_LIBRARY_PATH with detected CUDA paths + native libs
-      const ldLibraryPath = [...cudaPaths, nativeLibPath].join(':');
-      template = template.replace(/__LD_LIBRARY_PATH__/g, ldLibraryPath);
-
-      log('cyan', `  Using npm native libs: ${nativeLibPath}`);
+      // CRITICAL: Trim and clean LD_LIBRARY_PATH
+      const cleanLdPath = finalLdLibraryPath.trim().replace(/[\r\n]/g, '');
+      template = template.replace(/__LD_LIBRARY_PATH__/g, cleanLdPath);
+      log('cyan', `  LD_LIBRARY_PATH set to: ${cleanLdPath}`);
 
       if (cudaPaths.length > 0) {
         log('cyan', `  Detected ${cudaPaths.length} CUDA library path(s):`);
@@ -890,6 +931,27 @@ function generateSystemdService(ortLibPath) {
           /ImportEnvironment=/,
           `${envVars.join('\n')}\n\n# Import full user environment for PulseAudio/PipeWire session\n# This ensures all audio devices are detected properly (4 devices instead of 1)\n# Required for microphone access in user session\nImportEnvironment=`
         );
+      }
+
+      // VALIDATION: Check for malformed Environment variables
+      const validateServiceFile = (content) => {
+        const lines = content.split('\n');
+        for (let i = 0; i < lines.length; i++) {
+          if (lines[i].includes('Environment=')) {
+            const quoteCnt = (lines[i].match(/"/g) || []).length;
+            if (quoteCnt % 2 !== 0) {
+              throw new Error(`Malformed Environment variable at line ${i+1}: ${lines[i]}`);
+            }
+          }
+        }
+      };
+
+      try {
+        validateServiceFile(template);
+        log('green', '  ✓ Service file validation passed');
+      } catch (err) {
+        log('red', `  ✗ Service file validation failed: ${err.message}`);
+        throw err;
       }
 
       // Write daemon service file

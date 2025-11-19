@@ -1,6 +1,6 @@
 {
   "name": "swictation",
-  "version": "0.4.20",
+  "version": "0.4.21",
   "description": "Voice-to-text dictation with Wayland/X11 support (GNOME, Sway, i3), Secretary Mode (60+ natural language commands), NVIDIA GPU acceleration, and pure Rust performance (Ubuntu 24.04+ required)",
   "keywords": [
     "voice-to-text",
@@ -47,10 +47,12 @@
     "scripts/",
     "tests/",
     "postinstall.js",
+    "preuninstall.js",
     "README.md"
   ],
   "scripts": {
     "postinstall": "node postinstall.js",
+    "preuninstall": "node preuninstall.js",
     "test": "node test.js",
     "build": "./scripts/build-release.sh",
     "prepublishOnly": "./scripts/build-release.sh"
