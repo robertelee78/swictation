@@ -35,7 +35,10 @@ export function useMetrics() {
 
   useEffect(() => {
     // Listen for metrics updates from daemon
-    const unlistenMetrics = listen<BroadcastEvent>('metrics-event', (event) => {
+    // In Tauri v2, listen() returns Promise<UnlistenFn>
+    let unlistenFn: (() => void) | null = null;
+
+    listen<BroadcastEvent>('metrics-event', (event) => {
       const payload = event.payload;
 
       switch (payload.type) {
@@ -93,10 +96,14 @@ export function useMetrics() {
           // Keep transcriptions visible
           break;
       }
+    }).then((fn) => {
+      unlistenFn = fn;
     });
 
     return () => {
-      unlistenMetrics.then((fn) => fn());
+      if (unlistenFn) {
+        unlistenFn();
+      }
     };
   }, []);
 

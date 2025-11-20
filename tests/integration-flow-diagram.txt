@@ -1,0 +1,207 @@
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    SWICTATION INTEGRATION FLOW ANALYSIS                      │
+│                         (Current BROKEN State)                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              DAEMON (Working ✅)                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+     Process: swictation-daemon (PID: 1842855)
+     Status:  RUNNING, Transcription ACTIVE
+
+     ┌─────────────────────────────────────────────┐
+     │  rust-crates/swictation-daemon/             │
+     │    src/socket_utils.rs                      │
+     │                                             │
+     │  fn get_metrics_socket_path()               │
+     │    → XDG_RUNTIME_DIR/swictation_metrics.sock│
+     │    → /run/user/1000/swictation_metrics.sock │
+     └─────────────────────────────────────────────┘
+              │
+              │ Creates socket
+              ↓
+     ┌─────────────────────────────────────────────┐
+     │ /run/user/1000/swictation_metrics.sock      │
+     │ Status: LISTENING ✅                         │
+     │ Permissions: srw------- (0600)              │
+     │                                             │
+     │ Broadcasting:                               │
+     │   {"type":"metrics_update",...}             │
+     │   {"type":"transcription",...}              │
+     │   {"type":"session_start",...}              │
+     └─────────────────────────────────────────────┘
+              ↓
+     ┌─────────────────────────────────────────────┐
+     │  Test: nc -U /run/user/1000/...sock         │
+     │  Result: CONNECTED ✅                        │
+     │  Data: Streaming live metrics               │
+     └─────────────────────────────────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           TAURI APP (Broken ❌)                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+     Process: swictation-ui
+     Status:  RUNNING but showing "OFFLINE"
+
+     ┌─────────────────────────────────────────────┐
+     │  tauri-ui/src-tauri/src/main.rs             │
+     │    Line 115:                                │
+     │    let socket_path = utils::               │
+     │        get_default_socket_path()            │
+     └─────────────────────────────────────────────┘
+              │
+              │ Calls
+              ↓
+     ┌─────────────────────────────────────────────┐
+     │  tauri-ui/src-tauri/src/utils/mod.rs  ❌    │
+     │    Line 14-16:                              │
+     │                                             │
+     │  pub fn get_default_socket_path() -> String │
+     │  {                                          │
+     │    "/tmp/swictation_metrics.sock".to_string()│
+     │  }                                          │
+     │                                             │
+     │  HARDCODED! ❌❌❌                            │
+     └─────────────────────────────────────────────┘
+              │
+              │ Tries to connect to
+              ↓
+     ┌─────────────────────────────────────────────┐
+     │ /tmp/swictation_metrics.sock                │
+     │ Status: STALE (from Nov 16) ❌               │
+     │ Daemon: NOT LISTENING HERE                  │
+     │                                             │
+     │ Connection: REFUSED ❌                       │
+     └─────────────────────────────────────────────┘
+              ↓
+     ┌─────────────────────────────────────────────┐
+     │  tauri-ui/src-tauri/src/socket/mod.rs       │
+     │    Line 65-77: connect() fails              │
+     │    Line 74: "Failed to connect to socket:   │
+     │             Retrying..." (every 2s)         │
+     └─────────────────────────────────────────────┘
+              ↓
+     ┌─────────────────────────────────────────────┐
+     │  Frontend:                                  │
+     │    metrics.connected = false ❌              │
+     │    No events received                       │
+     │    UI shows "OFFLINE"                       │
+     │    All tabs empty                           │
+     └─────────────────────────────────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          THE UNUSED CORRECT CODE                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+     ┌─────────────────────────────────────────────┐
+     │  tauri-ui/src-tauri/src/socket/             │
+     │    socket_utils.rs (CORRECT BUT UNUSED! ⚠️)  │
+     │                                             │
+     │  fn get_metrics_socket_path()               │
+     │    → XDG_RUNTIME_DIR/swictation_metrics.sock│
+     │    → /run/user/1000/swictation_metrics.sock │
+     │                                             │
+     │  THIS MATCHES DAEMON! ✅                     │
+     │  BUT main.rs DOESN'T CALL THIS! ❌           │
+     └─────────────────────────────────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                            THE FIX (1 Line Change)                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+   File: /opt/swictation/tauri-ui/src-tauri/src/utils/mod.rs
+
+   BEFORE (Line 14-16):                    AFTER:
+   ────────────────────────                ──────────────────────────────────
+   pub fn get_default_socket_path()        use crate::socket::socket_utils;
+     -> String {
+     "/tmp/swictation_metrics.sock"        pub fn get_default_socket_path()
+       .to_string()                          -> String {
+   }                                         socket_utils::get_metrics_socket_path()
+                                               .to_str()
+                                               .expect("Invalid socket path")
+                                               .to_string()
+                                           }
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          AFTER FIX (Working ✅)                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+     Daemon Socket:              Tauri App Connects To:
+     ──────────────              ────────────────────────
+     /run/user/1000/             /run/user/1000/
+     swictation_metrics.sock ✅   swictation_metrics.sock ✅
+                ╲                       ╱
+                 ╲                     ╱
+                  ╲                   ╱
+                   ╲                 ╱
+                    ╲               ╱
+                     ╲             ╱
+                      ╲           ╱
+                       ╲         ╱
+                        ╲       ╱
+                         ╲     ╱
+                          ╲   ╱
+                           ╲ ╱
+                    CONNECTION! ✅
+                            │
+                            ↓
+     ┌──────────────────────────────────────────────┐
+     │  Frontend UI:                                │
+     │    metrics.connected = true ✅                │
+     │    Live metrics flowing                      │
+     │    UI shows "● LIVE"                         │
+     │    All tabs populate with data               │
+     └──────────────────────────────────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                               VERIFICATION                                   │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+   Test 1: Where is daemon listening?
+   ───────────────────────────────────
+   $ lsof -U -a -c swictation | grep metrics
+   → /run/user/1000/swictation_metrics.sock (LISTEN) ✅
+
+   Test 2: Can we connect manually?
+   ─────────────────────────────────
+   $ nc -U /run/user/1000/swictation_metrics.sock
+   → {"type":"metrics_update",...} ✅ STREAMING DATA!
+
+   Test 3: What path does Tauri use?
+   ──────────────────────────────────
+   $ grep -A2 "get_default_socket_path" tauri-ui/src-tauri/src/utils/mod.rs
+   → "/tmp/swictation_metrics.sock" ❌ WRONG PATH!
+
+   Test 4: Can we connect to Tauri's path?
+   ────────────────────────────────────────
+   $ nc -U /tmp/swictation_metrics.sock
+   → Connection refused ❌ NOBODY LISTENING!
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                            IMPACT SUMMARY                                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+   Before Fix:                         After Fix:
+   ───────────                         ──────────
+   ❌ Live metrics - No data            ✅ Live metrics - Real-time updates
+   ❌ History tab - Empty               ✅ History tab - Shows sessions
+   ❌ Transcriptions - Empty            ✅ Transcriptions - Shows text
+   ❌ Connection - "OFFLINE"            ✅ Connection - "● LIVE"
+   ❌ Toggle button - No effect         ✅ Toggle button - Works
+
+   Database: Works ✅ (unaffected)
+   Daemon: Works ✅ (unaffected)
+   IPC: Works ✅ (unaffected)
+
+   Lines Changed: 1
+   Difficulty: TRIVIAL
+   Priority: CRITICAL
