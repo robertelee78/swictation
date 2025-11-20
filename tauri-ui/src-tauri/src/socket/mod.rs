@@ -1,14 +1,18 @@
 // Socket connection module for real-time metrics and daemon control
 //
 // This module provides:
-// - Async Unix socket connection for metrics streaming
+// - Async Unix socket connection for metrics streaming (MetricsSocket - PREFERRED)
 // - Automatic reconnection on disconnect
 // - Event parsing and Tauri integration
 // - Command socket for daemon control
+//
+// IMPORTANT: Use MetricsSocket for all metrics streaming.
+// The legacy SocketConnection implementation has critical bugs and should not be used.
 
 mod metrics;
 mod socket_utils;
 
+// Primary exports (use these!)
 pub use metrics::{MetricsEvent, MetricsSocket};
 pub use socket_utils::{get_ipc_socket_path, get_metrics_socket_path};
 

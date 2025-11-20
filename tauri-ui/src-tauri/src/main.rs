@@ -10,8 +10,8 @@ mod utils;
 use commands::AppState;
 use database::Database;
 use image::GenericImageView;
-use socket::SocketConnection;
-use std::sync::{Arc, Mutex};
+use socket::MetricsSocket;
+use std::sync::Mutex;
 use tauri::{
     image::Image,
     menu::{Menu, MenuItemBuilder, PredefinedMenuItem},
@@ -111,29 +111,24 @@ fn main() {
                 })
                 .ok();
 
-            // Create socket connection
-            let socket_path = crate::socket::get_metrics_socket_path()
-                .to_string_lossy()
-                .to_string();
-            let socket = Arc::new(SocketConnection::new(
-                socket_path.clone(),
-                app.handle().clone(),
-            ));
-
             // Create app state
             let state = AppState {
                 db: Mutex::new(db.unwrap_or_else(|| {
                     // Fallback: try to create database if it doesn't exist
                     Database::new(&db_path).expect("Failed to create database")
                 })),
-                socket: socket.clone(),
             };
 
             app.manage(state);
 
-            // Start socket listener AFTER app is managed (within Tauri's async context)
+            // Start metrics socket listener using correct async implementation
+            let mut metrics_socket = MetricsSocket::new();
+            let app_handle = app.handle().clone();
+
             tauri::async_runtime::spawn(async move {
-                socket.start_listener().await;
+                if let Err(e) = metrics_socket.listen(app_handle).await {
+                    log::error!("Metrics socket error: {}", e);
+                }
             });
 
             Ok(())

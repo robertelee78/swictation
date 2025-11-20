@@ -1,13 +1,11 @@
 use crate::database::Database;
 use crate::models::{ConnectionStatus, LifetimeStats, SessionSummary, TranscriptionRecord};
-use crate::socket::SocketConnection;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use tauri::State;
 
 /// Application state shared across commands
 pub struct AppState {
     pub db: Mutex<Database>,
-    pub socket: Arc<SocketConnection>,
 }
 
 /// Get recent sessions from database
@@ -66,24 +64,24 @@ pub async fn get_lifetime_stats(
         .map_err(|e| format!("Failed to get lifetime stats: {}", e))
 }
 
-/// Toggle recording (placeholder for now)
+/// Toggle recording (triggers via hotkey or tray menu)
+/// This command is deprecated - use the tray menu or hotkey instead.
+/// The daemon handles toggle recording internally via global hotkey.
 #[tauri::command]
-pub async fn toggle_recording(
-    state: State<'_, AppState>,
-) -> Result<String, String> {
-    state
-        .socket
-        .toggle_recording()
-        .map_err(|e| format!("Failed to toggle recording: {}", e))
+pub async fn toggle_recording() -> Result<String, String> {
+    // Recording toggle is handled by the daemon via hotkey (Ctrl+Shift+D)
+    // and tray menu event emission. This command is kept for API compatibility.
+    Ok("Toggle recording via hotkey (Ctrl+Shift+D) or tray menu".to_string())
 }
 
 /// Get socket connection status
+/// This command is deprecated - connection status is sent via "metrics-connected" events.
 #[tauri::command]
-pub async fn get_connection_status(
-    state: State<'_, AppState>,
-) -> Result<ConnectionStatus, String> {
+pub async fn get_connection_status() -> Result<ConnectionStatus, String> {
+    // Connection status is now automatically sent via MetricsSocket events.
+    // Listen to "metrics-connected" events in the frontend instead.
     Ok(ConnectionStatus {
-        connected: state.socket.is_connected().await,
-        socket_path: "/tmp/swictation_metrics.sock".to_string(),
+        connected: true, // Placeholder - actual status via events
+        socket_path: "/run/user/1000/swictation_metrics.sock".to_string(),
     })
 }
