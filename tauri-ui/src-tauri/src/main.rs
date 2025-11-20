@@ -112,7 +112,9 @@ fn main() {
                 .ok();
 
             // Create socket connection
-            let socket_path = utils::get_default_socket_path();
+            let socket_path = crate::socket::get_metrics_socket_path()
+                .to_string_lossy()
+                .to_string();
             let socket = Arc::new(SocketConnection::new(
                 socket_path.clone(),
                 app.handle().clone(),
