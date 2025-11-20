@@ -13,6 +13,7 @@ mod text_injection;
 mod display_server;
 mod capitalization;
 mod socket_utils;
+mod version;
 
 use anyhow::{Context, Result};
 use tracing::{info, error, warn};
@@ -27,6 +28,7 @@ use crate::config::DaemonConfig;
 #[derive(Parser, Debug)]
 #[command(name = "swictation-daemon")]
 #[command(about = "Voice-to-text dictation daemon with adaptive model selection", long_about = None)]
+#[command(version)]
 struct CliArgs {
     /// Override STT model selection (bypasses auto-detection)
     #[arg(long, value_name = "MODEL")]
@@ -36,6 +38,10 @@ struct CliArgs {
     /// Dry-run: show model selection without loading models
     #[arg(long)]
     dry_run: bool,
+
+    /// Show detailed version information
+    #[arg(short = 'V', long)]
+    version_info: bool,
 }
 use crate::pipeline::Pipeline;
 use crate::gpu::detect_gpu_provider;
@@ -157,6 +163,12 @@ impl Daemon {
 async fn main() -> Result<()> {
     // Parse CLI arguments
     let cli = CliArgs::parse();
+
+    // Handle version info flag
+    if cli.version_info {
+        println!("{}", version::version_long());
+        return Ok(());
+    }
 
     // Initialize logging
     tracing_subscriber::fmt()
