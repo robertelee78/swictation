@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.25] - 2025-11-19
+
+### Fixed
+- **ONNX Runtime Version Compatibility** - Fixed daemon crash caused by version mismatch
+  - Upgraded bundled ONNX Runtime from 1.22.0 to 1.23.2 for compatibility with CUDA providers
+  - All GPU library packages (legacy/modern/latest) now use ONNX Runtime 1.23.2
+  - Resolves segmentation fault on Blackwell GPUs (sm_120) and other architectures
+  - Daemon now starts successfully with proper CUDA acceleration
+
+### Changed
+- **GPU Library Packages** - All variants updated to ONNX Runtime 1.23.2
+  - Legacy (sm_50-70): CUDA 11.8 + cuDNN 8.9.7 + ONNX Runtime 1.23.2
+  - Modern (sm_75-86): CUDA 12.9 + cuDNN 9.15.1 + ONNX Runtime 1.23.2
+  - Latest (sm_89-120): CUDA 12.9 + cuDNN 9.15.1 + ONNX Runtime 1.23.2
+
+### Technical Details
+- Base ONNX Runtime library updated from 22MB (v1.22.0) to 27MB (v1.23.2)
+- CUDA execution provider compatibility ensured across all GPU variants
+- Blackwell architecture (sm_120) now fully supported with native CUDA 12.9
+
 ## [0.4.24] - 2025-11-19
 
 ### Added
