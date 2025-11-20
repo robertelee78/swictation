@@ -16,15 +16,23 @@ cargo build --release --workspace
 echo "✓ Rust build complete"
 echo ""
 
-# 2. Copy binaries to npm package
+# 2. Copy binaries to npm package (BOTH bin/ and lib/native/)
 echo "📋 Copying binaries to npm package..."
+NPM_BIN_DIR="$REPO_ROOT/npm-package/bin"
+mkdir -p "$NPM_BIN_DIR"
 mkdir -p "$NPM_NATIVE_DIR"
 
-# Daemon
+# Daemon - copy to bin/ (used by CLI)
+cp "$REPO_ROOT/rust-crates/target/release/swictation-daemon" \
+   "$NPM_BIN_DIR/swictation-daemon"
+chmod +x "$NPM_BIN_DIR/swictation-daemon"
+echo "✓ Copied swictation-daemon to bin/"
+
+# Daemon - also copy to lib/native/ for backwards compatibility
 cp "$REPO_ROOT/rust-crates/target/release/swictation-daemon" \
    "$NPM_NATIVE_DIR/swictation-daemon.bin"
 chmod +x "$NPM_NATIVE_DIR/swictation-daemon.bin"
-echo "✓ Copied swictation-daemon"
+echo "✓ Copied swictation-daemon to lib/native/"
 
 # Shared libraries (already in npm package, just verify they exist)
 if [ ! -f "$NPM_NATIVE_DIR/libonnxruntime.so" ]; then
@@ -39,28 +47,33 @@ echo ""
 # 3. Verify binary content matches (use checksums instead of timestamps)
 echo "🔍 Verifying binary integrity..."
 DAEMON_SOURCE="$REPO_ROOT/rust-crates/target/release/swictation-daemon"
-DAEMON_NPM="$NPM_NATIVE_DIR/swictation-daemon.bin"
+DAEMON_BIN="$NPM_BIN_DIR/swictation-daemon"
+DAEMON_NATIVE="$NPM_NATIVE_DIR/swictation-daemon.bin"
 
 SOURCE_HASH=$(sha256sum "$DAEMON_SOURCE" | awk '{print $1}')
-NPM_HASH=$(sha256sum "$DAEMON_NPM" | awk '{print $1}')
+BIN_HASH=$(sha256sum "$DAEMON_BIN" | awk '{print $1}')
+NATIVE_HASH=$(sha256sum "$DAEMON_NATIVE" | awk '{print $1}')
 
-if [ "$SOURCE_HASH" != "$NPM_HASH" ]; then
+if [ "$SOURCE_HASH" != "$BIN_HASH" ] || [ "$SOURCE_HASH" != "$NATIVE_HASH" ]; then
     echo "❌ ERROR: Binary checksums don't match!"
-    echo "   This should never happen - cp just ran!"
+    echo "   Source:  $SOURCE_HASH"
+    echo "   bin/:    $BIN_HASH"
+    echo "   native/: $NATIVE_HASH"
     exit 1
 fi
 
-echo "✓ Binary checksums match"
+echo "✓ Binary checksums match (bin/ and lib/native/ are identical to source)"
 echo ""
 
 # 4. Show binary info
 echo "📊 Binary info:"
-ls -lh "$DAEMON_NPM"
+ls -lh "$DAEMON_BIN"
+ls -lh "$DAEMON_NATIVE"
 echo ""
 
 # 5. Verify key strings in binary (sanity check)
 echo "🔍 Sanity check - looking for recent code changes..."
-if strings "$DAEMON_NPM" | grep -q "# Swictation"; then
+if strings "$DAEMON_BIN" | grep -q "# Swictation"; then
     echo "✓ Found simplified Sway config format"
 else
     echo "⚠️  Warning: Simplified config format not found in binary"

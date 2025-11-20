@@ -31,16 +31,23 @@ else
 fi
 echo ""
 
-# Step 3: Copy binary and CUDA libraries to npm package
-echo "3️⃣  Copying binary and CUDA libraries to npm-package/lib/native/..."
+# Step 3: Copy binaries to npm package (BOTH bin/ and lib/native/ locations)
+echo "3️⃣  Copying binaries to npm-package..."
+mkdir -p "$REPO_ROOT/npm-package/bin"
 mkdir -p "$REPO_ROOT/npm-package/lib/native"
 
-# Copy daemon binary
+# Copy daemon binary to bin/ (used by CLI wrapper)
+cp rust-crates/target/release/swictation-daemon \
+   npm-package/bin/swictation-daemon
+chmod +x npm-package/bin/swictation-daemon
+BINARY_SIZE=$(du -h npm-package/bin/swictation-daemon | cut -f1)
+echo "   ✓ Daemon binary copied to bin/ (size: $BINARY_SIZE)"
+
+# Also copy to lib/native/ for backwards compatibility
 cp rust-crates/target/release/swictation-daemon \
    npm-package/lib/native/swictation-daemon.bin
 chmod +x npm-package/lib/native/swictation-daemon.bin
-BINARY_SIZE=$(du -h npm-package/lib/native/swictation-daemon.bin | cut -f1)
-echo "   ✓ Daemon binary copied (size: $BINARY_SIZE)"
+echo "   ✓ Daemon binary copied to lib/native/"
 
 # Copy CUDA provider libraries (excluded from npm tarball due to size)
 # These will be downloaded by postinstall.js from GitHub releases

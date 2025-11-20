@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.28] - 2025-11-20
+
+### Fixed
+- **Daemon Binary Version Commands** - Updated npm package with correct daemon binary
+  - Daemon now supports both `--version` (short) and `-V` (detailed)
+  - Shows comprehensive version info: ONNX Runtime, CUDA libs, build date, git commit, models
+  - Previous npm packages (v0.4.26, v0.4.27) had old daemon binary from Nov 19 without version support
+  - File: npm-package/bin/swictation-daemon (rebuilt from rust-crates)
+
+### Technical Details
+- CLI wrapper `swictation --version` now successfully calls `swictation-daemon --version`
+- Short version: `swictation-daemon --version` shows "swictation-daemon 0.2.2"
+- Long version: `swictation-daemon -V` shows build info, ONNX Runtime, CUDA libs, models, etc.
+
 ## [0.4.27] - 2025-11-20
 
 ### Fixed
