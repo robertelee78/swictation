@@ -33,10 +33,34 @@ export default defineConfig(async () => ({
   // Tauri expects a fixed port, fail if that port is not available
   build: {
     target: process.env.TAURI_PLATFORM == "windows" ? "chrome105" : "safari13",
+
+    // Always use esbuild minify for consistent builds
+    // This ensures reproducible output regardless of environment
     minify: !process.env.TAURI_DEBUG ? "esbuild" : false,
-    sourcemap: !!process.env.TAURI_DEBUG,
+
+    // Enable sourcemaps for debugging
+    // Helps troubleshoot bundling issues
+    sourcemap: true,
+
+    // CRITICAL: Always clean dist/ directory before building
+    // Prevents Vite caching issues where old code gets bundled
+    emptyOutDir: true,
+
     rollupOptions: {
       external: ['@vite/client'],
+      output: {
+        // Add content hash to filenames for cache busting
+        // Ensures browsers don't cache stale JavaScript
+        entryFileNames: 'assets/[name]-[hash].js',
+        chunkFileNames: 'assets/[name]-[hash].js',
+        assetFileNames: 'assets/[name]-[hash].[ext]'
+      },
     },
+  },
+
+  // Force dependency re-optimization
+  // Prevents stale dependency caching
+  optimizeDeps: {
+    force: true,
   },
 }));
