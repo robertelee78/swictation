@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.27] - 2025-11-20
+
+### Fixed
+- **CLI --version Command** - Completed implementation of --version/-V flags
+  - Added --version, -V, and version commands to CLI wrapper
+  - Shows npm package version, daemon details (if available), platform, and Node.js version
+  - Works even before binaries are installed (doesn't require checkBinaries())
+  - Updated help text to include --version command
+  - File: npm-package/bin/swictation
+
+### Note
+- This completes task cbde1aa4-6605-47fa-b706-2609926ddfcb which was partially implemented in v0.4.24 (daemon only)
+
 ## [0.4.26] - 2025-11-20
 
 ### Fixed

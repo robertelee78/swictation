@@ -374,6 +374,33 @@ async function handleDownloadModels() {
   }
 }
 
+function showVersion() {
+  const packageJson = require('../package.json');
+  console.log(chalk.cyan('Swictation - Voice-to-Text Dictation System'));
+  console.log(chalk.gray('─'.repeat(40)));
+  console.log(`Version: ${chalk.green(packageJson.version)}`);
+  console.log();
+
+  // Try to get daemon version if available
+  try {
+    const daemonVersion = execSync(`${daemonBinary} --version 2>&1`, {
+      encoding: 'utf8',
+      timeout: 2000
+    }).trim();
+    console.log(chalk.gray('Daemon Details:'));
+    daemonVersion.split('\n').forEach(line => {
+      console.log(chalk.gray(`  ${line}`));
+    });
+  } catch (err) {
+    console.log(chalk.gray('Daemon: Not installed or not accessible'));
+  }
+
+  console.log();
+  console.log(chalk.gray(`Platform: ${process.platform} ${process.arch}`));
+  console.log(chalk.gray(`Node.js: ${process.version}`));
+  process.exit(0);
+}
+
 function showHelp() {
   console.log(chalk.cyan('Swictation - Voice-to-Text Dictation System'));
   console.log(chalk.gray('─'.repeat(40)));
@@ -387,6 +414,7 @@ function showHelp() {
   console.log('  toggle          Toggle recording on/off');
   console.log('  setup           Configure systemd and hotkeys');
   console.log('  help            Show this help message');
+  console.log('  --version, -V   Show version information');
   console.log();
   console.log('Download Options:');
   console.log('  --model=0.6b    Download 0.6B model only (2.47 GB, CPU-friendly)');
@@ -401,12 +429,24 @@ function showHelp() {
   console.log('  swictation start --ui                   # Start daemon and UI');
   console.log('  swictation toggle                       # Toggle recording');
   console.log('  swictation status                       # Check if running');
+  console.log('  swictation --version                    # Show version info');
   process.exit(0);
 }
 
 // Main entry point
 async function main() {
   checkPlatform();
+
+  // Handle commands that don't need binaries
+  if (command === '--version' || command === '-V' || command === 'version') {
+    showVersion();
+    return;
+  }
+
+  if (command === 'help' || command === '--help' || command === '-h' || command === undefined) {
+    showHelp();
+    return;
+  }
 
   // download-models doesn't need binaries to exist yet
   if (command === 'download-models') {
@@ -431,12 +471,6 @@ async function main() {
       break;
     case 'setup':
       await handleSetup();
-      break;
-    case 'help':
-    case '--help':
-    case '-h':
-    case undefined:
-      showHelp();
       break;
     default:
       console.error(chalk.red(`Unknown command: ${command}`));
