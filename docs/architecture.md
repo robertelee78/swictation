@@ -34,10 +34,10 @@ Swictation is a **pure Rust daemon** with VAD-triggered automatic transcription.
 **Architecture:**
 ```rust
 struct SwictationDaemon {
-    state: DaemonState,  // Idle | Recording | Processing
+    state: DaemonState,  // Idle | Recording
     audio_capture: AudioCapture,
     vad: VadDetector,
-    stt: Recognizer,  // Sherpa-RS based recognizer
+    stt: SttEngine,  // Unified engine (OrtRecognizer for both models)
     text_transform: TextTransformer,
     text_injector: TextInjector,
 }
@@ -67,7 +67,7 @@ struct SwictationDaemon {
 - `Recording`: Continuously capturing audio, VAD monitoring for silence, transcribing and injecting segments automatically when silence detected (all within this state)
 
 **Key Features:**
-- VAD-triggered automatic segmentation (0.5s silence threshold configurable via config)
+- VAD-triggered automatic segmentation (0.8s silence threshold default, configurable via config)
 - Continuous recording with real-time audio callbacks (tokio async)
 - Lock-free ring buffer for audio streaming
 - Global hotkey via global-hotkey crate (cross-platform)
@@ -186,8 +186,8 @@ impl VadDetector {
 // Enum dispatch pattern - consistent API across model implementations
 // Location: rust-crates/swictation-stt/src/engine.rs
 pub enum SttEngine {
-    Parakeet0_6B(Recognizer),      // sherpa-rs (GPU or CPU)
-    Parakeet1_1B(OrtRecognizer),   // Direct ONNX Runtime (GPU only, INT8)
+    Parakeet0_6B(OrtRecognizer),   // Direct ONNX Runtime (GPU or CPU)
+    Parakeet1_1B(OrtRecognizer),   // Direct ONNX Runtime (GPU only)
 }
 
 impl SttEngine {
@@ -214,22 +214,25 @@ impl SttEngine {
 
 **Two Model Implementations:**
 
-**1.1B INT8 Model (High-end GPUs):**
+**Unified OrtRecognizer (Both Models):**
 ```rust
 // Location: rust-crates/swictation-stt/src/recognizer_ort.rs
+// Used for both 0.6B and 1.1B models via Direct ONNX Runtime integration
 pub struct OrtRecognizer {
     encoder: Session,              // ONNX Runtime session
     decoder: Session,              // LSTM decoder with stateful RNN
     joiner: Session,               // Token predictor
-    tokens: Vec<String>,           // 1025 tokens (BPE vocabulary)
-    blank_id: i64,                 // Blank token (1024)
-    audio_processor: AudioProcessor,  // 80 mel bins
+    tokens: Vec<String>,           // 1024-1025 tokens (BPE vocabulary)
+    blank_id: i64,                 // Blank token
+    audio_processor: AudioProcessor,  // 80 or 128 mel bins (model-dependent)
     decoder_state1: Option<Array3<f32>>,  // LSTM state (2, batch, 640)
     decoder_state2: Option<Array3<f32>>,  // LSTM state (2, 1, 640)
+    use_gpu: bool,                 // GPU or CPU mode
 }
 
 impl OrtRecognizer {
-    /// Create from model directory with encoder.int8.onnx, decoder.int8.onnx, joiner.int8.onnx
+    /// Create from model directory (auto-detects FP32 vs INT8 variants)
+    /// Prefers FP32 for GPU (better performance), INT8 for CPU (smaller memory)
     pub fn new<P: AsRef<Path>>(model_dir: P, use_gpu: bool) -> Result<Self>;
 
     /// Recognize from audio samples (used by pipeline)
@@ -237,53 +240,41 @@ impl OrtRecognizer {
 
     /// Recognize from audio file (WAV/MP3/FLAC)
     pub fn recognize_file<P: AsRef<Path>>(&mut self, path: P) -> Result<String>;
-}
-```
-
-**0.6B Model (Moderate GPUs / CPU):**
-```rust
-// Location: rust-crates/swictation-stt/src/recognizer.rs
-pub struct Recognizer {
-    recognizer: TransducerRecognizer,  // sherpa-rs wrapper
-    sample_rate: u32,                  // 16000 Hz
-    use_gpu: bool,                     // GPU or CPU mode
-}
-
-impl Recognizer {
-    /// Create from model directory with encoder.onnx, decoder.onnx, joiner.onnx, tokens.txt
-    pub fn new<P: AsRef<Path>>(model_path: P, use_gpu: bool) -> Result<Self>;
-
-    /// Recognize speech from audio samples
-    pub fn recognize(&mut self, audio: &[f32]) -> Result<RecognitionResult>;
-
-    /// Recognize from audio file
-    pub fn recognize_file<P: AsRef<Path>>(&mut self, path: P) -> Result<RecognitionResult>;
 
     /// Check if GPU acceleration is enabled
     pub fn is_gpu(&self) -> bool;
 }
 ```
 
+**Note on sherpa-rs:**
+The previous `Recognizer` implementation using sherpa-rs has been deprecated. Both 0.6B and 1.1B models now use direct ONNX Runtime integration (`OrtRecognizer`) for:
+- Unified codebase (easier maintenance)
+- Better Maxwell GPU support (sm_50-70 via CUDA 11.8)
+- Consistent performance characteristics
+- Simplified dependency management
+
 **Model Characteristics:**
 
-| Feature | 0.6B | 1.1B INT8 |
+| Feature | 0.6B | 1.1B |
 |---------|------|-----------|
 | Type | RNN-T Transducer | RNN-T Transducer |
 | Vocabulary | 1024 tokens | 1025 tokens |
 | Mel Features | 128 bins | 80 bins |
-| Quantization | FP32/FP16/INT8 | INT8 only |
-| Library | sherpa-rs | Direct ort 2.0.0-rc.10 |
+| Quantization | FP32 (GPU), INT8 (CPU) | FP32 (GPU), INT8 (CPU) |
+| Library | Direct ort 2.0.0-rc.8 | Direct ort 2.0.0-rc.8 |
 | WER | ~7-8% | 5.77% (best quality) |
-| Peak VRAM | ~1.2GB | ~3.5GB |
-| **Min VRAM Threshold** | **1536MB (1.5GB)** | **4096MB (4GB)** |
-| Headroom | 336MB (28%) | 596MB (17%) |
+| Peak VRAM | ~800MB-1.2GB | ~3.5GB |
+| **Min VRAM Threshold** | **3500MB (3.5GB)** | **6000MB (6GB)** |
+| Headroom | Safe for 4GB GPUs | Safe for 8GB+ GPUs |
 | Latency (GPU) | 100-150ms | 150-250ms |
-| Latency (CPU) | 200-400ms | N/A (GPU only) |
+| Latency (CPU) | 200-400ms | 300-500ms |
 
 **VRAM Headroom Rationale:**
-- **1.1B:** 4096MB threshold for 3.5GB peak = 596MB headroom (17%) for other GPU processes
-- **0.6B GPU:** 1536MB threshold for 1.2GB peak = 336MB headroom (28%) for other GPU processes
+- **1.1B:** 6000MB threshold for ~3.5GB peak = 2.5GB headroom (42%) for safety margin and other GPU processes
+- **0.6B GPU:** 3500MB threshold for ~1.2GB peak = 2.3GB headroom (66%) - fits comfortably in 4GB GPUs
 - **0.6B CPU:** No VRAM required, uses ~960MB system RAM
+
+**Source of Truth:** These thresholds are defined in `npm-package/postinstall.js` lines 1136-1156 and verified through real-world testing on production hardware (RTX A1000 4GB, RTX PRO 6000 Blackwell 97GB).
 
 **Adaptive Model Selection Decision Tree:**
 
@@ -309,20 +300,20 @@ impl Recognizer {
           │         │         │         │
           │         │         │         ▼
           │         │         │    ┌──────────────┐
-          │         │         │    │ VRAM ≥ 4GB?  │
+          │         │         │    │ VRAM ≥ 6GB?  │
           │         │         │    └──────────────┘
           │         │         │      YES│    │NO
           │         │         │         │    │
           │         │         │         │    ▼
           │         │         │         │  ┌───────────────┐
-          │         │         │         │  │ VRAM ≥ 1.5GB? │
+          │         │         │         │  │ VRAM ≥ 3.5GB? │
           │         │         │         │  └───────────────┘
           │         │         │         │    YES│    │NO
           │         │         │         │       │    │
           ▼         ▼         ▼         ▼       ▼    ▼
     ┌─────────┬─────────┬─────────┬─────────┬──────┬──────┐
     │ 1.1B    │ 0.6B    │ 0.6B    │ 1.1B    │ 0.6B │ 0.6B │
-    │ INT8    │ sherpa  │ sherpa  │ INT8    │sherpa│sherpa│
+    │ FP32    │ FP32    │ FP32    │ FP32    │ FP32 │ FP32 │
     │ GPU     │ GPU     │ CPU     │ GPU     │ GPU  │ CPU  │
     │ FORCED  │ FORCED  │ FORCED  │ AUTO    │ AUTO │ AUTO │
     └─────────┴─────────┴─────────┴─────────┴──────┴──────┘
@@ -334,10 +325,10 @@ impl Recognizer {
 // Location: rust-crates/swictation-daemon/src/pipeline.rs
 // ADAPTIVE MODEL SELECTION based on GPU VRAM availability
 //
-// Decision tree:
-//   ≥4GB VRAM → 1.1B INT8 GPU (peak 3.5GB + 596MB headroom = 17%)
-//   ≥1.5GB VRAM → 0.6B GPU (peak 1.2GB + 336MB headroom = 28%)
-//   <1.5GB or no GPU → 0.6B CPU fallback
+// Decision tree (SOURCE OF TRUTH: npm-package/postinstall.js lines 1136-1156):
+//   ≥6GB VRAM → 1.1B GPU (peak ~3.5GB, 2.5GB headroom = 42% safety margin)
+//   ≥3.5GB VRAM → 0.6B GPU (peak ~1.2GB, fits 4GB GPUs comfortably)
+//   <3.5GB or no GPU → 0.6B CPU fallback
 //
 // Config override: stt_model_override can force a specific model:
 //   "auto" = VRAM-based selection (default)
@@ -450,9 +441,9 @@ $ swictation-daemon --dry-run
 🧪 DRY-RUN MODE: Showing model selection without loading
   Mode: auto (VRAM-based)
   Detected: 97887MB VRAM
-  Would load: Parakeet-TDT-1.1B-INT8 (GPU)
-    Path: /opt/swictation/models/parakeet-tdt-1.1b-onnx
-    Reason: ≥4GB VRAM available
+  Would load: Parakeet-TDT-1.1B (GPU)
+    Path: ~/.local/share/swictation/models/parakeet-tdt-1.1b-onnx
+    Reason: ≥6GB VRAM available
 ✅ Dry-run complete (no models loaded)
 
 # Force specific model for testing
@@ -493,13 +484,14 @@ struct CliArgs {
 
 **1.1B Model Load Failure (despite sufficient VRAM):**
 ```
-Error: Failed to load 1.1B INT8 model despite 97887MB VRAM.
+Error: Failed to load 1.1B model despite 97887MB VRAM.
 
 Troubleshooting:
-  1. Verify model files exist: ls /opt/swictation/models/parakeet-tdt-1.1b-onnx
+  1. Verify model files exist: ls ~/.local/share/swictation/models/parakeet-tdt-1.1b-onnx
   2. Check CUDA/cuDNN installation: nvidia-smi
   3. Ensure ONNX Runtime CUDA EP is available
-  4. Try 0.6B fallback by setting stt_model_override="0.6b-gpu" in config
+  4. Verify GPU libraries downloaded: ls ~/.local/share/swictation/gpu-libs
+  5. Try 0.6B fallback by setting stt_model_override="0.6b-gpu" in config
 ```
 
 **0.6B GPU Model Load Failure (despite sufficient VRAM):**
@@ -507,10 +499,11 @@ Troubleshooting:
 Error: Failed to load 0.6B GPU model despite 8192MB VRAM.
 
 Troubleshooting:
-  1. Verify model files: ls /opt/swictation/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-onnx
+  1. Verify model files: ls ~/.local/share/swictation/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-onnx
   2. Check CUDA availability: nvidia-smi
-  3. Verify sherpa-rs CUDA support
-  4. Try CPU fallback by setting stt_model_override="0.6b-cpu" in config
+  3. Verify GPU libraries downloaded: ls ~/.local/share/swictation/gpu-libs
+  4. Check ONNX Runtime library: ls npm-package/lib/native/libonnxruntime.so
+  5. Try CPU fallback by setting stt_model_override="0.6b-cpu" in config
 ```
 
 **0.6B CPU Model Load Failure:**
@@ -518,9 +511,10 @@ Troubleshooting:
 Error: Failed to load 0.6B CPU model.
 
 Troubleshooting:
-  1. Verify model files: ls /opt/swictation/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-onnx
+  1. Verify model files: ls ~/.local/share/swictation/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-onnx
   2. Check available RAM (need ~1GB free)
   3. Ensure ONNX Runtime CPU EP is available
+  4. Check library path: ls npm-package/lib/native/libonnxruntime.so
 ```
 
 **Usage Examples:**
@@ -562,43 +556,73 @@ $ swictation-daemon --test-model 0.6b-gpu
 ```
 
 **Key Files:**
-- `rust-crates/swictation-stt/src/engine.rs` - Unified SttEngine interface
-- `rust-crates/swictation-stt/src/recognizer.rs` - 0.6B with sherpa-rs (GPU/CPU)
-- `rust-crates/swictation-stt/src/recognizer_ort.rs` - 1.1B with direct ort (GPU only)
-- `rust-crates/swictation-stt/src/audio.rs` - Mel feature extraction (80 bins for 1.1B)
+- `rust-crates/swictation-stt/src/engine.rs` - Unified SttEngine interface (enum dispatch)
+- `rust-crates/swictation-stt/src/recognizer_ort.rs` - OrtRecognizer for both models (direct ONNX Runtime)
+- `rust-crates/swictation-stt/src/audio.rs` - Mel feature extraction (80/128 bins auto-detected)
 - `rust-crates/swictation-daemon/src/pipeline.rs` - Adaptive selection logic (lines 77-227)
 - `rust-crates/swictation-daemon/src/gpu.rs` - GPU detection + VRAM measurement
-- `rust-crates/swictation-daemon/src/config.rs` - Configuration management (lines 54-62)
-- `rust-crates/swictation-daemon/src/main.rs` - CLI argument parsing (lines 22-35, 169-222)
+- `rust-crates/swictation-daemon/src/config.rs` - Configuration management
+- `rust-crates/swictation-daemon/src/main.rs` - CLI argument parsing
+- `npm-package/postinstall.js` - **SOURCE OF TRUTH** for VRAM thresholds (lines 1136-1156)
 
 ---
 
 ### 5. Text Transformation (MidStream)
 
-**Purpose:** Transform voice commands to symbols (future feature)
+**Purpose:** Transform voice commands to symbols and punctuation for natural dictation
 
-**Current Status:** Rules reset to 0 (intentionally awaiting Parakeet-TDT behavior analysis)
+**Current Status:** Secretary Mode v0.3.21 - Production-ready with 60+ transformation rules
 
 **Architecture:**
 ```rust
 // external/midstream/crates/text-transform/src/rules.rs
-pub struct TextTransformer {
-    rules: Vec<TransformRule>,  // Currently 0 rules (intentional)
+pub struct TransformRule {
+    pub replacement: &'static str,   // Output text
+    pub attach_to_prev: bool,        // Remove space before (punctuation)
+    pub is_opening: bool,            // No space before (quotes/brackets)
+    pub no_space_after: bool,        // Next word attaches (CLI flags)
 }
+
+// Zero-allocation static rules with O(1) HashMap lookups
+pub static STATIC_MAPPINGS: Lazy<HashMap<&'static str, TransformRule>>;
 ```
 
 **Implementation Status:**
-- **Current:** 0 transformation rules (passthrough mode)
-- **Reason:** Waiting for Parakeet-TDT STT output analysis (task 4218691c)
-- **Next Step:** Implement dictation mode (task 3393b914)
-- **Target:** 30-50 secretary dictation rules for natural punctuation
-- **Focus:** Natural language punctuation only (NOT programming symbols)
-- **Examples:** "comma" → ",", "period" → ".", "new paragraph" → "\n\n"
-- **Performance:** ~1μs latency (native Rust)
+- **Current:** 60+ transformation rules across 8 categories
+- **Performance:** ~5μs average latency (1000x better than 5ms target)
+- **Categories:**
+  - Basic punctuation (comma, period, question mark, etc.)
+  - Parentheses & brackets (with context-aware spacing)
+  - Quotes (stateful toggle tracking for open/close)
+  - Special symbols ($, @, #, etc.)
+  - Math operators (+, =, ×, etc.)
+  - Formatting commands (new line, tab, etc.)
+  - Abbreviations (Mr., Dr., etc.)
+  - Number words with compound support ("forty two" → "42")
 
-**Integration:** Direct Rust function calls via midstreamer_text_transform crate (no FFI overhead)
+**Features:**
+- Multi-word pattern matching (up to 4-word phrases)
+- Context-aware spacing rules (operators, brackets, quotes)
+- Stateful quote tracking (QuoteState for double/single/backtick)
+- Advanced number processing (compound numbers, years, "number" keyword trigger)
 
-**Why Empty?** Smart engineering - analyze real STT output first, then design rules based on actual model behavior, not assumptions.
+**Integration:** Direct Rust function calls via `midstreamer_text_transform` crate (no FFI overhead)
+
+**Pipeline Integration (pipeline.rs lines 445-462):**
+1. Pre-process: Strip Parakeet auto-punctuation to prevent double punctuation
+2. Capital commands: Process "cap", "all caps", etc.
+3. Transform: Apply punctuation rules via `transform()`
+4. Capitalize: Apply automatic capitalization rules
+
+**Future Modes (Planned):**
+- Command-Line Mode (shell commands, flags, pipes)
+- Coding Mode (with Python/JS/Rust sub-modes)
+- Email Mode (@ symbols, URLs, professional formatting)
+- Math Mode (superscripts, Greek letters, equations)
+
+**Mode Switching:** Voice commands ("mode dictation") + hotkeys (Super+D, Super+Shift+C, etc.)
+
+**See:** Tasks 8eacc3e8-de89-4e7b-b636-b857ada7384d and f53ea439-c2bb-458f-b533-3dfdec791459 for multi-mode specification
 
 ---
 
@@ -1035,18 +1059,18 @@ pub fn detect_display_server() -> DisplayServerInfo {
 
 | Component | Latency | Notes |
 |-----------|---------|-------|
-| VAD Silence Detection | 500ms | Configurable (default 0.5s in config.rs:80) |
+| VAD Silence Detection | 800ms | Configurable (default 0.8s in config.rs) |
 | Audio Accumulation | Continuous | Zero overhead (lock-free buffer) |
 | VAD Check per Chunk | <50ms | ONNX Runtime (CPU/GPU) |
 | Mel Feature Extraction | 10-20ms | Pure Rust or sherpa-rs internal |
 | STT Processing (0.6B GPU) | 100-150ms | sherpa-rs with CUDA |
 | STT Processing (0.6B CPU) | 200-400ms | sherpa-rs CPU fallback |
 | STT Processing (1.1B GPU) | 150-250ms | Direct ort with INT8 quantization |
-| Text Transformation | ~1μs | Native Rust (currently passthrough) |
+| Text Transformation | ~5μs | Native Rust (O(1) HashMap lookups) |
 | Text Injection | 10-50ms | wtype latency |
 | **Total (from pause to text)** | **~0.7-0.9s** | Dominated by silence threshold |
 
-**Key Insight:** Users don't perceive the 0.5s threshold as "lag" because they're pausing naturally. This is configurable in config (vad_min_silence).
+**Key Insight:** Users don't perceive the 0.8s threshold as "lag" because they're pausing naturally. This is configurable in config (vad_min_silence). The 0.8s default provides reliable silence detection while still feeling responsive.
 
 ### Memory Usage
 
@@ -1085,9 +1109,11 @@ pub fn detect_display_server() -> DisplayServerInfo {
 | **Total** | **~960 MB RAM** | CPU-only mode |
 
 **Hardware Recommendations:**
-- **Best:** 5GB+ VRAM GPU (RTX 3060, A1000, 4060) → 1.1B model, 5.77% WER
-- **Good:** 3-4GB VRAM GPU (RTX 2060, 1660) → 0.6B GPU, 7-8% WER
-- **Works:** Any CPU → 0.6B CPU, 7-8% WER (slower but functional)
+- **Best:** 8GB+ VRAM GPU (RTX 3060 12GB, RTX 4060, A4000+) → 1.1B model, 5.77% WER
+- **Good:** 4GB VRAM GPU (RTX A1000, GTX 1650, RX 5500 XT) → 0.6B GPU, 7-8% WER
+- **Works:** Any CPU (4+ cores recommended) → 0.6B CPU, 7-8% WER (slower but functional)
+
+**Note:** 6GB minimum is conservative; real-world testing shows 1.1B works on some 6-8GB GPUs, but 8GB+ recommended for reliability.
 
 ### Accuracy Metrics
 
@@ -1181,13 +1207,14 @@ Built using Docker with reproducible environment:
 
 ### Future Improvements
 
-1. **Text Transformation Rules** - Implement 30-50 secretary dictation patterns (task 3393b914)
-2. **AMD GPU Support** - ROCm execution provider (sherpa-rs + ort backend)
-3. **DirectML** - Windows GPU acceleration
-4. **CoreML/Metal** - macOS Apple Silicon support
+1. **Multi-Mode Text Transformation** - Add command-line, coding, email, and math modes (tasks 8eacc3e8, f53ea439)
+2. **AMD GPU Support** - ROCm execution provider for Radeon GPUs
+3. **DirectML** - Windows GPU acceleration (Intel/AMD/NVIDIA)
+4. **CoreML/Metal** - macOS Apple Silicon support (M1/M2/M3)
 5. **Multi-language** - Expose Parakeet's multilingual capabilities
 6. **Custom Models** - Support for other ONNX STT models
 7. **IPC Authentication** - Add authentication to metrics Unix socket (security)
+8. **Streaming VAD** - Reduce silence threshold to <500ms with improved algorithms
 
 ---
 
@@ -1251,13 +1278,15 @@ WantedBy=default.target
 | Wayland Support | ✅ Native | ❌ X11 only | ❌ Windows | ✅ Browser |
 | Runtime | Pure Rust | Python | Native | JavaScript |
 | Latency | ~1s (VAD pause) | 100-150ms | 50-100ms | 500-1000ms |
-| VAD Streaming | ✅ Auto | ❌ Manual | ❌ Manual | Varies |
+| VAD Streaming | ✅ Auto (0.8s) | ❌ Manual | ❌ Manual | Varies |
 | Privacy | ✅ Local | ✅ Local | ❌ Cloud | ❌ Cloud |
 | Accuracy (WER) | 5.77-8% (adaptive) | ~3% WER | ~2% WER | 3-8% WER |
 | GPU Required | Optional (faster) | Optional | No | No |
-| VRAM Usage | 0.8-2.2GB | Varies | N/A | N/A |
+| VRAM Usage | 0.8-3.5GB | Varies | N/A | N/A |
+| Text Transform | 60+ rules (5μs) | Extensive | Extensive | Limited |
 | Cost | Free | $99-499 | $200+ | Free-paid |
 | Open Source | ✅ | ❌ | ❌ | Varies |
+| Maxwell GPU | ✅ sm_50+ | ❌ | N/A | N/A |
 
 ---
 
@@ -1272,4 +1301,4 @@ WantedBy=default.target
 
 ---
 
-**Last Updated:** 2025-11-10 (Pure Rust implementation complete)
+**Last Updated:** 2025-11-20 (Unified OrtRecognizer, Secretary Mode production-ready, Maxwell GPU support)
