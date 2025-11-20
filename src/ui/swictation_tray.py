@@ -76,8 +76,13 @@ class SwictationTrayApp(QApplication):
 
         # Track Tauri UI process
         self.tauri_process = None
-        self.tauri_ui_binary = os.environ.get('SWICTATION_UI_BINARY',
-                                             str(Path(__file__).parent.parent.parent / "tauri-ui" / "src-tauri" / "target" / "release" / "swictation-ui"))
+        # Find Tauri UI binary - works in both development and npm package contexts
+        # Try npm package location first (src/ui -> src -> npm-package -> bin)
+        default_binary = Path(__file__).parent.parent.parent / "bin" / "swictation-ui"
+        if not default_binary.exists():
+            # Development fallback (src/ui -> src -> project-root -> tauri-ui/...)
+            default_binary = Path(__file__).parent.parent.parent / "tauri-ui" / "src-tauri" / "target" / "release" / "swictation-ui"
+        self.tauri_ui_binary = os.environ.get('SWICTATION_UI_BINARY', str(default_binary))
 
         # Click debounce timer (prevent single-click from interfering with double-click)
         self.click_timer = QTimer(self)

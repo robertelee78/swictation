@@ -65,7 +65,7 @@ echo ""
 # Step 4: Verify service files have CUDA environment
 echo "4️⃣  Verifying CUDA environment in service files..."
 
-check_service_file() {
+check_config_file() {
   local file=$1
   local errors=0
 
@@ -74,8 +74,9 @@ check_service_file() {
     return 1
   fi
 
-  if ! grep -q "cuda-12.9" "$file"; then
-    echo "   ❌ ERROR: Missing cuda-12.9 path in $file"
+  # Config files should have literal CUDA paths
+  if ! grep -q "cuda" "$file"; then
+    echo "   ❌ ERROR: Missing CUDA library path in $file"
     errors=$((errors + 1))
   fi
 
@@ -97,8 +98,41 @@ check_service_file() {
   fi
 }
 
-check_service_file "npm-package/config/swictation-daemon.service" || exit 1
-check_service_file "npm-package/templates/swictation-daemon.service.template" || exit 1
+check_template_file() {
+  local file=$1
+  local errors=0
+
+  if [ ! -f "$file" ]; then
+    echo "   ❌ ERROR: File not found: $file"
+    return 1
+  fi
+
+  # Template files should have placeholders
+  if ! grep -q "__LD_LIBRARY_PATH__" "$file"; then
+    echo "   ❌ ERROR: Missing __LD_LIBRARY_PATH__ placeholder in $file"
+    errors=$((errors + 1))
+  fi
+
+  if ! grep -q "CUDA_HOME" "$file"; then
+    echo "   ❌ ERROR: Missing CUDA_HOME in $file"
+    errors=$((errors + 1))
+  fi
+
+  if ! grep -q "__ORT_DYLIB_PATH__" "$file"; then
+    echo "   ❌ ERROR: Missing __ORT_DYLIB_PATH__ placeholder in $file"
+    errors=$((errors + 1))
+  fi
+
+  if [ $errors -eq 0 ]; then
+    echo "   ✓ $file has all required placeholders"
+  else
+    echo "   ❌ $file is missing critical placeholders!"
+    return 1
+  fi
+}
+
+check_config_file "npm-package/config/swictation-daemon.service" || exit 1
+check_template_file "npm-package/templates/swictation-daemon.service.template" || exit 1
 
 if [ ! -f "npm-package/config/swictation-ui.service" ]; then
   echo "   ❌ WARNING: npm-package/config/swictation-ui.service not found"

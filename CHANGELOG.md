@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.26] - 2025-11-20
+
+### Fixed
+- **Tauri UI Launch from Tray Icon** - Fixed middle-click and "Show Metrics" menu item not working
+  - Tray app now correctly locates Tauri UI binary in npm package installations
+  - Added smart path detection with development fallback
+  - Resolves "app not installed" error on Sway/Wayland when launching UI from tray
+  - Both `src/ui/swictation_tray.py` and `npm-package/src/ui/swictation_tray.py` updated
+
 ## [0.4.25] - 2025-11-19
 
 ### Fixed
