@@ -36,69 +36,70 @@ export function useMetrics() {
   useEffect(() => {
     // Listen for metrics updates from daemon
     // In Tauri v2, listen() returns Promise<UnlistenFn>
-    let unlistenFn: (() => void) | null = null;
+    let unlistenFn: (() => void) | undefined;
 
-    listen<BroadcastEvent>('metrics-event', (event) => {
-      const payload = event.payload;
+    // Use async IIFE to properly await the Promise
+    (async () => {
+      unlistenFn = await listen<BroadcastEvent>('metrics-event', (event) => {
+        const payload = event.payload;
 
-      switch (payload.type) {
-        case 'metrics_update':
-          setMetrics((prev) => ({
-            ...prev,
-            state: payload.state,
-            sessionId: payload.session_id ?? null,
-            segments: payload.segments,
-            words: payload.words,
-            wpm: payload.wpm,
-            duration: formatDuration(payload.duration_s),
-            latencyMs: payload.latency_ms,
-            gpuMemoryMb: payload.gpu_memory_mb,
-            gpuMemoryPercent: payload.gpu_memory_percent,
-            cpuPercent: payload.cpu_percent,
-            connected: true,
-          }));
-          break;
-
-        case 'state_change':
-          setMetrics((prev) => ({
-            ...prev,
-            state: payload.state,
-          }));
-          break;
-
-        case 'transcription':
-          setTranscriptions((prev) => [
-            ...prev,
-            {
-              text: payload.text,
-              timestamp: payload.timestamp,
-              wpm: payload.wpm,
-              latency_ms: payload.latency_ms,
+        switch (payload.type) {
+          case 'metrics_update':
+            setMetrics((prev) => ({
+              ...prev,
+              state: payload.state,
+              sessionId: payload.session_id ?? null,
+              segments: payload.segments,
               words: payload.words,
-            },
-          ]);
-          break;
+              wpm: payload.wpm,
+              duration: formatDuration(payload.duration_s),
+              latencyMs: payload.latency_ms,
+              gpuMemoryMb: payload.gpu_memory_mb,
+              gpuMemoryPercent: payload.gpu_memory_percent,
+              cpuPercent: payload.cpu_percent,
+              connected: true,
+            }));
+            break;
 
-        case 'session_start':
-          // Clear transcriptions on new session
-          setTranscriptions([]);
-          setMetrics((prev) => ({
-            ...prev,
-            sessionId: payload.session_id,
-            segments: 0,
-            words: 0,
-            wpm: 0,
-            duration: '00:00',
-          }));
-          break;
+          case 'state_change':
+            setMetrics((prev) => ({
+              ...prev,
+              state: payload.state,
+            }));
+            break;
 
-        case 'session_end':
-          // Keep transcriptions visible
-          break;
-      }
-    }).then((fn) => {
-      unlistenFn = fn;
-    });
+          case 'transcription':
+            setTranscriptions((prev) => [
+              ...prev,
+              {
+                text: payload.text,
+                timestamp: payload.timestamp,
+                wpm: payload.wpm,
+                latency_ms: payload.latency_ms,
+                words: payload.words,
+              },
+            ]);
+            break;
+
+          case 'session_start':
+            // Clear transcriptions on new session
+            setTranscriptions([]);
+            setMetrics((prev) => ({
+              ...prev,
+              sessionId: payload.session_id,
+              segments: 0,
+              words: 0,
+              wpm: 0,
+              duration: '00:00',
+            }));
+            break;
+
+          case 'session_end':
+            // Keep transcriptions visible
+            break;
+        }
+      });
+    })();
 
     return () => {
       if (unlistenFn) {
