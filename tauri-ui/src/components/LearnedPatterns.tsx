@@ -18,7 +18,8 @@ export function LearnedPatterns() {
   const [filter, setFilter] = useState<string>('all');
   const [search, setSearch] = useState<string>('');
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState<{ corrected: string; mode: string; matchType: string }>({
+  const [editForm, setEditForm] = useState<{ original: string; corrected: string; mode: string; matchType: string }>({
+    original: '',
     corrected: '',
     mode: 'all',
     matchType: 'exact',
@@ -55,6 +56,7 @@ export function LearnedPatterns() {
   const startEdit = (correction: Correction) => {
     setEditingId(correction.id);
     setEditForm({
+      original: correction.original,
       corrected: correction.corrected,
       mode: correction.mode,
       matchType: correction.match_type,
@@ -63,13 +65,14 @@ export function LearnedPatterns() {
 
   const cancelEdit = () => {
     setEditingId(null);
-    setEditForm({ corrected: '', mode: 'all', matchType: 'exact' });
+    setEditForm({ original: '', corrected: '', mode: 'all', matchType: 'exact' });
   };
 
   const saveEdit = async (id: string) => {
     try {
       await invoke('update_correction', {
         id,
+        original: editForm.original,
         corrected: editForm.corrected,
         mode: editForm.mode,
         matchType: editForm.matchType,
@@ -190,7 +193,18 @@ export function LearnedPatterns() {
                   className="border-b border-muted/30 hover:bg-background/50"
                 >
                   <td className="py-2 font-mono text-foreground">
-                    {correction.original}
+                    {editingId === correction.id ? (
+                      <input
+                        type="text"
+                        value={editForm.original}
+                        onChange={(e) =>
+                          setEditForm({ ...editForm, original: e.target.value })
+                        }
+                        className="bg-background text-foreground px-2 py-1 rounded border border-muted w-full"
+                      />
+                    ) : (
+                      correction.original
+                    )}
                   </td>
                   <td className="py-2 font-mono">
                     {editingId === correction.id ? (

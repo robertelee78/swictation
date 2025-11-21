@@ -155,6 +155,7 @@ pub async fn delete_correction(
 pub async fn update_correction(
     state: State<'_, Mutex<CorrectionsState>>,
     id: String,
+    original: Option<String>,
     corrected: Option<String>,
     mode: Option<String>,
     match_type: Option<String>,
@@ -166,6 +167,12 @@ pub async fn update_correction(
         .find(|c| c.id == id)
         .ok_or("Correction not found")?;
 
+    if let Some(o) = original {
+        if o.trim().is_empty() {
+            return Err("Original text cannot be empty".to_string());
+        }
+        correction.original = o.trim().to_lowercase();
+    }
     if let Some(c) = corrected {
         if c.trim().is_empty() {
             return Err("Corrected text cannot be empty".to_string());
