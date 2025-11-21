@@ -316,6 +316,7 @@ async fn main() -> Result<()> {
 
                 // Update internal metrics
                 metrics.lock().unwrap().update_system_metrics();
+                metrics.lock().unwrap().update_recording_duration();
 
                 // Get realtime metrics and update daemon state
                 let mut realtime = metrics.lock().unwrap().get_realtime_metrics();

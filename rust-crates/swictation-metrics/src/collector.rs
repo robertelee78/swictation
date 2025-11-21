@@ -10,7 +10,7 @@ use sysinfo::{System, Pid};
 use tracing::info;
 
 use crate::database::MetricsDatabase;
-use crate::gpu::GpuMonitor;
+use crate::memory::MemoryMonitor;
 use crate::models::{RealtimeMetrics, SegmentMetrics, SessionMetrics};
 
 /// Orchestrates metrics collection for Swictation daemon
@@ -35,7 +35,7 @@ pub struct MetricsCollector {
 
     // System monitoring
     system: Arc<Mutex<System>>,
-    gpu_monitor: Arc<Mutex<Option<GpuMonitor>>>,
+    memory_monitor: Arc<Mutex<Option<MemoryMonitor>>>,
 }
 
 impl MetricsCollector {
@@ -67,15 +67,21 @@ impl MetricsCollector {
             active_time_accumulator: Arc::new(Mutex::new(0.0)),
             realtime: Arc::new(Mutex::new(RealtimeMetrics::default())),
             system: Arc::new(Mutex::new(system)),
-            gpu_monitor: Arc::new(Mutex::new(None)),
+            memory_monitor: Arc::new(Mutex::new(None)),
         })
     }
 
-    /// Enable GPU monitoring for given provider
-    pub fn enable_gpu_monitoring(&self, provider: &str) {
-        let monitor = GpuMonitor::new(provider);
-        *self.gpu_monitor.lock().unwrap() = Some(monitor);
-        info!("GPU monitoring enabled for provider: {}", provider);
+    /// Enable GPU monitoring
+    pub fn enable_gpu_monitoring(&self, _provider: &str) {
+        match MemoryMonitor::new() {
+            Ok(monitor) => {
+                info!("GPU monitoring enabled: {}", monitor.gpu_device_name());
+                *self.memory_monitor.lock().unwrap() = Some(monitor);
+            }
+            Err(e) => {
+                info!("GPU monitoring unavailable: {}", e);
+            }
+        }
     }
 
     /// Start a new metrics session
@@ -323,12 +329,12 @@ impl MetricsCollector {
         self.update_cpu_usage(cpu_percent as f64);
 
         // Update GPU metrics if available
-        if let Some(ref mut monitor) = *self.gpu_monitor.lock().unwrap() {
-            let gpu_metrics = monitor.update();
+        if let Some(ref mut monitor) = *self.memory_monitor.lock().unwrap() {
+            let stats = monitor.get_stats();
 
-            // Update GPU memory if available
-            if let (Some(used), Some(total)) = (gpu_metrics.memory_used_mb, gpu_metrics.memory_total_mb) {
-                self.update_gpu_memory(used as f64, total as f64);
+            // Update GPU memory if VRAM stats are available
+            if let Some(vram) = stats.vram {
+                self.update_gpu_memory(vram.used_mb as f64, vram.total_mb as f64);
             }
         }
 
@@ -348,9 +354,9 @@ impl MetricsCollector {
         self.system.clone()
     }
 
-    /// Get GPU monitor for external use
-    pub fn get_gpu_monitor(&self) -> Arc<Mutex<Option<GpuMonitor>>> {
-        self.gpu_monitor.clone()
+    /// Get memory monitor for external use
+    pub fn get_memory_monitor(&self) -> Arc<Mutex<Option<MemoryMonitor>>> {
+        self.memory_monitor.clone()
     }
 }
 
