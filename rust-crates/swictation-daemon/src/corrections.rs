@@ -12,7 +12,6 @@ use std::time::Instant;
 use chrono::{DateTime, Utc};
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
@@ -517,6 +516,7 @@ impl CorrectionEngine {
             corrected,
             mode,
             match_type,
+            case_mode: CaseMode::PreserveInput,
             learned_at: Utc::now(),
             use_count: 0,
         };

@@ -3,8 +3,8 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-NPM_NATIVE_DIR="$REPO_ROOT/npm-package/lib/native"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+NPM_NATIVE_DIR="$REPO_ROOT/npm-package/package/lib/native"
 
 echo "🔨 Building Swictation binaries for release..."
 echo ""
@@ -18,7 +18,7 @@ echo ""
 
 # 2. Copy binaries to npm package (BOTH bin/ and lib/native/)
 echo "📋 Copying binaries to npm package..."
-NPM_BIN_DIR="$REPO_ROOT/npm-package/bin"
+NPM_BIN_DIR="$REPO_ROOT/npm-package/package/bin"
 mkdir -p "$NPM_BIN_DIR"
 mkdir -p "$NPM_NATIVE_DIR"
 
