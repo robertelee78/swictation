@@ -24,8 +24,14 @@ pub struct Correction {
     pub corrected: String,
     pub mode: CorrectionMode,
     pub match_type: MatchType,
+    #[serde(default = "default_case_mode")]
+    pub case_mode: CaseMode,
     pub learned_at: DateTime<Utc>,
     pub use_count: u64,
+}
+
+fn default_case_mode() -> CaseMode {
+    CaseMode::PreserveInput
 }
 
 /// Which transformation mode(s) this correction applies to
@@ -53,6 +59,18 @@ impl CorrectionMode {
 pub enum MatchType {
     Exact,
     Phonetic,
+}
+
+/// How to handle case when applying corrections
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CaseMode {
+    /// Match output case to input case (default)
+    PreserveInput,
+    /// Always use correction's case regardless of input
+    ForcePattern,
+    /// Use correction case unless input is all-caps
+    Smart,
 }
 
 /// TOML file structure
@@ -285,8 +303,8 @@ impl CorrectionEngine {
                             if !result.is_empty() {
                                 result.push(' ');
                             }
-                            // Preserve case from first word if original was capitalized
-                            let replacement = Self::preserve_case(words[i], &correction.corrected);
+                            // Apply case mode to replacement
+                            let replacement = Self::preserve_case(words[i], &correction.corrected, correction.case_mode);
                             result.push_str(&replacement);
 
                             // Track usage
@@ -310,7 +328,7 @@ impl CorrectionEngine {
                     if !result.is_empty() {
                         result.push(' ');
                     }
-                    let replacement = Self::preserve_case(words[i], &correction.corrected);
+                    let replacement = Self::preserve_case(words[i], &correction.corrected, correction.case_mode);
                     result.push_str(&replacement);
 
                     // Track usage
@@ -345,7 +363,7 @@ impl CorrectionEngine {
                         if !result.is_empty() {
                             result.push(' ');
                         }
-                        let replacement = Self::preserve_case(words[i], &correction.corrected);
+                        let replacement = Self::preserve_case(words[i], &correction.corrected, correction.case_mode);
                         result.push_str(&replacement);
 
                         // Track usage
@@ -373,7 +391,7 @@ impl CorrectionEngine {
                     if !result.is_empty() {
                         result.push(' ');
                     }
-                    let replacement = Self::preserve_case(words[i], &correction.corrected);
+                    let replacement = Self::preserve_case(words[i], &correction.corrected, correction.case_mode);
                     result.push_str(&replacement);
 
                     // Track usage
@@ -404,27 +422,48 @@ impl CorrectionEngine {
     }
 
     /// Preserve the case pattern of the original word in the replacement
-    fn preserve_case(original: &str, replacement: &str) -> String {
+    fn preserve_case(original: &str, replacement: &str, case_mode: CaseMode) -> String {
         if original.is_empty() || replacement.is_empty() {
             return replacement.to_string();
         }
 
-        let first_char = original.chars().next().unwrap();
-        let all_upper = original.chars().all(|c| c.is_uppercase() || !c.is_alphabetic());
-
-        if all_upper && original.len() > 1 {
-            // ALL CAPS -> ALL CAPS
-            replacement.to_uppercase()
-        } else if first_char.is_uppercase() {
-            // Title Case -> Title Case
-            let mut chars = replacement.chars();
-            match chars.next() {
-                None => String::new(),
-                Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+        match case_mode {
+            CaseMode::ForcePattern => {
+                // Always use the correction's case exactly as specified
+                replacement.to_string()
             }
-        } else {
-            // lowercase -> lowercase
-            replacement.to_lowercase()
+            CaseMode::Smart => {
+                // Use correction case unless input is all-caps
+                let all_upper = original.chars().all(|c| c.is_uppercase() || !c.is_alphabetic());
+
+                if all_upper && original.len() > 1 {
+                    // Input is ALL CAPS -> make output all caps
+                    replacement.to_uppercase()
+                } else {
+                    // Otherwise use correction's case
+                    replacement.to_string()
+                }
+            }
+            CaseMode::PreserveInput => {
+                // Match output case to input case (original behavior)
+                let first_char = original.chars().next().unwrap();
+                let all_upper = original.chars().all(|c| c.is_uppercase() || !c.is_alphabetic());
+
+                if all_upper && original.len() > 1 {
+                    // ALL CAPS -> ALL CAPS
+                    replacement.to_uppercase()
+                } else if first_char.is_uppercase() {
+                    // Title Case -> Title Case
+                    let mut chars = replacement.chars();
+                    match chars.next() {
+                        None => String::new(),
+                        Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+                    }
+                } else {
+                    // lowercase -> lowercase
+                    replacement.to_lowercase()
+                }
+            }
         }
     }
 

@@ -18,8 +18,14 @@ pub struct Correction {
     pub corrected: String,
     pub mode: String,        // "secretary" | "code" | "all"
     pub match_type: String,  // "exact" | "phonetic"
+    #[serde(default = "default_case_mode")]
+    pub case_mode: String,   // "preserve_input" | "force_pattern" | "smart"
     pub learned_at: DateTime<Utc>,
     pub use_count: u64,
+}
+
+fn default_case_mode() -> String {
+    "preserve_input".to_string()
 }
 
 /// TOML file structure
@@ -73,6 +79,7 @@ pub async fn learn_correction(
     corrected: String,
     mode: String,
     match_type: String,
+    case_mode: Option<String>,
 ) -> Result<Correction, String> {
     let state = state.lock().unwrap();
 
@@ -90,12 +97,18 @@ pub async fn learn_correction(
         return Err("Match type must be 'exact' or 'phonetic'".to_string());
     }
 
+    let case_mode = case_mode.unwrap_or_else(default_case_mode);
+    if !["preserve_input", "force_pattern", "smart"].contains(&case_mode.as_str()) {
+        return Err("Case mode must be 'preserve_input', 'force_pattern', or 'smart'".to_string());
+    }
+
     let correction = Correction {
         id: Uuid::new_v4().to_string(),
         original: original.trim().to_lowercase(),
         corrected: corrected.trim().to_string(),
         mode,
         match_type,
+        case_mode,
         learned_at: Utc::now(),
         use_count: 0,
     };
@@ -159,6 +172,7 @@ pub async fn update_correction(
     corrected: Option<String>,
     mode: Option<String>,
     match_type: Option<String>,
+    case_mode: Option<String>,
 ) -> Result<Correction, String> {
     let state = state.lock().unwrap();
     let mut file = state.load_file()?;
@@ -190,6 +204,12 @@ pub async fn update_correction(
             return Err("Match type must be 'exact' or 'phonetic'".to_string());
         }
         correction.match_type = mt;
+    }
+    if let Some(cm) = case_mode {
+        if !["preserve_input", "force_pattern", "smart"].contains(&cm.as_str()) {
+            return Err("Case mode must be 'preserve_input', 'force_pattern', or 'smart'".to_string());
+        }
+        correction.case_mode = cm;
     }
 
     let updated = correction.clone();

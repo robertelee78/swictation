@@ -7,6 +7,7 @@ interface Correction {
   corrected: string;
   mode: string;
   match_type: string;
+  case_mode: string;
   learned_at: string;
   use_count: number;
 }
@@ -18,11 +19,12 @@ export function LearnedPatterns() {
   const [filter, setFilter] = useState<string>('all');
   const [search, setSearch] = useState<string>('');
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState<{ original: string; corrected: string; mode: string; matchType: string }>({
+  const [editForm, setEditForm] = useState<{ original: string; corrected: string; mode: string; matchType: string; caseMode: string }>({
     original: '',
     corrected: '',
     mode: 'all',
     matchType: 'exact',
+    caseMode: 'preserve_input',
   });
 
   const loadCorrections = async () => {
@@ -60,12 +62,13 @@ export function LearnedPatterns() {
       corrected: correction.corrected,
       mode: correction.mode,
       matchType: correction.match_type,
+      caseMode: correction.case_mode || 'preserve_input',
     });
   };
 
   const cancelEdit = () => {
     setEditingId(null);
-    setEditForm({ original: '', corrected: '', mode: 'all', matchType: 'exact' });
+    setEditForm({ original: '', corrected: '', mode: 'all', matchType: 'exact', caseMode: 'preserve_input' });
   };
 
   const saveEdit = async (id: string) => {
@@ -76,6 +79,7 @@ export function LearnedPatterns() {
         corrected: editForm.corrected,
         mode: editForm.mode,
         matchType: editForm.matchType,
+        caseMode: editForm.caseMode,
       });
       await loadCorrections();
       setEditingId(null);
@@ -107,6 +111,17 @@ export function LearnedPatterns() {
 
   const getMatchTypeLabel = (matchType: string) => {
     return matchType === 'phonetic' ? 'Phonetic' : 'Exact';
+  };
+
+  const getCaseModeLabel = (caseMode: string) => {
+    switch (caseMode) {
+      case 'force_pattern':
+        return 'Force';
+      case 'smart':
+        return 'Smart';
+      default:
+        return 'Match';
+    }
   };
 
   return (
@@ -182,6 +197,7 @@ export function LearnedPatterns() {
                 <th className="pb-2 font-medium">Corrected</th>
                 <th className="pb-2 font-medium">Mode</th>
                 <th className="pb-2 font-medium">Match</th>
+                <th className="pb-2 font-medium">Case</th>
                 <th className="pb-2 font-medium">Uses</th>
                 <th className="pb-2 font-medium">Actions</th>
               </tr>
@@ -269,6 +285,33 @@ export function LearnedPatterns() {
                         }`}
                       >
                         {getMatchTypeLabel(correction.match_type)}
+                      </span>
+                    )}
+                  </td>
+                  <td className="py-2">
+                    {editingId === correction.id ? (
+                      <select
+                        value={editForm.caseMode}
+                        onChange={(e) =>
+                          setEditForm({ ...editForm, caseMode: e.target.value })
+                        }
+                        className="bg-background text-foreground px-2 py-1 rounded border border-muted text-xs"
+                      >
+                        <option value="preserve_input">Match Input</option>
+                        <option value="force_pattern">Force Pattern</option>
+                        <option value="smart">Smart</option>
+                      </select>
+                    ) : (
+                      <span
+                        className={`px-2 py-0.5 rounded text-xs ${
+                          correction.case_mode === 'force_pattern'
+                            ? 'bg-yellow-500/20 text-yellow-400'
+                            : correction.case_mode === 'smart'
+                            ? 'bg-cyan-500/20 text-cyan-400'
+                            : 'bg-gray-500/20 text-gray-400'
+                        }`}
+                      >
+                        {getCaseModeLabel(correction.case_mode)}
                       </span>
                     )}
                   </td>
