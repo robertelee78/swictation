@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import type { TranscriptionItem } from '../types';
 
@@ -8,6 +8,7 @@ interface Props {
 
 export function Transcriptions({ transcriptions }: Props) {
   const listRef = useRef<HTMLDivElement>(null);
+  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
 
   // Auto-scroll to bottom when new transcriptions arrive
   useEffect(() => {
@@ -16,11 +17,14 @@ export function Transcriptions({ transcriptions }: Props) {
     }
   }, [transcriptions]);
 
-  const copyToClipboard = async (text: string) => {
+  const copyToClipboard = async (text: string, index: number) => {
     try {
       await writeText(text);
+      setCopiedIndex(index);
+      setTimeout(() => setCopiedIndex(null), 2000);
     } catch (err) {
       console.error('Failed to copy to clipboard:', err);
+      alert(`Failed to copy to clipboard: ${err}`);
     }
   };
 
@@ -53,11 +57,15 @@ export function Transcriptions({ transcriptions }: Props) {
               <div className="flex-1" />
 
               <button
-                onClick={() => copyToClipboard(item.text)}
-                className="w-8 h-6 rounded border border-muted hover:border-primary hover:bg-border transition-colors text-sm"
-                title="Copy to clipboard"
+                onClick={() => copyToClipboard(item.text, index)}
+                className={`w-8 h-6 rounded border transition-colors text-sm ${
+                  copiedIndex === index
+                    ? 'border-primary bg-primary text-background'
+                    : 'border-muted hover:border-primary hover:bg-border'
+                }`}
+                title={copiedIndex === index ? 'Copied!' : 'Copy to clipboard'}
               >
-                📋
+                {copiedIndex === index ? '✓' : '📋'}
               </button>
             </div>
 
