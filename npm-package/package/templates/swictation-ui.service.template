@@ -1,0 +1,27 @@
+[Unit]
+Description=Swictation System Tray UI
+# Start after daemon is ready
+After=swictation-daemon.service
+# Required dependency - UI needs daemon to function
+Requires=swictation-daemon.service
+# Stop when daemon stops
+BindsTo=swictation-daemon.service
+# Part of daemon service group
+PartOf=swictation-daemon.service
+
+[Service]
+Type=simple
+ExecStart=__INSTALL_DIR__/bin/swictation-ui-launcher
+Restart=on-failure
+RestartSec=5
+
+# Environment for Wayland/X11
+Environment="DISPLAY=__DISPLAY__"
+Environment="WAYLAND_DISPLAY=__WAYLAND_DISPLAY__"
+
+# Resource limits (UI is lightweight)
+MemoryMax=100M
+CPUQuota=10%
+
+[Install]
+WantedBy=default.target

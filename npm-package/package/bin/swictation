@@ -1,0 +1,486 @@
+#!/usr/bin/env node
+
+const { spawn, execSync } = require('child_process');
+const path = require('path');
+const fs = require('fs');
+const os = require('os');
+const chalk = require('chalk');
+const inquirer = require('inquirer');
+const which = require('which');
+const { configureNvidiaHibernation, checkNvidiaHibernationStatus } = require('../src/nvidia-hibernation-setup');
+const { getIpcSocketPath, getMetricsSocketPath } = require('../src/socket-paths');
+
+// Binary locations
+const binDir = path.join(__dirname, '..');
+const daemonBinary = path.join(binDir, 'bin', 'swictation-daemon');
+const uiBinary = path.join(binDir, 'bin', 'swictation-ui');
+const configDir = path.join(os.homedir(), '.config', 'swictation');
+const systemdUserDir = path.join(os.homedir(), '.config', 'systemd', 'user');
+
+// Parse command line arguments
+const args = process.argv.slice(2);
+const command = args[0];
+
+// Helper functions
+function checkPlatform() {
+  if (process.platform !== 'linux') {
+    console.error(chalk.red('Error: Swictation currently only supports Linux x64'));
+    console.log(chalk.yellow('Support for macOS and Windows is coming soon!'));
+    process.exit(1);
+  }
+
+  if (process.arch !== 'x64') {
+    console.error(chalk.red('Error: Swictation currently only supports x64 architecture'));
+    process.exit(1);
+  }
+}
+
+function checkBinaries() {
+  if (!fs.existsSync(daemonBinary)) {
+    console.error(chalk.red(`Error: Daemon binary not found at ${daemonBinary}`));
+    console.log(chalk.yellow('Try reinstalling: npm install -g swictation'));
+    process.exit(1);
+  }
+
+  if (!fs.existsSync(uiBinary)) {
+    console.error(chalk.red(`Error: UI binary not found at ${uiBinary}`));
+    console.log(chalk.yellow('Try reinstalling: npm install -g swictation'));
+    process.exit(1);
+  }
+
+  // Make sure binaries are executable
+  try {
+    fs.chmodSync(daemonBinary, '755');
+    fs.chmodSync(uiBinary, '755');
+  } catch (err) {
+    // Ignore EPERM errors for global installs (binaries already executable)
+    if (err.code !== 'EPERM') {
+      console.error(chalk.red('Error: Could not set binary permissions'), err);
+      process.exit(1);
+    }
+  }
+}
+
+function isRunning(serviceName) {
+  try {
+    const output = execSync(`systemctl --user is-active ${serviceName}`, { encoding: 'utf8' }).trim();
+    return output === 'active';
+  } catch {
+    return false;
+  }
+}
+
+function detectDisplayServer() {
+  const waylandDisplay = process.env.WAYLAND_DISPLAY;
+  const x11Display = process.env.DISPLAY;
+  const sessionType = process.env.XDG_SESSION_TYPE;
+
+  if (waylandDisplay || sessionType === 'wayland') {
+    return 'wayland';
+  } else if (x11Display) {
+    return 'x11';
+  }
+  return 'unknown';
+}
+
+function detectWindowManager() {
+  // Check for Sway
+  if (process.env.SWAYSOCK) {
+    return 'sway';
+  }
+
+  // Check for i3
+  try {
+    which.sync('i3');
+    const i3Check = execSync('i3 --version 2>/dev/null', { encoding: 'utf8' });
+    if (i3Check.includes('i3')) {
+      return 'i3';
+    }
+  } catch {}
+
+  // Check XDG_CURRENT_DESKTOP
+  const desktop = process.env.XDG_CURRENT_DESKTOP;
+  if (desktop) {
+    return desktop.toLowerCase();
+  }
+
+  return 'unknown';
+}
+
+// Command handlers
+async function handleStart() {
+  console.log(chalk.cyan('Starting Swictation services...'));
+
+  // Check if already running
+  if (isRunning('swictation-daemon')) {
+    console.log(chalk.yellow('Daemon is already running'));
+  } else {
+    try {
+      execSync('systemctl --user start swictation-daemon');
+      console.log(chalk.green('✓ Daemon started'));
+    } catch (err) {
+      console.error(chalk.red('Failed to start daemon:'), err.message);
+      console.log(chalk.yellow('Try running manually:'), daemonBinary);
+    }
+  }
+
+  // Start UI if requested
+  if (args.includes('--ui')) {
+    try {
+      spawn(uiBinary, [], { detached: true, stdio: 'ignore' }).unref();
+      console.log(chalk.green('✓ UI launched'));
+    } catch (err) {
+      console.error(chalk.red('Failed to launch UI:'), err.message);
+    }
+  }
+}
+
+async function handleStop() {
+  console.log(chalk.cyan('Stopping Swictation services...'));
+
+  try {
+    execSync('systemctl --user stop swictation-daemon');
+    console.log(chalk.green('✓ Daemon stopped'));
+  } catch (err) {
+    console.error(chalk.red('Failed to stop daemon:'), err.message);
+  }
+}
+
+async function handleStatus() {
+  console.log(chalk.cyan('Swictation Service Status:'));
+  console.log(chalk.gray('─'.repeat(40)));
+
+  // Check daemon status
+  const daemonActive = isRunning('swictation-daemon');
+  console.log(`Daemon: ${daemonActive ? chalk.green('● Active') : chalk.gray('○ Inactive')}`);
+
+  // Check socket (use new secure path)
+  const ipcSocket = getIpcSocketPath();
+  const socketExists = fs.existsSync(ipcSocket);
+  console.log(`Socket: ${socketExists ? chalk.green('● Connected') : chalk.gray('○ Not found')}`);
+  console.log(`  Path: ${chalk.gray(ipcSocket)}`);
+
+  // Check metrics socket (use new secure path)
+  const metricsSocket = getMetricsSocketPath();
+  const metricsExists = fs.existsSync(metricsSocket);
+  console.log(`Metrics: ${metricsExists ? chalk.green('● Connected') : chalk.gray('○ Not found')}`);
+  console.log(`  Path: ${chalk.gray(metricsSocket)}`);
+
+  // Display system info
+  console.log(chalk.gray('─'.repeat(40)));
+  const displayServer = detectDisplayServer();
+  const windowManager = detectWindowManager();
+  console.log(`Display: ${chalk.blue(displayServer)}`);
+  console.log(`Window Manager: ${chalk.blue(windowManager)}`);
+}
+
+async function handleSetup() {
+  console.log(chalk.cyan('Setting up Swictation...'));
+  console.log(chalk.gray('This will configure systemd services and hotkeys'));
+
+  // Check for systemd
+  try {
+    which.sync('systemctl');
+  } catch {
+    console.error(chalk.red('Error: systemd is required but not found'));
+    process.exit(1);
+  }
+
+  // Create config directory
+  if (!fs.existsSync(configDir)) {
+    fs.mkdirSync(configDir, { recursive: true });
+    console.log(chalk.green('✓ Created config directory'));
+  }
+
+  // Create systemd user directory
+  if (!fs.existsSync(systemdUserDir)) {
+    fs.mkdirSync(systemdUserDir, { recursive: true });
+    console.log(chalk.green('✓ Created systemd user directory'));
+  }
+
+  // Install systemd service
+  const serviceFile = path.join(binDir, 'config', 'swictation-daemon.service');
+  const targetService = path.join(systemdUserDir, 'swictation-daemon.service');
+
+  if (fs.existsSync(serviceFile)) {
+    // Read service file and update binary path
+    let serviceContent = fs.readFileSync(serviceFile, 'utf8');
+    serviceContent = serviceContent.replace(/ExecStart=.*/, `ExecStart=${daemonBinary}`);
+
+    fs.writeFileSync(targetService, serviceContent);
+    console.log(chalk.green('✓ Installed systemd service'));
+
+    // Reload systemd
+    try {
+      execSync('systemctl --user daemon-reload');
+      console.log(chalk.green('✓ Reloaded systemd'));
+    } catch (err) {
+      console.error(chalk.yellow('Warning: Could not reload systemd'), err.message);
+    }
+  }
+
+  // Configure hotkeys based on window manager
+  const wm = detectWindowManager();
+  if (wm === 'sway') {
+    console.log(chalk.cyan('\nDetected Sway window manager'));
+    console.log(chalk.yellow('Add this to your ~/.config/sway/config:'));
+    console.log(chalk.gray('─'.repeat(40)));
+    console.log(chalk.white('bindsym Super+Shift+d exec swictation toggle'));
+    console.log(chalk.gray('─'.repeat(40)));
+  } else if (wm === 'i3') {
+    console.log(chalk.cyan('\nDetected i3 window manager'));
+    console.log(chalk.yellow('Add this to your ~/.config/i3/config:'));
+    console.log(chalk.gray('─'.repeat(40)));
+    console.log(chalk.white('bindsym Mod4+Shift+d exec swictation toggle'));
+    console.log(chalk.gray('─'.repeat(40)));
+  }
+
+  // Ask if user wants to enable auto-start
+  const { autostart } = await inquirer.prompt([
+    {
+      type: 'confirm',
+      name: 'autostart',
+      message: 'Enable Swictation to start automatically on login?',
+      default: true
+    }
+  ]);
+
+  if (autostart) {
+    try {
+      execSync('systemctl --user enable swictation-daemon');
+      console.log(chalk.green('✓ Auto-start enabled'));
+    } catch (err) {
+      console.error(chalk.yellow('Warning: Could not enable auto-start'), err.message);
+    }
+  }
+
+  // Check for NVIDIA hibernation configuration (laptops only)
+  console.log(chalk.cyan('\n📱 Checking NVIDIA hibernation support...'));
+  const nvidiaStatus = checkNvidiaHibernationStatus();
+
+  if (nvidiaStatus.needsConfiguration) {
+    console.log(chalk.yellow('\n⚠️  NVIDIA hibernation support not configured'));
+    console.log(chalk.gray('   This is required to prevent GPU errors after laptop hibernation'));
+
+    const { configureNvidia } = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'configureNvidia',
+        message: 'Configure NVIDIA hibernation support now? (requires sudo)',
+        default: true
+      }
+    ]);
+
+    if (configureNvidia) {
+      console.log(chalk.cyan('\n🔧 Configuring NVIDIA hibernation support...'));
+      const result = await configureNvidiaHibernation({
+        interactive: false,
+        log: (msg) => console.log(chalk.cyan(msg))
+      });
+
+      if (result.success) {
+        console.log(chalk.green('✓ NVIDIA hibernation configured'));
+        if (result.needsReboot) {
+          console.log(chalk.yellow('⚠️  Reboot required for changes to take effect'));
+        }
+      } else {
+        console.log(chalk.red('✗ Configuration failed:'), result.message);
+      }
+    } else {
+      console.log(chalk.yellow('⚠️  Skipping NVIDIA configuration'));
+      console.log(chalk.cyan('   You can configure later by running: sudo swictation setup'));
+    }
+  } else if (nvidiaStatus.isLaptop && nvidiaStatus.hasNvidiaGpu && nvidiaStatus.isConfigured) {
+    console.log(chalk.green('✓ NVIDIA hibernation support already configured'));
+  } else if (!nvidiaStatus.isLaptop) {
+    console.log(chalk.cyan('ℹ Not a laptop - NVIDIA hibernation check skipped'));
+  } else if (!nvidiaStatus.hasNvidiaGpu) {
+    console.log(chalk.cyan('ℹ No NVIDIA GPU detected'));
+  }
+
+  console.log(chalk.green('\n✓ Setup complete!'));
+  console.log(chalk.cyan('Run "swictation start" to begin using Swictation'));
+}
+
+async function handleToggle() {
+  // Send toggle command to daemon using secure socket path
+  try {
+    const net = require('net');
+    const socketPath = getIpcSocketPath();
+    const client = net.createConnection(socketPath);
+
+    client.on('connect', () => {
+      client.write(JSON.stringify({ action: 'toggle' }));
+    });
+
+    client.on('data', (data) => {
+      const response = JSON.parse(data.toString());
+      if (response.status === 'success') {
+        console.log(chalk.green('✓'), response.message);
+      } else {
+        console.error(chalk.red('✗'), response.error);
+      }
+      client.end();
+    });
+
+    client.on('error', (err) => {
+      console.error(chalk.red('Error: Cannot connect to daemon'));
+      console.log(chalk.yellow('Is the daemon running? Try: swictation start'));
+    });
+  } catch (err) {
+    console.error(chalk.red('Error:'), err.message);
+  }
+}
+
+async function handleDownloadModels() {
+  const ModelDownloader = require(path.join(__dirname, '..', 'lib', 'model-downloader.js'));
+
+  // Parse arguments
+  const modelArg = args.find(arg => arg.startsWith('--model='));
+  const modelValue = modelArg ? modelArg.split('=')[1] : 'both';
+  const force = args.includes('--force');
+
+  // Validate model argument
+  const validModels = ['0.6b', '1.1b', 'both'];
+  if (!validModels.includes(modelValue)) {
+    console.error(chalk.red(`Invalid model: ${modelValue}`));
+    console.log(chalk.yellow('Valid options: 0.6b, 1.1b, both'));
+    process.exit(1);
+  }
+
+  // Determine which models to download
+  let modelKeys = [];
+  switch (modelValue) {
+    case '0.6b':
+      modelKeys = ['vad', '0.6b'];
+      console.log(chalk.cyan('Downloading: Silero VAD + Parakeet-TDT 0.6B (CPU-friendly)'));
+      break;
+    case '1.1b':
+      modelKeys = ['vad', '1.1b'];
+      console.log(chalk.cyan('Downloading: Silero VAD + Parakeet-TDT 1.1B (GPU-optimized)'));
+      break;
+    case 'both':
+      modelKeys = ['vad', '0.6b', '1.1b'];
+      console.log(chalk.cyan('Downloading: All models (9.43 GB total)'));
+      break;
+  }
+
+  try {
+    const downloader = new ModelDownloader({ force });
+    await downloader.downloadModels(modelKeys);
+  } catch (err) {
+    console.error(chalk.red('Download failed:'), err.message);
+    process.exit(1);
+  }
+}
+
+function showVersion() {
+  const packageJson = require('../package.json');
+  console.log(chalk.cyan('Swictation - Voice-to-Text Dictation System'));
+  console.log(chalk.gray('─'.repeat(40)));
+  console.log(`Version: ${chalk.green(packageJson.version)}`);
+  console.log();
+
+  // Try to get daemon version if available
+  try {
+    const daemonVersion = execSync(`${daemonBinary} --version 2>&1`, {
+      encoding: 'utf8',
+      timeout: 2000
+    }).trim();
+    console.log(chalk.gray('Daemon Details:'));
+    daemonVersion.split('\n').forEach(line => {
+      console.log(chalk.gray(`  ${line}`));
+    });
+  } catch (err) {
+    console.log(chalk.gray('Daemon: Not installed or not accessible'));
+  }
+
+  console.log();
+  console.log(chalk.gray(`Platform: ${process.platform} ${process.arch}`));
+  console.log(chalk.gray(`Node.js: ${process.version}`));
+  process.exit(0);
+}
+
+function showHelp() {
+  console.log(chalk.cyan('Swictation - Voice-to-Text Dictation System'));
+  console.log(chalk.gray('─'.repeat(40)));
+  console.log('Usage: swictation [command] [options]');
+  console.log();
+  console.log('Commands:');
+  console.log('  download-models Download AI models from HuggingFace');
+  console.log('  start [--ui]    Start the daemon (and optionally the UI)');
+  console.log('  stop            Stop the daemon');
+  console.log('  status          Show service status');
+  console.log('  toggle          Toggle recording on/off');
+  console.log('  setup           Configure systemd and hotkeys');
+  console.log('  help            Show this help message');
+  console.log('  --version, -V   Show version information');
+  console.log();
+  console.log('Download Options:');
+  console.log('  --model=0.6b    Download 0.6B model only (2.47 GB, CPU-friendly)');
+  console.log('  --model=1.1b    Download 1.1B model only (6.96 GB, GPU-optimized)');
+  console.log('  --model=both    Download both models (9.43 GB, default)');
+  console.log('  --force         Re-download even if models exist');
+  console.log();
+  console.log('Examples:');
+  console.log('  swictation download-models              # Download all models');
+  console.log('  swictation download-models --model=0.6b # CPU-friendly only');
+  console.log('  swictation start                        # Start the daemon');
+  console.log('  swictation start --ui                   # Start daemon and UI');
+  console.log('  swictation toggle                       # Toggle recording');
+  console.log('  swictation status                       # Check if running');
+  console.log('  swictation --version                    # Show version info');
+  process.exit(0);
+}
+
+// Main entry point
+async function main() {
+  checkPlatform();
+
+  // Handle commands that don't need binaries
+  if (command === '--version' || command === '-V' || command === 'version') {
+    showVersion();
+    return;
+  }
+
+  if (command === 'help' || command === '--help' || command === '-h' || command === undefined) {
+    showHelp();
+    return;
+  }
+
+  // download-models doesn't need binaries to exist yet
+  if (command === 'download-models') {
+    await handleDownloadModels();
+    return;
+  }
+
+  checkBinaries();
+
+  switch (command) {
+    case 'start':
+      await handleStart();
+      break;
+    case 'stop':
+      await handleStop();
+      break;
+    case 'status':
+      await handleStatus();
+      break;
+    case 'toggle':
+      await handleToggle();
+      break;
+    case 'setup':
+      await handleSetup();
+      break;
+    default:
+      console.error(chalk.red(`Unknown command: ${command}`));
+      console.log(chalk.yellow('Run "swictation help" for usage information'));
+      process.exit(1);
+  }
+}
+
+// Run the CLI
+main().catch(err => {
+  console.error(chalk.red('Fatal error:'), err);
+  process.exit(1);
+});

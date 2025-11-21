@@ -1,0 +1,77 @@
+{
+  "name": "swictation",
+  "version": "0.4.34",
+  "description": "Voice-to-text dictation with Wayland/X11 support (GNOME, Sway, i3), Secretary Mode (60+ natural language commands), NVIDIA GPU acceleration, and pure Rust performance (Ubuntu 24.04+ required)",
+  "keywords": [
+    "voice-to-text",
+    "speech-recognition",
+    "dictation",
+    "secretary-mode",
+    "natural-language",
+    "transcription",
+    "stt",
+    "rust",
+    "parakeet-tdt",
+    "silero-vad",
+    "wayland",
+    "x11",
+    "onnx",
+    "text-transformation"
+  ],
+  "homepage": "https://github.com/robertelee78/swictation",
+  "bugs": {
+    "url": "https://github.com/robertelee78/swictation/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/robertelee78/swictation.git"
+  },
+  "license": "Apache-2.0",
+  "author": "Robert E. Lee <robert@agidreams.us>",
+  "main": "index.js",
+  "bin": {
+    "swictation": "./bin/swictation"
+  },
+  "files": [
+    "bin/",
+    "lib/model-downloader.js",
+    "lib/native/swictation-daemon.bin",
+    "lib/native/libonnxruntime.so",
+    "lib/native/libonnxruntime_providers_shared.so",
+    "lib/native/package.json",
+    "lib/native/.gitkeep",
+    "config/",
+    "src/",
+    "docs/",
+    "templates/",
+    "scripts/",
+    "tests/",
+    "postinstall.js",
+    "preuninstall.js",
+    "README.md"
+  ],
+  "scripts": {
+    "postinstall": "node postinstall.js",
+    "preuninstall": "node preuninstall.js",
+    "test": "node test.js",
+    "build": "./scripts/build-release.sh",
+    "prepublishOnly": "./scripts/build-release.sh && ../tauri-ui/scripts/build-ui-release.sh"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "dependencies": {
+    "chalk": "^4.1.2",
+    "inquirer": "^8.2.5",
+    "which": "^2.0.2"
+  },
+  "devDependencies": {
+    "eslint": "^8.0.0"
+  }
+}

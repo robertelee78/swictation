@@ -1,0 +1,59 @@
+#!/bin/bash
+# Swictation UI Launcher - Detects environment and launches correct UI variant
+#
+# Architecture:
+# - Sway/Wayland: Qt6 swaybar tray + Tauri hybrid (better icon integration)
+# - Other WMs: Pure Tauri UI
+#
+# Detection logic:
+# 1. Check for $SWAYSOCK environment variable (Sway IPC socket)
+# 2. Check for swaymsg command availability
+# 3. If both present: Launch Qt6 hybrid, else: Launch pure Tauri
+
+set -euo pipefail
+
+# Get installation paths
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+INSTALL_ROOT="$(dirname "$SCRIPT_DIR")"
+
+# UI binaries
+TAURI_BINARY="${INSTALL_ROOT}/bin/swictation-ui"
+PYTHON_HYBRID="${INSTALL_ROOT}/src/ui/swictation_tray.py"
+
+# Detect Sway environment
+detect_sway() {
+    # Check for Sway IPC socket
+    if [ -n "${SWAYSOCK:-}" ] && [ -S "$SWAYSOCK" ]; then
+        # Verify swaymsg is available
+        if command -v swaymsg >/dev/null 2>&1; then
+            return 0  # Sway detected
+        fi
+    fi
+    return 1  # Not Sway
+}
+
+# Launch appropriate UI variant
+if detect_sway; then
+    echo "✓ Sway compositor detected - launching Qt6 swaybar + Tauri hybrid UI"
+
+    # Check if Python hybrid exists
+    if [ ! -f "$PYTHON_HYBRID" ]; then
+        echo "✗ Warning: Qt6 hybrid UI not found at $PYTHON_HYBRID"
+        echo "  Falling back to pure Tauri UI"
+        exec "$TAURI_BINARY" "$@"
+    fi
+
+    # Check Python dependencies
+    if ! python3 -c "import PySide6" 2>/dev/null; then
+        echo "✗ Warning: PySide6 not installed (required for Qt6 swaybar integration)"
+        echo "  Install with: pip install PySide6"
+        echo "  Falling back to pure Tauri UI"
+        exec "$TAURI_BINARY" "$@"
+    fi
+
+    # Launch Qt6 hybrid (swaybar tray + Tauri window)
+    exec python3 "$PYTHON_HYBRID" "$@"
+else
+    echo "✓ Non-Sway environment detected - launching pure Tauri UI"
+    exec "$TAURI_BINARY" "$@"
+fi

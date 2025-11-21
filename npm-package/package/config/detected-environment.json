@@ -1,0 +1,5 @@
+{
+  "ORT_DYLIB_PATH": "/home/robert/.local/lib/python3.13/site-packages/onnxruntime/capi/libonnxruntime.so.1.23.2",
+  "detected_at": "2025-11-12T01:30:54.181Z",
+  "onnxruntime_version": "1.23.2"
+}

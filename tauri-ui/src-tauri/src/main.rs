@@ -29,6 +29,7 @@ fn main() {
         .init();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
             // Only create tray icon if not disabled (e.g., when launched from QT tray on Sway)
             if std::env::var("SWICTATION_NO_TRAY").is_err() {
