@@ -378,6 +378,104 @@ impl MetricsDatabase {
         Ok(())
     }
 
+    /// Recalculate lifetime stats from all sessions and segments
+    /// This should be called after each session ends to update aggregate statistics
+    pub fn recalculate_lifetime_stats(&self) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+
+        // Aggregate from sessions table
+        let mut stmt = conn.prepare(
+            "SELECT
+                COALESCE(SUM(words_dictated), 0) as total_words,
+                COALESCE(SUM(characters_typed), 0) as total_characters,
+                COUNT(*) as total_sessions,
+                COALESCE(SUM(duration_s) / 60.0, 0) as total_time_minutes,
+                COALESCE(AVG(wpm), 0) as avg_wpm,
+                COALESCE(AVG(avg_latency_ms), 0) as avg_latency_ms,
+                MAX(wpm) as best_wpm,
+                (SELECT id FROM sessions ORDER BY wpm DESC LIMIT 1) as best_wpm_session,
+                MIN(avg_latency_ms) as lowest_latency,
+                (SELECT id FROM sessions WHERE avg_latency_ms > 0 ORDER BY avg_latency_ms ASC LIMIT 1) as lowest_latency_session
+             FROM sessions
+             WHERE end_time IS NOT NULL"
+        )?;
+
+        let result: Result<(i32, i32, i32, f64, f64, f64, Option<f64>, Option<i64>, Option<f64>, Option<i64>)> =
+            stmt.query_row([], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
+                    row.get(9)?,
+                ))
+            }).map_err(|e| anyhow::anyhow!("Failed to aggregate sessions: {}", e));
+
+        let (total_words, total_characters, total_sessions, total_time_minutes,
+             avg_wpm, avg_latency_ms, best_wpm, best_wpm_session,
+             lowest_latency, lowest_latency_session) = result?;
+
+        // Count total segments
+        let total_segments: i32 = conn.query_row(
+            "SELECT COUNT(*) FROM segments",
+            [],
+            |row| row.get(0)
+        ).unwrap_or(0);
+
+        // Calculate time saved (assuming 40 WPM typing baseline)
+        let typing_baseline_wpm = 40.0;
+        let time_saved_minutes = if avg_wpm > typing_baseline_wpm && total_words > 0 {
+            let dictation_time = total_words as f64 / avg_wpm;
+            let typing_time = total_words as f64 / typing_baseline_wpm;
+            typing_time - dictation_time
+        } else {
+            0.0
+        };
+
+        let now = Utc::now().timestamp() as f64;
+
+        // Update lifetime_stats
+        conn.execute(
+            "UPDATE lifetime_stats SET
+                total_words = ?1,
+                total_characters = ?2,
+                total_sessions = ?3,
+                total_time_minutes = ?4,
+                total_segments = ?5,
+                avg_wpm = ?6,
+                avg_latency_ms = ?7,
+                time_saved_minutes = ?8,
+                best_wpm_value = ?9,
+                best_wpm_session = ?10,
+                lowest_latency_ms = ?11,
+                lowest_latency_session = ?12,
+                last_updated = ?13
+            WHERE id = 1",
+            params![
+                total_words,
+                total_characters,
+                total_sessions,
+                total_time_minutes,
+                total_segments,
+                avg_wpm,
+                avg_latency_ms,
+                time_saved_minutes,
+                best_wpm.unwrap_or(0.0),
+                best_wpm_session,
+                lowest_latency.unwrap_or(0.0),
+                lowest_latency_session,
+                now,
+            ],
+        )?;
+
+        Ok(())
+    }
+
     /// Convert database row to SessionMetrics
     fn row_to_session(&self, row: &Row) -> Result<SessionMetrics> {
         let start_time: Option<f64> = row.get("start_time")?;

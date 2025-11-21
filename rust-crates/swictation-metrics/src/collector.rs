@@ -183,6 +183,9 @@ impl MetricsCollector {
         // Update database
         self.db.update_session(session_id, &session)?;
 
+        // Recalculate lifetime stats after session ends
+        self.db.recalculate_lifetime_stats()?;
+
         info!("📊 Session #{} complete: {} words in {:.1}s ({:.1} WPM)",
               session_id,
               session.words_dictated,
