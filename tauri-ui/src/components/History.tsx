@@ -1,21 +1,59 @@
+import { useState } from 'react';
 import { useDatabase } from '../hooks/useDatabase';
 
 export function History() {
-  const { history, lifetimeStats, loading, refresh } = useDatabase();
+  const { history, lifetimeStats, loading, refresh, resetDatabase } = useDatabase();
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+
+  const handleReset = async () => {
+    await resetDatabase();
+    setShowResetConfirm(false);
+  };
 
   return (
     <div className="flex flex-col gap-4 p-5">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h2 className="text-foreground text-xl font-bold">Recent Sessions (Last 10)</h2>
-        <button
-          onClick={refresh}
-          disabled={loading}
-          className="px-4 py-2 bg-card hover:bg-border text-foreground rounded border border-primary transition-colors disabled:opacity-50"
-        >
-          🔄 Refresh
-        </button>
+        <h2 className="text-foreground text-xl font-bold">All Sessions</h2>
+        <div className="flex gap-2">
+          <button
+            onClick={refresh}
+            disabled={loading}
+            className="px-4 py-2 bg-card hover:bg-border text-foreground rounded border border-primary transition-colors disabled:opacity-50"
+          >
+            Refresh
+          </button>
+          <button
+            onClick={() => setShowResetConfirm(true)}
+            disabled={loading}
+            className="px-4 py-2 bg-card hover:bg-destructive text-foreground rounded border border-destructive transition-colors disabled:opacity-50"
+          >
+            Reset
+          </button>
+        </div>
       </div>
+
+      {/* Reset Confirmation Dialog */}
+      {showResetConfirm && (
+        <div className="bg-card rounded border border-destructive p-4">
+          <p className="text-foreground mb-3">Are you sure you want to reset all data? This cannot be undone.</p>
+          <div className="flex gap-2">
+            <button
+              onClick={handleReset}
+              disabled={loading}
+              className="px-4 py-2 bg-destructive hover:bg-destructive/80 text-white rounded transition-colors disabled:opacity-50"
+            >
+              Yes, Reset All Data
+            </button>
+            <button
+              onClick={() => setShowResetConfirm(false)}
+              className="px-4 py-2 bg-card hover:bg-border text-foreground rounded border border-border transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Sessions List */}
       <div className="space-y-3 flex-1 overflow-auto">

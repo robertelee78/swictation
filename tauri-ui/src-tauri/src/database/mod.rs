@@ -213,4 +213,33 @@ impl Database {
             })
         }
     }
+
+    /// Reset all data in the database
+    pub fn reset_database(&self) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+
+        // Delete all data from tables
+        conn.execute("DELETE FROM segments", [])?;
+        conn.execute("DELETE FROM sessions", [])?;
+
+        // Reset lifetime stats to zero
+        conn.execute(
+            "UPDATE lifetime_stats SET
+                total_words = 0,
+                total_characters = 0,
+                total_sessions = 0,
+                total_time_minutes = 0,
+                avg_wpm = 0,
+                avg_latency_ms = 0,
+                best_wpm_value = 0,
+                best_wpm_session = NULL,
+                time_saved_minutes = 0,
+                lowest_latency_ms = 0,
+                lowest_latency_session = NULL
+            WHERE id = 1",
+            [],
+        )?;
+
+        Ok(())
+    }
 }

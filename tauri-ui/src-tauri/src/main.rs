@@ -153,6 +153,7 @@ fn main() {
             commands::get_lifetime_stats,
             commands::toggle_recording,
             commands::get_connection_status,
+            commands::reset_database,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

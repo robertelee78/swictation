@@ -12,7 +12,7 @@ export function useDatabase() {
     setLoading(true);
     setError(null);
     try {
-      const sessions = await invoke<HistorySession[]>('get_recent_sessions', { limit: 10 });
+      const sessions = await invoke<HistorySession[]>('get_recent_sessions', { limit: 100000 });
       setHistory(sessions);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load history');
@@ -40,6 +40,20 @@ export function useDatabase() {
     await Promise.all([loadHistory(), loadLifetimeStats()]);
   };
 
+  const resetDatabase = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      await invoke('reset_database');
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to reset database');
+      console.error('Failed to reset database:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
     refresh();
   }, []);
@@ -50,5 +64,6 @@ export function useDatabase() {
     loading,
     error,
     refresh,
+    resetDatabase,
   };
 }

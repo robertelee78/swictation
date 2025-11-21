@@ -85,3 +85,14 @@ pub async fn get_connection_status() -> Result<ConnectionStatus, String> {
         socket_path: "/run/user/1000/swictation_metrics.sock".to_string(),
     })
 }
+
+/// Reset all database data (sessions, segments, lifetime stats)
+#[tauri::command]
+pub async fn reset_database(state: State<'_, AppState>) -> Result<(), String> {
+    state
+        .db
+        .lock()
+        .unwrap()
+        .reset_database()
+        .map_err(|e| format!("Failed to reset database: {}", e))
+}
