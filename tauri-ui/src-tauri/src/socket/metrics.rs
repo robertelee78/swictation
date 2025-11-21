@@ -111,7 +111,7 @@ pub enum MetricsEvent {
         gpu_memory_mb: f64,
         gpu_memory_percent: f64,
         cpu_percent: f64,
-        session_id: i64,
+        session_id: Option<i64>,
     },
 }
 
@@ -271,7 +271,7 @@ impl MetricsSocket {
                 session_id,
             } => {
                 debug!(
-                    "Metrics update: state={}, wpm={}, words={}, latency={}ms, segments={}, duration={}s, gpu={}MB ({}%), cpu={}%, session={}",
+                    "Metrics update: state={}, wpm={}, words={}, latency={}ms, segments={}, duration={}s, gpu={}MB ({}%), cpu={}%, session={:?}",
                     state, wpm, words, latency_ms, segments, duration_s, gpu_memory_mb, gpu_memory_percent, cpu_percent, session_id
                 );
                 app_handle
