@@ -288,12 +288,10 @@ impl MetricsCollector {
         }
     }
 
-    /// Update recording duration
+    /// Update recording duration based on VAD segment accumulation
     pub fn update_recording_duration(&self) {
-        if let Some(start_time) = *self.session_start_time.lock().unwrap() {
-            let mut realtime = self.realtime.lock().unwrap();
-            realtime.recording_duration_s = start_time.elapsed().as_secs_f64();
-        }
+        let mut realtime = self.realtime.lock().unwrap();
+        realtime.recording_duration_s = *self.active_time_accumulator.lock().unwrap();
     }
 
     /// Get current realtime metrics (clone)
