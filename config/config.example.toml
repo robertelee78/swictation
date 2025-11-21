@@ -1,64 +1,63 @@
 # Swictation Configuration
-# This is an example config showing all available options.
 # Copy this to ~/.config/swictation/config.toml to customize.
+# All values shown here are the defaults.
 
-[vad]
-# Voice Activity Detection threshold
-#
-# IMPORTANT: Silero VAD ONNX model uses much lower thresholds than PyTorch!
-# Valid range for ONNX: 0.0005 to 0.01 (NOT 0.0 to 1.0 like PyTorch)
-#
-# The ONNX model outputs probabilities ~100-200x lower than PyTorch JIT.
-# DO NOT use PyTorch thresholds (0.5) - it will never detect speech!
-#
-# - 0.001 = Most sensitive (catches quiet speech, may have false positives)
-# - 0.003 = Balanced (recommended default for ONNX)
-# - 0.005 = Conservative (fewer false positives, may miss quiet speech)
-#
-# Tuning guide for ONNX:
-# - If missing soft speech or quiet words: Lower to 0.001-0.002
-# - If triggering on background noise: Raise to 0.004-0.005
-# - Never go above 0.01 - speech will not be detected
-#
-# See rust-crates/swictation-vad/ONNX_THRESHOLD_GUIDE.md for details
-#
-threshold = 0.003
+# Unix socket path for IPC communication
+socket_path = "/run/user/1000/swictation.sock"  # or /tmp/swictation.sock
 
-# Silence duration threshold (seconds)
-#
+# Path to Silero VAD ONNX model
+vad_model_path = "~/.local/share/swictation/models/silero-vad/silero_vad.onnx"
+
+# VAD minimum silence duration (seconds)
 # How long to wait after you stop speaking before processing the text.
-# This is the "pause" you experience before text appears.
-# Valid range: 0.3 to 10.0
-#
-# - 0.3 = Minimum (very fast response, may cut off sentences)
-# - 2.0 = Balanced (recommended default, natural pause length)
-# - 3.0 = Slower but captures more complete thoughts
-#
-# Tuning guide:
-# - If sentences getting cut off mid-thought: Increase to 2.5-3.0
-# - If waiting too long for text to appear: Decrease to 1.0-1.5
-# - For rapid-fire dictation: Try 0.5-1.0
-#
-silence_duration = 0.8
+# - 0.5 = Fast response, may cut off sentences
+# - 0.8 = Balanced (default, natural pause length)
+# - 2.0 = Slower but captures more complete thoughts
+vad_min_silence = 0.8
 
-[metrics]
-# Performance metrics tracking
-enabled = true
-database_path = "~/.local/share/swictation/metrics.db"
-show_realtime_feedback = true
-typing_baseline_wpm = 40
-store_transcription_text = false  # Privacy-first: don't store full text
+# VAD minimum speech duration (seconds)
+# Minimum length of speech to process (filters out very short sounds)
+vad_min_speech = 0.25
 
-[metrics.warnings]
-# Performance warning thresholds
-enabled = true
-high_latency_threshold_ms = 1000  # Warn if segment latency > 1000ms
-gpu_memory_threshold_percent = 80  # Warn if GPU memory > 80%
-degradation_multiplier = 1.5  # Warn if latency increases by 50%
-accuracy_spike_multiplier = 3.0  # Warn if corrections spike 3x
+# VAD maximum speech duration (seconds)
+# Maximum continuous speech length before forcing a split
+vad_max_speech = 30.0
 
-[metrics.cleanup]
-# Automatic database maintenance
-auto_cleanup_enabled = true
-max_segment_age_days = 90  # Delete segments older than 90 days
-warn_db_size_mb = 100  # Warn if database exceeds 100MB
+# VAD threshold
+# IMPORTANT: This is NOT the old ONNX threshold (0.001-0.005)!
+# Current implementation uses a different scale.
+# - 0.25 = Default (optimized for real-time transcription)
+# - Lower values = more sensitive (may trigger on background noise)
+# - Higher values = less sensitive (may miss quiet speech)
+vad_threshold = 0.25
+
+# STT model selection
+# Options:
+#   "auto"      - Automatic selection based on available VRAM (default)
+#   "0.6b-cpu"  - 0.6B model on CPU (slowest, no GPU required)
+#   "0.6b-gpu"  - 0.6B model on GPU (fast, ~2GB VRAM)
+#   "1.1b-gpu"  - 1.1B model on GPU (best quality, ~4GB VRAM)
+stt_model_override = "auto"
+
+# Path to 0.6B model directory (sherpa-rs)
+stt_0_6b_model_path = "~/.local/share/swictation/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-onnx"
+
+# Path to 1.1B INT8 model directory (ONNX Runtime)
+stt_1_1b_model_path = "~/.local/share/swictation/models/parakeet-tdt-1.1b-onnx"
+
+# Number of threads for ONNX Runtime (null = auto-detect)
+num_threads = 4
+
+# Audio device index (null = default device)
+# Use `arecord -l` to list available devices
+audio_device_index = null
+
+# Hotkey configuration
+[hotkeys]
+# Toggle recording on/off
+# Default: Super+Shift+D (Windows/Super key + Shift + D for "Dictation")
+toggle = "Super+Shift+D"
+
+# Push-to-talk (hold to record, release to stop)
+# Default: Super+Space (Windows/Super key + Space)
+push_to_talk = "Super+Space"

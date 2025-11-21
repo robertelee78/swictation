@@ -6,6 +6,7 @@ members = [
     "swictation-daemon",
     "swictation-metrics",
     "swictation-broadcaster",
+    "swictation-context-learning",
 ]
 resolver = "2"
 
