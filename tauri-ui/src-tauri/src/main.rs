@@ -7,7 +7,7 @@ mod models;
 mod socket;
 mod utils;
 
-use commands::{AppState, CorrectionsState};
+use commands::{AppState, ConfigState, CorrectionsState};
 use database::Database;
 use image::GenericImageView;
 use socket::MetricsSocket;
@@ -131,6 +131,16 @@ fn main() {
             let corrections_state = Mutex::new(CorrectionsState::new());
             app.manage(corrections_state);
 
+            // Initialize config state
+            let config_path = dirs::config_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join("swictation")
+                .join("config.toml");
+            let config_state = ConfigState {
+                config_path: Mutex::new(config_path),
+            };
+            app.manage(config_state);
+
             // Start metrics socket listener using correct async implementation
             let mut metrics_socket = MetricsSocket::new();
             let app_handle = app.handle().clone();
@@ -164,6 +174,10 @@ fn main() {
             commands::corrections::delete_correction,
             commands::corrections::update_correction,
             commands::corrections::extract_corrections_diff,
+            // Config commands
+            commands::config::get_daemon_config,
+            commands::config::update_daemon_config,
+            commands::config::update_phonetic_threshold,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

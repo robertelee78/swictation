@@ -274,7 +274,7 @@ impl Pipeline {
         std::fs::create_dir_all(&corrections_dir)
             .context("Failed to create config directory")?;
 
-        let mut corrections = CorrectionEngine::new(corrections_dir, 0.3); // 0.3 = phonetic threshold
+        let mut corrections = CorrectionEngine::new(corrections_dir, config.phonetic_threshold);
         if let Err(e) = corrections.start_watching() {
             warn!("Failed to start corrections file watcher: {}. Hot-reload disabled.", e);
         }

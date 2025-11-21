@@ -3,9 +3,10 @@ import { LiveSession } from './components/LiveSession';
 import { History } from './components/History';
 import { Transcriptions } from './components/Transcriptions';
 import { LearnedPatterns } from './components/LearnedPatterns';
+import { Settings } from './components/Settings';
 import { useMetrics } from './hooks/useMetrics';
 
-type Tab = 'live' | 'history' | 'transcriptions' | 'patterns';
+type Tab = 'live' | 'history' | 'transcriptions' | 'patterns' | 'settings';
 
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>('live');
@@ -46,6 +47,11 @@ function App() {
           active={activeTab === 'patterns'}
           onClick={() => setActiveTab('patterns')}
         />
+        <TabButton
+          label="Settings"
+          active={activeTab === 'settings'}
+          onClick={() => setActiveTab('settings')}
+        />
       </div>
 
       {/* Content Area */}
@@ -54,6 +60,7 @@ function App() {
         {activeTab === 'history' && <History />}
         {activeTab === 'transcriptions' && <Transcriptions transcriptions={transcriptions} />}
         {activeTab === 'patterns' && <LearnedPatterns />}
+        {activeTab === 'settings' && <Settings />}
       </div>
     </div>
   );

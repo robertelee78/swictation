@@ -1,4 +1,5 @@
 pub mod corrections;
+pub mod config;
 
 use crate::database::Database;
 use crate::models::{ConnectionStatus, LifetimeStats, SessionSummary, TranscriptionRecord};
@@ -7,6 +8,7 @@ use tauri::State;
 
 // Re-export corrections types
 pub use corrections::CorrectionsState;
+pub use config::ConfigState;
 
 /// Application state shared across commands
 pub struct AppState {

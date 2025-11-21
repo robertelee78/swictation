@@ -105,6 +105,11 @@ pub struct DaemonConfig {
 
     /// Hotkey configuration
     pub hotkeys: HotkeyConfig,
+
+    /// Phonetic matching threshold for learned corrections (0.0 - 1.0)
+    /// Lower = more strict, Higher = more fuzzy
+    /// Default: 0.3
+    pub phonetic_threshold: f64,
 }
 
 impl Default for DaemonConfig {
@@ -130,6 +135,7 @@ impl Default for DaemonConfig {
             num_threads: Some(4),
             audio_device_index: None, // Will be set from env var or auto-detected
             hotkeys: HotkeyConfig::default(),
+            phonetic_threshold: 0.3, // Moderate fuzzy matching
         }
     }
 }
