@@ -129,7 +129,10 @@ fi
 
 BINARY_MISSING=()
 for event in "${REQUIRED_EVENTS[@]}"; do
-    if ! strings "$BINARY_PATH" | grep -q "^$event$"; then
+    # Check if event name appears anywhere in binary strings
+    # Event names may be concatenated with error messages (e.g., "metrics-connectedFailed to...")
+    # so we use flexible matching instead of exact line matching
+    if ! strings "$BINARY_PATH" | grep -q "$event"; then
         BINARY_MISSING+=("$event")
     fi
 done
