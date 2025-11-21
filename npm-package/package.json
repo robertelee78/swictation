@@ -1,6 +1,6 @@
 {
   "name": "swictation",
-  "version": "0.4.44",
+  "version": "0.5.1",
   "description": "Voice-to-text dictation with Wayland/X11 support (GNOME, Sway, i3), Secretary Mode (60+ natural language commands), NVIDIA GPU acceleration, and pure Rust performance (Ubuntu 24.04+ required)",
   "keywords": [
     "voice-to-text",
@@ -36,6 +36,7 @@
     "bin/",
     "lib/model-downloader.js",
     "lib/native/swictation-daemon.bin",
+    "lib/native/swictation-ui",
     "lib/native/libonnxruntime.so",
     "lib/native/libonnxruntime_providers_shared.so",
     "lib/native/package.json",
