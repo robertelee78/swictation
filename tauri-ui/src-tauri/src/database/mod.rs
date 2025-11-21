@@ -172,7 +172,10 @@ impl Database {
                 avg_wpm,
                 avg_latency_ms,
                 best_wpm_value,
-                best_wpm_session
+                best_wpm_session,
+                time_saved_minutes,
+                lowest_latency_ms,
+                lowest_latency_session
              FROM lifetime_stats
              WHERE id = 1"
         )?;
@@ -189,6 +192,9 @@ impl Database {
                 average_latency_ms: row.get(5)?,
                 best_wpm_value: row.get(6)?,
                 best_wpm_session: row.get(7)?,
+                estimated_time_saved_minutes: row.get(8)?,
+                lowest_latency_ms: row.get(9)?,
+                lowest_latency_session: row.get(10)?,
             })
         } else {
             // Return empty stats if no data exists yet
@@ -201,6 +207,9 @@ impl Database {
                 average_latency_ms: 0.0,
                 best_wpm_value: 0.0,
                 best_wpm_session: None,
+                estimated_time_saved_minutes: 0.0,
+                lowest_latency_ms: 0.0,
+                lowest_latency_session: None,
             })
         }
     }

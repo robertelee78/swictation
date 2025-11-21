@@ -35,6 +35,9 @@ pub struct LifetimeStats {
     pub average_latency_ms: f64,
     pub best_wpm_value: f64,
     pub best_wpm_session: Option<i64>,
+    pub estimated_time_saved_minutes: f64,
+    pub lowest_latency_ms: f64,
+    pub lowest_latency_session: Option<i64>,
 }
 
 /// Connection status response
