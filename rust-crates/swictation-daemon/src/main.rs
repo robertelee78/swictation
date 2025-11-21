@@ -41,7 +41,7 @@ struct CliArgs {
     dry_run: bool,
 
     /// Show detailed version information
-    #[arg(short = 'V', long)]
+    #[arg(long)]
     version_info: bool,
 }
 use crate::pipeline::Pipeline;
@@ -50,6 +50,9 @@ use crate::ipc::{IpcServer, handle_connection as handle_ipc_connection};
 use crate::hotkey::{HotkeyManager, HotkeyEvent};
 use swictation_broadcaster::MetricsBroadcaster;
 use swictation_metrics::{MemoryMonitor, MemoryPressure};
+use swictation_context_learning::{
+    load_or_train_model, ContextModel, LearningConfig, RetrainingConfig,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 enum DaemonState {
@@ -156,6 +159,31 @@ impl Daemon {
         match *state {
             DaemonState::Idle => "idle".to_string(),
             DaemonState::Recording => "recording".to_string(),
+        }
+    }
+}
+
+/// Load or train context-aware learning model
+async fn load_context_model(_config: &DaemonConfig) -> Option<ContextModel> {
+    let data_dir = match dirs::data_local_dir() {
+        Some(dir) => dir.join("swictation"),
+        None => {
+            warn!("Failed to get data directory for context model");
+            return None;
+        }
+    };
+
+    let model_path = data_dir.join("context-model.json");
+    let db_path = data_dir.join("metrics.db");
+
+    let learning_config = LearningConfig::default();
+    let retrain_config = RetrainingConfig::default();
+
+    match load_or_train_model(&model_path, &db_path, &learning_config, &retrain_config) {
+        Ok(model) => model,
+        Err(e) => {
+            warn!("Failed to load context model: {}", e);
+            None
         }
     }
 }
@@ -283,6 +311,15 @@ async fn main() -> Result<()> {
           socket_utils::get_metrics_socket_path()
               .unwrap_or_else(|_| PathBuf::from("unknown"))
               .display());
+
+    // Initialize context-aware learning model
+    let context_model = load_context_model(&config).await;
+    if let Some(ref model) = context_model {
+        info!("🧠 Context model loaded: {} topics, {} homonym rules",
+              model.topics.len(), model.homonym_rules.len());
+    } else {
+        info!("⚠️  Context model not available (insufficient training data)");
+    }
 
     // Initialize hotkey manager (optional - some compositors don't support it)
     let mut hotkey_manager = HotkeyManager::new(config.hotkeys.clone())

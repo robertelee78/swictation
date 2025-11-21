@@ -3009,6 +3009,7 @@ dependencies = [
  "swayipc",
  "swictation-audio",
  "swictation-broadcaster",
+ "swictation-context-learning",
  "swictation-metrics",
  "swictation-stt",
  "swictation-vad",

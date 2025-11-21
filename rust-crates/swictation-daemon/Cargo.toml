@@ -18,6 +18,7 @@ swictation-vad = { path = "../swictation-vad" }
 swictation-stt = { path = "../swictation-stt" }
 swictation-broadcaster = { path = "../swictation-broadcaster" }
 swictation-metrics = { path = "../swictation-metrics" }
+swictation-context-learning = { path = "../swictation-context-learning" }
 
 # Text transformation (voice commands → symbols)
 midstreamer-text-transform = { path = "../../external/midstream/crates/text-transform" }
