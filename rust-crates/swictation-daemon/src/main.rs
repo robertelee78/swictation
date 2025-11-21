@@ -4,6 +4,7 @@
 //! Communicates via Unix socket (/tmp/swictation.sock) for toggle commands.
 //! Sway hotkey → socket toggle → start/stop recording (zero latency)
 
+mod corrections;
 mod pipeline;
 mod gpu;
 mod config;

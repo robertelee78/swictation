@@ -1,4 +1,4 @@
-//! Audio → VAD → STT → Midstream → Text Injection pipeline integration
+//! Audio → VAD → STT → Midstream → Corrections → Text Injection pipeline integration
 
 use anyhow::{Context, Result};
 use std::sync::{Arc, Mutex};
@@ -16,6 +16,7 @@ use swictation_broadcaster::MetricsBroadcaster;
 
 use crate::config::DaemonConfig;
 use crate::capitalization::{apply_capitalization, process_capital_commands};
+use crate::corrections::CorrectionEngine;
 use crate::gpu::get_gpu_memory_mb;
 
 /// Pipeline state
@@ -43,6 +44,9 @@ pub struct Pipeline {
 
     /// Transcription result channel sender (bounded to prevent OOM)
     tx: mpsc::Sender<Result<String>>,
+
+    /// Learned pattern corrections engine
+    corrections: Arc<CorrectionEngine>,
 }
 
 impl Pipeline {
@@ -260,6 +264,23 @@ impl Pipeline {
         // Prevents memory exhaustion if consumer is slow
         let (tx, rx) = mpsc::channel(100);
 
+        // Initialize learned corrections engine with hot-reloading
+        info!("Initializing corrections engine...");
+        let corrections_dir = dirs::config_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from(".config"))
+            .join("swictation");
+
+        // Ensure config directory exists
+        std::fs::create_dir_all(&corrections_dir)
+            .context("Failed to create config directory")?;
+
+        let mut corrections = CorrectionEngine::new(corrections_dir, 0.3); // 0.3 = phonetic threshold
+        if let Err(e) = corrections.start_watching() {
+            warn!("Failed to start corrections file watcher: {}. Hot-reload disabled.", e);
+        }
+        let corrections = Arc::new(corrections);
+        info!("✓ Corrections engine initialized");
+
         let pipeline = Self {
             audio: Arc::new(Mutex::new(audio)),
             vad: Arc::new(Mutex::new(vad)),
@@ -269,6 +290,7 @@ impl Pipeline {
             session_id: Arc::new(Mutex::new(None)),
             broadcaster: Arc::new(Mutex::new(None)),
             tx,
+            corrections,
         };
 
         Ok((pipeline, rx))
@@ -345,6 +367,7 @@ impl Pipeline {
         let metrics = self.metrics.clone();
         let session_id = self.session_id.clone();
         let broadcaster = self.broadcaster.clone();
+        let corrections = self.corrections.clone();
 
         // Create channel for VAD → STT communication
         // Capacity: 10 speech segments (allows VAD to detect ahead while STT processes)
@@ -458,8 +481,11 @@ impl Pipeline {
                     // Step 2: Transform punctuation ("comma" → ",")
                     let transformed = transform(&with_capitals);
 
-                    // Step 3: Apply automatic capitalization rules
-                    let capitalized = apply_capitalization(&transformed);
+                    // Step 3: Apply learned corrections ("arkon" → "archon")
+                    let corrected = corrections.apply(&transformed, "all");
+
+                    // Step 4: Apply automatic capitalization rules
+                    let capitalized = apply_capitalization(&corrected);
 
                     let transform_latency = transform_start.elapsed().as_micros() as f64;
 
@@ -610,8 +636,11 @@ impl Pipeline {
                     // Step 2: Transform punctuation
                     let transformed = transform(&with_capitals);
 
-                    // Step 3: Apply automatic capitalization rules
-                    let capitalized = apply_capitalization(&transformed);
+                    // Step 3: Apply learned corrections
+                    let corrected = self.corrections.apply(&transformed, "all");
+
+                    // Step 4: Apply automatic capitalization rules
+                    let capitalized = apply_capitalization(&corrected);
 
                     let transform_latency = transform_start.elapsed().as_micros() as f64;
 

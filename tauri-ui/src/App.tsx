@@ -2,9 +2,10 @@ import { useState } from 'react';
 import { LiveSession } from './components/LiveSession';
 import { History } from './components/History';
 import { Transcriptions } from './components/Transcriptions';
+import { LearnedPatterns } from './components/LearnedPatterns';
 import { useMetrics } from './hooks/useMetrics';
 
-type Tab = 'live' | 'history' | 'transcriptions';
+type Tab = 'live' | 'history' | 'transcriptions' | 'patterns';
 
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>('live');
@@ -40,6 +41,11 @@ function App() {
           active={activeTab === 'transcriptions'}
           onClick={() => setActiveTab('transcriptions')}
         />
+        <TabButton
+          label="Learned Patterns"
+          active={activeTab === 'patterns'}
+          onClick={() => setActiveTab('patterns')}
+        />
       </div>
 
       {/* Content Area */}
@@ -47,6 +53,7 @@ function App() {
         {activeTab === 'live' && <LiveSession metrics={metrics} />}
         {activeTab === 'history' && <History />}
         {activeTab === 'transcriptions' && <Transcriptions transcriptions={transcriptions} />}
+        {activeTab === 'patterns' && <LearnedPatterns />}
       </div>
     </div>
   );

@@ -7,7 +7,7 @@ mod models;
 mod socket;
 mod utils;
 
-use commands::AppState;
+use commands::{AppState, CorrectionsState};
 use database::Database;
 use image::GenericImageView;
 use socket::MetricsSocket;
@@ -127,6 +127,10 @@ fn main() {
 
             app.manage(state);
 
+            // Initialize corrections state for learned patterns
+            let corrections_state = Mutex::new(CorrectionsState::new());
+            app.manage(corrections_state);
+
             // Start metrics socket listener using correct async implementation
             let mut metrics_socket = MetricsSocket::new();
             let app_handle = app.handle().clone();
@@ -154,6 +158,12 @@ fn main() {
             commands::toggle_recording,
             commands::get_connection_status,
             commands::reset_database,
+            // Corrections commands
+            commands::corrections::learn_correction,
+            commands::corrections::get_corrections,
+            commands::corrections::delete_correction,
+            commands::corrections::update_correction,
+            commands::corrections::extract_corrections_diff,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
