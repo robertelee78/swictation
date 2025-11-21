@@ -153,14 +153,71 @@ cargo run --package swictation-context-learning \
 // 1. Add to swictation-daemon Cargo.toml
 swictation-context-learning = { path = "../swictation-context-learning" }
 
-// 2. Load model at daemon startup
-let mut learner = ContextLearner::new(LearningConfig::default());
-let data = learner.load_training_data(db_path, 6)?; // 6 months
-let model = learner.train(&data)?;
+// 2. Load or train model at daemon startup with adaptive retraining
+use swictation_context_learning::{
+    load_or_train_model, LearningConfig, RetrainingConfig
+};
+
+let data_dir = dirs::data_local_dir()
+    .unwrap_or_else(|| PathBuf::from(".local/share"))
+    .join("swictation");
+
+let model_path = data_dir.join("context-model.json");
+let db_path = data_dir.join("metrics.db");
+
+let learning_config = LearningConfig::default();
+let retrain_config = RetrainingConfig::default(); // Daily with 25-segment threshold
+
+let context_model = load_or_train_model(
+    &model_path,
+    &db_path,
+    &learning_config,
+    &retrain_config,
+)?;
 
 // 3. Use in pipeline for context prediction
-let predicted_topic = model.predict_topic(&current_segment);
-let homonym_resolution = model.resolve_homonym("class", &predicted_topic);
+if let Some(model) = context_model {
+    // Predict topic for current segment
+    let (topic, confidence) = predict_topic(&model, &current_segment);
+
+    // Resolve homonyms based on context
+    if let Some(resolver) = model.homonym_rules.get("class") {
+        let interpretation = resolver.resolve_for_topic(&topic);
+    }
+}
+```
+
+### Adaptive Retraining
+
+The system automatically retrains when either condition is met:
+- **25+ new segments** added since last training
+- **Model > 24 hours old** (daily refresh)
+- But **never more than every 6 hours** (prevents thrashing)
+
+**Configuration options:**
+
+```rust
+// Power user (frequent, diverse topics)
+RetrainingConfig {
+    min_new_segments: 15,
+    max_model_age_days: 1,
+    min_retrain_interval_hours: 4,
+    auto_retrain: true,
+}
+
+// Light user (infrequent, consistent topics)
+RetrainingConfig {
+    min_new_segments: 50,
+    max_model_age_days: 3,
+    min_retrain_interval_hours: 24,
+    auto_retrain: true,
+}
+
+// Manual control only
+RetrainingConfig {
+    auto_retrain: false,
+    ..Default::default()
+}
 ```
 
 ## Current Status

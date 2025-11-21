@@ -20,7 +20,9 @@ use midstreamer_strange_loop::{MetaLevel, StrangeLoop, StrangeLoopConfig};
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fs;
 use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{info, warn};
 
 mod clustering;
@@ -101,6 +103,33 @@ impl Default for LearningConfig {
             min_confidence: 0.70,
             enable_meta_learning: true,
             max_meta_depth: 3,
+        }
+    }
+}
+
+/// Configuration for adaptive retraining
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RetrainingConfig {
+    /// Minimum new segments before considering retrain
+    pub min_new_segments: usize,
+
+    /// Maximum model age before forcing retrain (days)
+    pub max_model_age_days: u64,
+
+    /// Minimum hours between retrains (prevents thrashing)
+    pub min_retrain_interval_hours: u64,
+
+    /// Enable automatic retraining
+    pub auto_retrain: bool,
+}
+
+impl Default for RetrainingConfig {
+    fn default() -> Self {
+        Self {
+            min_new_segments: 25,          // Retrain every ~25 new segments
+            max_model_age_days: 1,          // Force retrain daily
+            min_retrain_interval_hours: 6,  // But never more than 4x/day
+            auto_retrain: true,
         }
     }
 }
@@ -322,6 +351,135 @@ pub fn train_test_split(
     let train = data.segments[..split_idx].to_vec();
     let test = data.segments[split_idx..].to_vec();
     (train, test)
+}
+
+/// Determine if model should be retrained
+pub fn should_retrain(
+    model_path: &Path,
+    db_path: &Path,
+    config: &RetrainingConfig,
+) -> Result<bool> {
+    if !config.auto_retrain {
+        return Ok(false);
+    }
+
+    // Check 1: Does model exist?
+    if !model_path.exists() {
+        info!("No model exists - initial training required");
+        return Ok(true);
+    }
+
+    // Check 2: When was model last trained?
+    let model_metadata = fs::metadata(model_path)
+        .context("Failed to read model metadata")?;
+
+    let model_modified = model_metadata.modified()
+        .context("Failed to get model modification time")?;
+
+    let model_age = SystemTime::now()
+        .duration_since(model_modified)
+        .context("Failed to calculate model age")?;
+
+    let model_age_hours = model_age.as_secs() / 3600;
+
+    // Check 3: Don't retrain too frequently
+    if model_age_hours < config.min_retrain_interval_hours {
+        info!(
+            "Model too recent ({} hours old, minimum {})",
+            model_age_hours, config.min_retrain_interval_hours
+        );
+        return Ok(false);
+    }
+
+    // Check 4: Force retrain if model too old
+    let max_age_seconds = config.max_model_age_days * 86400;
+    if model_age.as_secs() > max_age_seconds {
+        info!(
+            "Model too old ({} hours old, max {} days)",
+            model_age_hours, config.max_model_age_days
+        );
+        return Ok(true);
+    }
+
+    // Check 5: Count new segments since last training
+    let new_segment_count = count_segments_since(db_path, model_modified)?;
+
+    if new_segment_count >= config.min_new_segments {
+        info!(
+            "Sufficient new data ({} segments >= {} threshold)",
+            new_segment_count, config.min_new_segments
+        );
+        return Ok(true);
+    }
+
+    info!(
+        "No retrain needed (model age: {}h, new segments: {})",
+        model_age_hours, new_segment_count
+    );
+    Ok(false)
+}
+
+/// Count segments added since a specific time
+fn count_segments_since(db_path: &Path, since: SystemTime) -> Result<usize> {
+    let conn = Connection::open(db_path)
+        .context("Failed to open metrics database")?;
+
+    let since_timestamp = since
+        .duration_since(UNIX_EPOCH)
+        .context("Failed to convert time to timestamp")?
+        .as_secs() as f64;
+
+    let count: usize = conn.query_row(
+        "SELECT COUNT(*) FROM segments WHERE timestamp > ?1 AND text IS NOT NULL AND text != ''",
+        params![since_timestamp],
+        |row| row.get(0),
+    ).context("Failed to count new segments")?;
+
+    Ok(count)
+}
+
+/// Load or create context model with adaptive retraining
+pub fn load_or_train_model(
+    model_path: &Path,
+    db_path: &Path,
+    learning_config: &LearningConfig,
+    retrain_config: &RetrainingConfig,
+) -> Result<Option<ContextModel>> {
+    if should_retrain(model_path, db_path, retrain_config)? {
+        info!("Retraining context model...");
+
+        let mut learner = ContextLearner::new(learning_config.clone());
+        let data = learner.load_training_data(db_path, 6)?; // Last 6 months
+
+        if data.segments.len() < learning_config.min_segments {
+            warn!(
+                "Insufficient data for training: {} segments (need {})",
+                data.segments.len(), learning_config.min_segments
+            );
+            return Ok(None);
+        }
+
+        let model = learner.train(&data)?;
+
+        // Save model
+        let model_json = serde_json::to_string_pretty(&model)
+            .context("Failed to serialize model")?;
+        fs::write(model_path, model_json)
+            .context("Failed to write model file")?;
+
+        info!("Context model trained and saved successfully");
+        Ok(Some(model))
+    } else if model_path.exists() {
+        // Load existing model
+        info!("Loading existing context model");
+        let model_json = fs::read_to_string(model_path)
+            .context("Failed to read model file")?;
+        let model = serde_json::from_str(&model_json)
+            .context("Failed to deserialize model")?;
+        Ok(Some(model))
+    } else {
+        Ok(None)
+    }
 }
 
 #[cfg(test)]
