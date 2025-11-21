@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::path::Path;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
@@ -15,6 +15,55 @@ const RECONNECT_DELAY_SECS: u64 = 5;
 
 /// Socket read timeout (to detect stuck connections)
 const SOCKET_TIMEOUT_SECS: u64 = 30;
+
+/// Custom deserializer for flexible number types (accepts f64 or u64)
+fn deserialize_flexible_number<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::Error;
+    let value = serde_json::Value::deserialize(deserializer)?;
+    match value {
+        serde_json::Value::Number(n) => {
+            if let Some(v) = n.as_u64() {
+                Ok(v)
+            } else if let Some(v) = n.as_f64() {
+                Ok(v.round() as u64)
+            } else {
+                Err(Error::custom("Invalid number"))
+            }
+        }
+        _ => Err(Error::custom("Expected number")),
+    }
+}
+
+/// Custom deserializer for flexible timestamp (accepts u64, f64, or string time)
+fn deserialize_flexible_timestamp<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::Error;
+    let value = serde_json::Value::deserialize(deserializer)?;
+    match value {
+        serde_json::Value::Number(n) => {
+            if let Some(v) = n.as_u64() {
+                Ok(v)
+            } else if let Some(v) = n.as_f64() {
+                Ok(v.round() as u64)
+            } else {
+                Err(Error::custom("Invalid timestamp"))
+            }
+        }
+        serde_json::Value::String(_) => {
+            // For string timestamps like "17:13:04", use current time
+            Ok(std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs())
+        }
+        _ => Err(Error::custom("Expected timestamp as number or string")),
+    }
+}
 
 /// Metrics socket event types
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,30 +83,35 @@ pub enum MetricsEvent {
 
     /// Daemon state changed
     StateChange {
-        #[serde(rename = "daemon_state")]
         state: String,
+        #[serde(deserialize_with = "deserialize_flexible_timestamp")]
         timestamp: u64,
     },
 
     /// New transcription received
     Transcription {
-        session_id: String,
         text: String,
+        #[serde(deserialize_with = "deserialize_flexible_timestamp")]
         timestamp: u64,
         wpm: f64,
+        #[serde(deserialize_with = "deserialize_flexible_number")]
         latency_ms: u64,
+        words: i64,
     },
 
     /// Periodic metrics update
     MetricsUpdate {
         state: String,
         wpm: f64,
-        words: u64,
+        words: i64,
+        #[serde(deserialize_with = "deserialize_flexible_number")]
         latency_ms: u64,
-        segments: u64,
+        segments: i64,
         duration_s: f64,
         gpu_memory_mb: f64,
+        gpu_memory_percent: f64,
         cpu_percent: f64,
+        session_id: i64,
     },
 }
 
@@ -212,11 +266,13 @@ impl MetricsSocket {
                 segments,
                 duration_s,
                 gpu_memory_mb,
+                gpu_memory_percent,
                 cpu_percent,
+                session_id,
             } => {
                 debug!(
-                    "Metrics update: state={}, wpm={}, words={}, latency={}ms, segments={}, duration={}s, gpu={}MB, cpu={}%",
-                    state, wpm, words, latency_ms, segments, duration_s, gpu_memory_mb, cpu_percent
+                    "Metrics update: state={}, wpm={}, words={}, latency={}ms, segments={}, duration={}s, gpu={}MB ({}%), cpu={}%, session={}",
+                    state, wpm, words, latency_ms, segments, duration_s, gpu_memory_mb, gpu_memory_percent, cpu_percent, session_id
                 );
                 app_handle
                     .emit("metrics-update", event)

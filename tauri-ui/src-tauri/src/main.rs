@@ -20,8 +20,13 @@ use tauri::{
 };
 
 fn main() {
-    // Initialize logger
-    env_logger::init();
+    // Initialize tracing subscriber (compatible with both log and tracing crates)
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::from_default_env()
+                .add_directive(tracing::Level::INFO.into()),
+        )
+        .init();
 
     tauri::Builder::default()
         .setup(|app| {
