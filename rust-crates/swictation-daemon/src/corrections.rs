@@ -82,6 +82,12 @@ pub struct CorrectionEngine {
     /// Phonetic similarity threshold (0.0 to 1.0, lower = more strict)
     phonetic_threshold: f64,
 
+    /// In-memory use count tracking (correction ID → match count)
+    use_counts: Arc<RwLock<HashMap<String, u64>>>,
+
+    /// Total matches since last flush (for batching)
+    total_matches: Arc<RwLock<u64>>,
+
     /// File watcher handle
     _watcher: Option<RecommendedWatcher>,
 }
@@ -98,6 +104,8 @@ impl CorrectionEngine {
             phonetic_phrases: Arc::new(RwLock::new(Vec::new())),
             phonetic_words: Arc::new(RwLock::new(Vec::new())),
             phonetic_threshold,
+            use_counts: Arc::new(RwLock::new(HashMap::new())),
+            total_matches: Arc::new(RwLock::new(0)),
             _watcher: None,
         };
 
@@ -280,6 +288,10 @@ impl CorrectionEngine {
                             // Preserve case from first word if original was capitalized
                             let replacement = Self::preserve_case(words[i], &correction.corrected);
                             result.push_str(&replacement);
+
+                            // Track usage
+                            self.increment_usage(&correction.id);
+
                             i += phrase_len;
                             matched = true;
                             break;
@@ -300,6 +312,10 @@ impl CorrectionEngine {
                     }
                     let replacement = Self::preserve_case(words[i], &correction.corrected);
                     result.push_str(&replacement);
+
+                    // Track usage
+                    self.increment_usage(&correction.id);
+
                     i += 1;
                     continue;
                 }
@@ -331,6 +347,10 @@ impl CorrectionEngine {
                         }
                         let replacement = Self::preserve_case(words[i], &correction.corrected);
                         result.push_str(&replacement);
+
+                        // Track usage
+                        self.increment_usage(&correction.id);
+
                         i += pattern_len;
                         matched = true;
                         break;
@@ -355,6 +375,10 @@ impl CorrectionEngine {
                     }
                     let replacement = Self::preserve_case(words[i], &correction.corrected);
                     result.push_str(&replacement);
+
+                    // Track usage
+                    self.increment_usage(&correction.id);
+
                     matched = true;
                     break;
                 }
@@ -524,6 +548,50 @@ impl CorrectionEngine {
 
         info!("Updated correction: {}", id);
         Ok(updated)
+    }
+
+    /// Increment usage count for a correction (in-memory only)
+    fn increment_usage(&self, correction_id: &str) {
+        let mut counts = self.use_counts.write().unwrap();
+        *counts.entry(correction_id.to_string()).or_insert(0) += 1;
+
+        // Track total matches for batching
+        let mut total = self.total_matches.write().unwrap();
+        *total += 1;
+    }
+
+    /// Flush usage counts to disk (batched write)
+    pub fn flush_usage_counts(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let counts = self.use_counts.read().unwrap();
+
+        if counts.is_empty() {
+            return Ok(()); // Nothing to flush
+        }
+
+        let mut file = self.load_file()?;
+
+        // Update use_count for each correction
+        for correction in &mut file.corrections {
+            if let Some(&count) = counts.get(&correction.id) {
+                correction.use_count += count;
+            }
+        }
+
+        self.save_file(&file)?;
+
+        // Clear in-memory counts after successful flush
+        drop(counts);
+        self.use_counts.write().unwrap().clear();
+        *self.total_matches.write().unwrap() = 0;
+
+        info!("Flushed usage counts to disk");
+        Ok(())
+    }
+
+    /// Check if we should flush based on match count
+    pub fn should_flush(&self) -> bool {
+        let total = self.total_matches.read().unwrap();
+        *total >= 50 // Flush after 50 matches
     }
 
     fn load_file(&self) -> Result<CorrectionsFile, Box<dyn std::error::Error + Send + Sync>> {

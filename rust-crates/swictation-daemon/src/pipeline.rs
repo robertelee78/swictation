@@ -484,6 +484,13 @@ impl Pipeline {
                     // Step 3: Apply learned corrections ("arkon" → "archon")
                     let corrected = corrections.apply(&transformed, "all");
 
+                    // Flush usage counts if threshold reached
+                    if corrections.should_flush() {
+                        if let Err(e) = corrections.flush_usage_counts() {
+                            warn!("Failed to flush usage counts: {}", e);
+                        }
+                    }
+
                     // Step 4: Apply automatic capitalization rules
                     let capitalized = apply_capitalization(&corrected);
 
@@ -638,6 +645,13 @@ impl Pipeline {
 
                     // Step 3: Apply learned corrections
                     let corrected = self.corrections.apply(&transformed, "all");
+
+                    // Flush usage counts if threshold reached
+                    if self.corrections.should_flush() {
+                        if let Err(e) = self.corrections.flush_usage_counts() {
+                            warn!("Failed to flush usage counts: {}", e);
+                        }
+                    }
 
                     // Step 4: Apply automatic capitalization rules
                     let capitalized = apply_capitalization(&corrected);
