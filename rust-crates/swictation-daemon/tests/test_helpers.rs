@@ -36,9 +36,7 @@ pub fn clear_test_env() {
 pub fn test_env_var(key: &str) -> Result<String, std::env::VarError> {
     let env = TEST_ENV.lock().unwrap();
     if let Some(ref vars) = *env {
-        vars.get(key)
-            .cloned()
-            .ok_or(std::env::VarError::NotPresent)
+        vars.get(key).cloned().ok_or(std::env::VarError::NotPresent)
     } else {
         std::env::var(key)
     }

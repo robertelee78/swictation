@@ -94,6 +94,7 @@ enum HotkeyBackend {
         rx: mpsc::UnboundedReceiver<HotkeyEvent>,
     },
     /// Sway compositor (requires manual config)
+    #[allow(dead_code)]
     SwayIpc {
         rx: mpsc::UnboundedReceiver<HotkeyEvent>,
     },
@@ -180,7 +181,7 @@ impl HotkeyManager {
 
         // Parse and register toggle hotkey
         let toggle_hotkey = parse_hotkey(&config.toggle).context("Invalid toggle hotkey")?;
-        let toggle_hotkey_clone = toggle_hotkey.clone();
+        let toggle_hotkey_clone = toggle_hotkey;
         manager
             .register(toggle_hotkey)
             .context("Failed to register toggle hotkey")?;
@@ -188,7 +189,7 @@ impl HotkeyManager {
         // Parse and register push-to-talk hotkey
         let ptt_hotkey =
             parse_hotkey(&config.push_to_talk).context("Invalid push-to-talk hotkey")?;
-        let ptt_hotkey_clone = ptt_hotkey.clone();
+        let ptt_hotkey_clone = ptt_hotkey;
         manager
             .register(ptt_hotkey)
             .context("Failed to register push-to-talk hotkey")?;
@@ -304,11 +305,8 @@ impl HotkeyManager {
         }
 
         // Parse the configured hotkeys to Sway format
-        let toggle_key = config.toggle.replace("Super", "$mod").replace("+", "+");
-        let ptt_key = config
-            .push_to_talk
-            .replace("Super", "$mod")
-            .replace("+", "+");
+        let toggle_key = config.toggle.replace("Super", "$mod");
+        let ptt_key = config.push_to_talk.replace("Super", "$mod");
 
         // Check for potential conflicts
         if config_content.contains(&format!("bindsym {}", toggle_key)) {
@@ -548,8 +546,8 @@ impl Drop for HotkeyManager {
             ..
         } = &self.backend
         {
-            let _ = manager.unregister(toggle_hotkey.clone());
-            let _ = manager.unregister(ptt_hotkey.clone());
+            let _ = manager.unregister(*toggle_hotkey);
+            let _ = manager.unregister(*ptt_hotkey);
         }
     }
 }

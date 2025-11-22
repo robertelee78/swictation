@@ -296,6 +296,7 @@ impl TextInjector {
     }
 
     /// Get the selected text injection tool
+    #[allow(dead_code)]
     pub fn selected_tool(&self) -> TextInjectionTool {
         self.selected_tool
     }

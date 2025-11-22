@@ -531,6 +531,7 @@ impl CorrectionEngine {
     }
 
     /// Add a new correction and save to disk
+    #[allow(dead_code)]
     pub fn learn(
         &self,
         original: String,
@@ -569,12 +570,14 @@ impl CorrectionEngine {
     }
 
     /// Get all corrections
+    #[allow(dead_code)]
     pub fn get_all(&self) -> Result<Vec<Correction>, Box<dyn std::error::Error + Send + Sync>> {
         let file = self.load_file()?;
         Ok(file.corrections)
     }
 
     /// Delete a correction by ID
+    #[allow(dead_code)]
     pub fn delete(&self, id: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut file = self.load_file()?;
         let original_len = file.corrections.len();
@@ -590,6 +593,7 @@ impl CorrectionEngine {
     }
 
     /// Update a correction
+    #[allow(dead_code)]
     pub fn update(
         &self,
         id: &str,

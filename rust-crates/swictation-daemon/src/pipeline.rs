@@ -307,6 +307,7 @@ impl Pipeline {
         let corrections = Arc::new(corrections);
         info!("✓ Corrections engine initialized");
 
+        #[allow(clippy::arc_with_non_send_sync)]
         let pipeline = Self {
             audio: Arc::new(Mutex::new(audio)),
             vad: Arc::new(Mutex::new(vad)),
@@ -402,7 +403,7 @@ impl Pipeline {
         let (vad_tx, mut stt_rx) = mpsc::channel::<Vec<f32>>(10);
 
         // Spawn VAD task (processes audio chunks and detects speech segments)
-        let vad_task = tokio::spawn(async move {
+        let _vad_task = tokio::spawn(async move {
             let mut buffer = Vec::with_capacity(16000); // 1 second buffer
             let mut chunk_count = 0;
 
@@ -470,7 +471,7 @@ impl Pipeline {
         });
 
         // Spawn STT task (processes speech segments from VAD in parallel)
-        let stt_task = tokio::spawn(async move {
+        let _stt_task = tokio::spawn(async move {
             while let Some(speech_samples) = stt_rx.recv().await {
                 eprintln!("DEBUG: STT processing {} samples", speech_samples.len());
 
@@ -606,6 +607,7 @@ impl Pipeline {
     }
 
     /// Stop recording
+    #[allow(clippy::await_holding_lock)]
     pub async fn stop_recording(&mut self) -> Result<()> {
         if !self.is_recording {
             return Ok(());
@@ -615,136 +617,133 @@ impl Pipeline {
         self.audio.lock().unwrap().stop()?;
 
         // Flush remaining audio through VAD and process any final speech
-        if let Some(vad_result) = self.vad.lock().unwrap().flush() {
-            if let swictation_vad::VadResult::Speech {
-                samples: speech_samples,
-                ..
-            } = vad_result
-            {
-                info!(
-                    "Processing flushed speech segment: {} samples",
-                    speech_samples.len()
-                );
+        if let Some(swictation_vad::VadResult::Speech {
+            samples: speech_samples,
+            ..
+        }) = self.vad.lock().unwrap().flush()
+        {
+            info!(
+                "Processing flushed speech segment: {} samples",
+                speech_samples.len()
+            );
 
-                // DEBUG: Save flushed audio to file for analysis
-                match save_audio_debug(&speech_samples, "/tmp/swictation_flushed_audio.wav") {
-                    Ok(()) => {
-                        eprintln!("DEBUG: Saved flushed audio to /tmp/swictation_flushed_audio.wav")
+            // DEBUG: Save flushed audio to file for analysis
+            match save_audio_debug(&speech_samples, "/tmp/swictation_flushed_audio.wav") {
+                Ok(()) => {
+                    eprintln!("DEBUG: Saved flushed audio to /tmp/swictation_flushed_audio.wav")
+                }
+                Err(e) => eprintln!("DEBUG: Failed to save audio: {}", e),
+            }
+
+            // Track timing for metrics
+            let segment_start = Instant::now();
+            let vad_latency = segment_start.elapsed().as_millis() as f64;
+
+            // Process through STT (same pattern as start_recording)
+            let stt_start = Instant::now();
+            let mut stt_lock = match self.stt.lock() {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("STT lock error during flush: {}", e);
+                    info!("Recording stopped");
+                    return Ok(());
+                }
+            };
+
+            let result = stt_lock.recognize(&speech_samples).unwrap_or_else(|e| {
+                eprintln!("STT transcribe error during flush: {}", e);
+                swictation_stt::RecognitionResult {
+                    text: String::new(),
+                    confidence: 0.0,
+                    processing_time_ms: 0.0,
+                }
+            });
+            let text = result.text;
+            let stt_latency = stt_start.elapsed().as_millis() as f64;
+
+            if !text.is_empty() {
+                // Transform voice commands → symbols (Midstream)
+                let transform_start = Instant::now();
+
+                // OrtRecognizer outputs raw lowercase text without punctuation.
+                // Step 1: Process capital commands first
+                let with_capitals = process_capital_commands(&text);
+
+                // Step 2: Transform punctuation
+                let transformed = transform(&with_capitals);
+
+                // Step 3: Apply learned corrections
+                let corrected = self.corrections.apply(&transformed, "all");
+
+                // Flush usage counts if threshold reached
+                if self.corrections.should_flush() {
+                    if let Err(e) = self.corrections.flush_usage_counts() {
+                        warn!("Failed to flush usage counts: {}", e);
                     }
-                    Err(e) => eprintln!("DEBUG: Failed to save audio: {}", e),
                 }
 
-                // Track timing for metrics
-                let segment_start = Instant::now();
-                let vad_latency = segment_start.elapsed().as_millis() as f64;
+                // Step 4: Apply automatic capitalization rules
+                let capitalized = apply_capitalization(&corrected);
 
-                // Process through STT (same pattern as start_recording)
-                let stt_start = Instant::now();
-                let mut stt_lock = match self.stt.lock() {
-                    Ok(s) => s,
-                    Err(e) => {
-                        eprintln!("STT lock error during flush: {}", e);
-                        info!("Recording stopped");
-                        return Ok(());
-                    }
-                };
+                let transform_latency = transform_start.elapsed().as_micros() as f64;
 
-                let result = stt_lock.recognize(&speech_samples).unwrap_or_else(|e| {
-                    eprintln!("STT transcribe error during flush: {}", e);
-                    swictation_stt::RecognitionResult {
-                        text: String::new(),
-                        confidence: 0.0,
-                        processing_time_ms: 0.0,
-                    }
-                });
-                let text = result.text;
-                let stt_latency = stt_start.elapsed().as_millis() as f64;
+                info!("Flushed transcription: {} → {}", text, capitalized);
 
-                if !text.is_empty() {
-                    // Transform voice commands → symbols (Midstream)
-                    let transform_start = Instant::now();
+                // Track segment metrics
+                let word_count = capitalized.split_whitespace().count() as i32;
+                let char_count = capitalized.len() as i32;
 
-                    // OrtRecognizer outputs raw lowercase text without punctuation.
-                    // Step 1: Process capital commands first
-                    let with_capitals = process_capital_commands(&text);
+                let current_session_id = *self.session_id.lock().unwrap();
 
-                    // Step 2: Transform punctuation
-                    let transformed = transform(&with_capitals);
+                if let Some(sid) = current_session_id {
+                    let duration_s = (speech_samples.len() as f64) / 16000.0;
+                    let total_latency_ms = vad_latency + stt_latency + (transform_latency / 1000.0);
 
-                    // Step 3: Apply learned corrections
-                    let corrected = self.corrections.apply(&transformed, "all");
+                    let segment = SegmentMetrics {
+                        segment_id: None,
+                        session_id: Some(sid),
+                        timestamp: Some(Utc::now()),
+                        duration_s,
+                        words: word_count,
+                        characters: char_count,
+                        text: capitalized.clone(),
+                        vad_latency_ms: vad_latency,
+                        audio_save_latency_ms: 0.0,
+                        stt_latency_ms: stt_latency,
+                        transform_latency_us: transform_latency,
+                        injection_latency_ms: 0.0,
+                        total_latency_ms,
+                        transformations_count: if text != capitalized { 1 } else { 0 },
+                        keyboard_actions_count: 0,
+                    };
 
-                    // Flush usage counts if threshold reached
-                    if self.corrections.should_flush() {
-                        if let Err(e) = self.corrections.flush_usage_counts() {
-                            warn!("Failed to flush usage counts: {}", e);
-                        }
+                    if let Err(e) = self.metrics.lock().unwrap().add_segment(segment) {
+                        eprintln!("Failed to add flushed segment metrics: {}", e);
                     }
 
-                    // Step 4: Apply automatic capitalization rules
-                    let capitalized = apply_capitalization(&corrected);
-
-                    let transform_latency = transform_start.elapsed().as_micros() as f64;
-
-                    info!("Flushed transcription: {} → {}", text, capitalized);
-
-                    // Track segment metrics
-                    let word_count = capitalized.split_whitespace().count() as i32;
-                    let char_count = capitalized.len() as i32;
-
-                    let current_session_id = *self.session_id.lock().unwrap();
-
-                    if let Some(sid) = current_session_id {
-                        let duration_s = (speech_samples.len() as f64) / 16000.0;
-                        let total_latency_ms =
-                            vad_latency + stt_latency + (transform_latency / 1000.0);
-
-                        let segment = SegmentMetrics {
-                            segment_id: None,
-                            session_id: Some(sid),
-                            timestamp: Some(Utc::now()),
-                            duration_s,
-                            words: word_count,
-                            characters: char_count,
-                            text: capitalized.clone(),
-                            vad_latency_ms: vad_latency,
-                            audio_save_latency_ms: 0.0,
-                            stt_latency_ms: stt_latency,
-                            transform_latency_us: transform_latency,
-                            injection_latency_ms: 0.0,
-                            total_latency_ms,
-                            transformations_count: if text != capitalized { 1 } else { 0 },
-                            keyboard_actions_count: 0,
-                        };
-
-                        if let Err(e) = self.metrics.lock().unwrap().add_segment(segment) {
-                            eprintln!("Failed to add flushed segment metrics: {}", e);
-                        }
-
-                        // Broadcast transcription to UI clients
-                        if let Some(ref broadcaster_ref) = *self.broadcaster.lock().unwrap() {
-                            let wpm = (word_count as f64 / (duration_s / 60.0)).min(300.0);
-                            tokio::spawn({
-                                let broadcaster = broadcaster_ref.clone();
-                                let text_clone = capitalized.clone();
-                                async move {
-                                    broadcaster
-                                        .add_transcription(
-                                            text_clone,
-                                            wpm,
-                                            total_latency_ms,
-                                            word_count,
-                                        )
-                                        .await;
-                                }
-                            });
-                        }
+                    // Broadcast transcription to UI clients
+                    if let Some(ref broadcaster_ref) = *self.broadcaster.lock().unwrap() {
+                        let wpm = (word_count as f64 / (duration_s / 60.0)).min(300.0);
+                        tokio::spawn({
+                            let broadcaster = broadcaster_ref.clone();
+                            let text_clone = capitalized.clone();
+                            async move {
+                                broadcaster
+                                    .add_transcription(
+                                        text_clone,
+                                        wpm,
+                                        total_latency_ms,
+                                        word_count,
+                                    )
+                                    .await;
+                            }
+                        });
                     }
+                }
 
-                    // Send through transcription channel (bounded - provides backpressure)
-                    if let Err(e) = self.tx.send(Ok(capitalized)).await {
-                        eprintln!("Failed to send flushed transcription: {}", e);
-                    }
+                // Send through transcription channel (bounded - provides backpressure)
+                if let Err(e) = self.tx.send(Ok(capitalized)).await {
+                    eprintln!("Failed to send flushed transcription: {}", e);
                 }
             }
         }
@@ -754,6 +753,7 @@ impl Pipeline {
     }
 
     /// Check if currently recording
+    #[allow(dead_code)]
     pub fn is_recording(&self) -> bool {
         self.is_recording
     }
@@ -764,16 +764,19 @@ impl Pipeline {
     }
 
     /// Get audio sample rate
+    #[allow(dead_code)]
     pub fn audio_sample_rate(&self) -> u32 {
         16000
     }
 
     /// Get audio channels
+    #[allow(dead_code)]
     pub fn audio_channels(&self) -> u16 {
         1
     }
 
     /// Shutdown pipeline
+    #[allow(dead_code)]
     pub async fn shutdown(&mut self) -> Result<()> {
         if self.is_recording {
             self.stop_recording().await?;

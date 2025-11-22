@@ -86,6 +86,7 @@ impl Daemon {
         // Set broadcaster in pipeline for real-time updates
         pipeline.set_broadcaster(broadcaster.clone());
 
+        #[allow(clippy::arc_with_non_send_sync)]
         let daemon = Self {
             pipeline: Arc::new(RwLock::new(pipeline)),
             state: Arc::new(RwLock::new(DaemonState::Idle)),
@@ -349,7 +350,7 @@ async fn main() -> Result<()> {
     let mut hotkey_manager = HotkeyManager::new(config.hotkeys.clone())
         .context("Failed to initialize hotkey manager")?;
 
-    if let Some(ref manager) = hotkey_manager {
+    if let Some(ref _manager) = hotkey_manager {
         info!("✓ Hotkeys initialized successfully");
     } else {
         info!("⚠️  Hotkeys not available - using IPC/CLI control only");
@@ -361,12 +362,13 @@ async fn main() -> Result<()> {
     let socket_path_str = socket_path.to_str().context("Invalid socket path")?;
     info!("🔌 Starting IPC server on {}", socket_path_str);
 
+    #[allow(clippy::arc_with_non_send_sync)]
     let daemon_clone = Arc::new(daemon);
     let mut ipc_server = IpcServer::new(socket_path_str, daemon_clone.clone())
         .context("Failed to start IPC server")?;
 
     // Spawn background metrics updater (CPU/GPU monitoring every 1 second)
-    let metrics_handle = {
+    let _metrics_handle = {
         let metrics = daemon_clone.pipeline.read().await.get_metrics();
         let broadcaster = daemon_clone.broadcaster.clone();
         let daemon_state = daemon_clone.state.clone(); // Clone state for metrics thread
@@ -397,8 +399,8 @@ async fn main() -> Result<()> {
     };
 
     // Spawn memory pressure monitor (RAM + VRAM every 5 seconds)
-    let memory_handle = {
-        let broadcaster = daemon_clone.broadcaster.clone();
+    let _memory_handle = {
+        let _broadcaster = daemon_clone.broadcaster.clone();
         tokio::spawn(async move {
             let mut memory_monitor = match MemoryMonitor::new() {
                 Ok(m) => {

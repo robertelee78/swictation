@@ -1,12 +1,10 @@
 /// Secretary Mode Capitalization Rules
 /// Per docs/secretary-mode.md Section J
-
 /// Apply automatic capitalization rules to transformed text
 pub fn apply_capitalization(text: &str) -> String {
     let mut result = String::with_capacity(text.len());
     let mut capitalize_next = true; // Start with capital
     let mut in_quote = false;
-    let mut prev_was_title = false;
 
     let mut chars = text.chars().peekable();
 
@@ -31,7 +29,6 @@ pub fn apply_capitalization(text: &str) -> String {
         if ch == '.' || ch == '!' || ch == '?' {
             result.push(ch);
             capitalize_next = true;
-            prev_was_title = false;
             continue;
         }
 
@@ -49,11 +46,11 @@ pub fn apply_capitalization(text: &str) -> String {
             // Check if this is "i" standalone (first person pronoun)
             if ch == 'i' {
                 // Look ahead to see if next char is non-alphabetic (word boundary)
-                let is_standalone = chars.peek().map_or(true, |&next| !next.is_alphabetic());
+                let is_standalone = chars.peek().is_none_or(|&next| !next.is_alphabetic());
 
                 // Look back to see if previous char was non-alphabetic
                 let prev_char = result.chars().last();
-                let prev_is_boundary = prev_char.map_or(true, |c| !c.is_alphabetic());
+                let prev_is_boundary = prev_char.is_none_or(|c| !c.is_alphabetic());
 
                 if is_standalone && prev_is_boundary {
                     result.push('I');
@@ -64,7 +61,7 @@ pub fn apply_capitalization(text: &str) -> String {
                 // Check if we're starting a title (mr., mrs., dr., ms.)
                 // Look for word boundary before this letter
                 let prev_char = result.chars().last();
-                let at_word_start = prev_char.map_or(true, |c| c.is_whitespace());
+                let at_word_start = prev_char.is_none_or(|c| c.is_whitespace());
 
                 if at_word_start && (ch == 'm' || ch == 'd') {
                     // Peek ahead to see if this is a title
@@ -96,7 +93,6 @@ pub fn apply_capitalization(text: &str) -> String {
             || result.ends_with("Dr.")
             || result.ends_with("Ms.")
         {
-            prev_was_title = true;
             capitalize_next = true; // Capitalize next word after title
         }
     }
@@ -133,15 +129,14 @@ pub fn process_capital_commands(text: &str) -> String {
         }
 
         // Check for "all caps [word]" pattern
-        if i + 1 < words.len() && words[i] == "all" && words[i + 1] == "caps" {
-            if i + 2 < words.len() {
-                if !result.is_empty() {
-                    result.push(' ');
-                }
-                result.push_str(&words[i + 2].to_uppercase());
-                i += 3; // Skip "all", "caps", and word
-                continue;
+        if i + 1 < words.len() && words[i] == "all" && words[i + 1] == "caps" && i + 2 < words.len()
+        {
+            if !result.is_empty() {
+                result.push(' ');
             }
+            result.push_str(&words[i + 2].to_uppercase());
+            i += 3; // Skip "all", "caps", and word
+            continue;
         }
 
         // Regular word

@@ -23,16 +23,17 @@ pub struct VersionInfo {
 impl VersionInfo {
     /// Get current version information
     pub fn current() -> Self {
-        let mut features = Vec::new();
-
-        #[cfg(feature = "sway-integration")]
-        features.push("sway-integration");
-
-        #[cfg(feature = "gpu-info")]
-        features.push("gpu-info");
-
-        #[cfg(feature = "minimal")]
-        features.push("minimal");
+        #[allow(clippy::vec_init_then_push)]
+        let features = {
+            let mut f = Vec::new();
+            #[cfg(feature = "sway-integration")]
+            f.push("sway-integration");
+            #[cfg(feature = "gpu-info")]
+            f.push("gpu-info");
+            #[cfg(feature = "minimal")]
+            f.push("minimal");
+            f
+        };
 
         // Get ORT version if available
         let ort_version = Self::get_ort_version();
@@ -109,6 +110,7 @@ impl fmt::Display for VersionInfo {
 }
 
 /// Short version string (for --version)
+#[allow(dead_code)]
 pub fn version_short() -> String {
     format!("swictation-daemon {}", env!("CARGO_PKG_VERSION"))
 }

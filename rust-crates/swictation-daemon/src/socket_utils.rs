@@ -55,6 +55,7 @@ pub fn get_metrics_socket_path() -> Result<PathBuf> {
 }
 
 /// Set secure permissions on a socket file (0600 = owner read/write only)
+#[allow(dead_code)]
 #[cfg(unix)]
 pub fn secure_socket_permissions(socket_path: &std::path::Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
@@ -68,6 +69,7 @@ pub fn secure_socket_permissions(socket_path: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 #[cfg(not(unix))]
 pub fn secure_socket_permissions(_socket_path: &std::path::Path) -> Result<()> {
     // Non-Unix platforms don't use Unix sockets

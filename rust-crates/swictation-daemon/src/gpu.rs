@@ -57,6 +57,7 @@ fn check_cuda_available() -> bool {
 }
 
 /// Check if DirectML is available (Windows, any GPU)
+#[allow(dead_code)]
 #[cfg(all(target_os = "windows", feature = "gpu-info"))]
 fn check_directml_available() -> bool {
     use windows::Win32::Graphics::Direct3D12::*;
@@ -68,11 +69,13 @@ fn check_directml_available() -> bool {
     }
 }
 
+#[allow(dead_code)]
 #[cfg(not(target_os = "windows"))]
 fn check_directml_available() -> bool {
     false
 }
 
+#[allow(dead_code)]
 #[cfg(all(target_os = "windows", not(feature = "gpu-info")))]
 fn check_directml_available() -> bool {
     // On Windows without gpu-info feature, assume DirectML is available
@@ -80,6 +83,7 @@ fn check_directml_available() -> bool {
 }
 
 /// Check if CoreML is available (macOS Apple Silicon)
+#[allow(dead_code)]
 #[cfg(target_os = "macos")]
 fn check_coreml_available() -> bool {
     use std::process::Command;
@@ -97,6 +101,7 @@ fn check_coreml_available() -> bool {
     false
 }
 
+#[allow(dead_code)]
 #[cfg(not(target_os = "macos"))]
 fn check_coreml_available() -> bool {
     false
@@ -129,7 +134,7 @@ pub fn get_gpu_memory_mb() -> Option<(u64, u64)> {
     // Query NVIDIA GPU memory via nvidia-smi
     // Format: "total_mb, free_mb" (e.g., "24576, 23456")
     let output = Command::new("nvidia-smi")
-        .args(&[
+        .args([
             "--query-gpu=memory.total,memory.free",
             "--format=csv,noheader,nounits",
         ])
