@@ -9,16 +9,16 @@ Detailed technical architecture documentation for the Swictation voice dictation
 Swictation is a **pure Rust daemon** with VAD-triggered automatic transcription. The system uses **ONNX models** for both voice activity detection and speech recognition with CPU or GPU acceleration (auto-detected), with zero Python runtime dependencies.
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│           SWICTATION-DAEMON (Rust Binary)                   │
-│                                                             │
+┌────────────────────────────────────────────────────────────┐
+│           SWICTATION-DAEMON (Rust Binary)                  │
+│                                                            │
 │   Architecture: VAD-Triggered Streaming Transcription      │
 │   State Machine:  [IDLE] ↔ [RECORDING]                     │
 │   Runtime: Tokio async with state machine                  │
-│                                                             │
+│                                                            │
 │   Control: Global hotkey ($mod+Shift+d)                    │
 │   Output: wtype text injection (Wayland)                   │
-└─────────────────────────────────────────────────────────────┘
+└────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -280,10 +280,10 @@ The previous `Recognizer` implementation using sherpa-rs has been deprecated. Bo
                │ CLI/Config │   │ detect_gpu()   │
                │  Override  │   │ get_gpu_vram() │
                └────────────┘   └────────────────┘
-                    │                    │
+                    │                   │
           ┌─────────┼─────────┐         │
           │         │         │         │
-      "1.1b-gpu" "0.6b-gpu" "0.6b-cpu" │
+      "1.1b-gpu" "0.6b-gpu" "0.6b-cpu"  │
           │         │         │         │
           │         │         │         ▼
           │         │         │    ┌──────────────┐
@@ -922,9 +922,9 @@ pub fn detect_display_server() -> DisplayServerInfo {
                   ▼
 ┌─────────────────────────────────────────┐
 │  detect_display_server()                │
-│  ├─ Read XDG_SESSION_TYPE (4 pts)      │
-│  ├─ Read WAYLAND_DISPLAY (2 pts)       │
-│  ├─ Read DISPLAY (1 pt)                │
+│  ├─ Read XDG_SESSION_TYPE (4 pts)       │
+│  ├─ Read WAYLAND_DISPLAY (2 pts)        │
+│  ├─ Read DISPLAY (1 pt)                 │
 │  ├─ Calculate scores                    │
 │  ├─ Determine server type               │
 │  └─ Check GNOME + Wayland               │
@@ -941,8 +941,8 @@ pub fn detect_display_server() -> DisplayServerInfo {
                   ▼
 ┌─────────────────────────────────────────┐
 │  select_best_tool()                     │
-│  ├─ X11 → xdotool (or ydotool)         │
-│  ├─ Wayland + GNOME → ydotool          │
+│  ├─ X11 → xdotool (or ydotool)          │
+│  ├─ Wayland + GNOME → ydotool           │
 │  └─ Wayland + other → wtype (or ydotool)│
 └─────────────────┬───────────────────────┘
                   │
@@ -967,8 +967,8 @@ pub fn detect_display_server() -> DisplayServerInfo {
 │  (X11)      │    │  (Wayland)   │  │ (Universal)│
 │  ~10ms      │    │   ~15ms      │  │   ~50ms    │
 └─────┬───────┘    └──────┬───────┘  └─────┬──────┘
-      │                   │                 │
-      ▼                   ▼                 ▼
+      │                   │                │
+      ▼                   ▼                ▼
 ┌─────────────────────────────────────────────┐
 │  Text appears in focused application        │
 └─────────────────────────────────────────────┘
@@ -994,25 +994,25 @@ pub fn detect_display_server() -> DisplayServerInfo {
    ↓
 3. Audio capture starts (cpal → PipeWire → streaming)
    ↓
-4. ┌─────────────────────────────────────────────────┐
+4. ┌─────────────────────────────────────────────────────┐
    │  CONTINUOUS RECORDING LOOP (within Recording state) │
-   │                                                 │
-   │  Every audio chunk (real-time):                │
-   │    • Accumulate audio in lock-free ring buffer │
-   │    • Feed to VAD (Silero v6 ONNX)             │
-   │    • Check speech vs silence (0.003 threshold) │
-   │    • Track silence duration                    │
-   │                                                 │
-   │  When 0.5s silence detected after speech:      │
-   │    • Extract full segment from buffer          │
-   │    • Spawn async task to process segment:      │
-   │      - Extract mel features (80 or 128 bins)   │
-   │      - Transcribe with Parakeet-TDT (CPU/GPU)  │
-   │      - Transform text (MidStream - planned)    │
-   │      - Inject via wtype immediately            │
-   │    • Clear buffer, start new segment           │
-   │    • Continue recording in parallel...         │
-   └─────────────────────────────────────────────────┘
+   │                                                     │
+   │  Every audio chunk (real-time):                     │
+   │    • Accumulate audio in lock-free ring buffer      │
+   │    • Feed to VAD (Silero v6 ONNX)                   │
+   │    • Check speech vs silence (0.003 threshold)      │
+   │    • Track silence duration                         │
+   │                                                     │
+   │  When 0.5s silence detected after speech:           │
+   │    • Extract full segment from buffer               │
+   │    • Spawn async task to process segment:           │
+   │      - Extract mel features (80 or 128 bins)        │
+   │      - Transcribe with Parakeet-TDT (CPU/GPU)       │
+   │      - Transform text (MidStream - planned)         │
+   │      - Inject via wtype immediately                 │
+   │    • Clear buffer, start new segment                │
+   │    • Continue recording in parallel...              │
+   └─────────────────────────────────────────────────────┘
    ↓
 5. USER SPEAKS: "This is segment one." [0.5s pause]
    → VAD detects silence → transcribe (async) → inject

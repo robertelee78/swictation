@@ -71,12 +71,6 @@ swictation start
 - Transform: 5µs
 - Total: ~1s after you pause speaking
 
-**Memory:**
-- GPU VRAM: 4GB for 0.6B model, 5GB for 1.1B model
-- System RAM: 150MB
-
-**Note:** The STT engine outputs raw lowercase text without punctuation. All formatting (punctuation, capitalization) comes from Secretary Mode commands or intelligent corrections.
-
 ---
 
 ## Secretary Mode
@@ -86,11 +80,6 @@ Say punctuation and formatting commands naturally:
 ```
 YOU SAY:          "hello comma world period"
 SWICTATION TYPES: Hello, world.
-
-YOU SAY:          "dear mr smith comma new paragraph I need..."
-SWICTATION TYPES: Dear Mr. Smith,
-
-                  I need...
 
 YOU SAY:          "number forty two items"
 SWICTATION TYPES: 42 items
