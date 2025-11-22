@@ -1,6 +1,6 @@
 {
   "name": "swictation",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "description": "Voice-to-text dictation with Wayland/X11 support (GNOME, Sway, i3), Secretary Mode (60+ natural language commands), Context-Aware Meta-Learning, NVIDIA GPU acceleration, and pure Rust performance (Ubuntu 24.04+ required)",
   "keywords": [
     "voice-to-text",

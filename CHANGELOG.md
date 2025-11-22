@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.3] - 2025-11-22
+
+### Fixed
+- **CRITICAL: Config Migration Failure** - Fixed daemon crash loop on fresh installs and upgrades
+  - Added missing `phonetic_threshold` field to config.example.toml
+  - Updated postinstall.js to generate configs with `phonetic_threshold = 0.3`
+  - Fixed field placement (must be at root level, NOT inside [hotkeys] section)
+  - Fixed default toggle hotkey to `Super+Shift+D` (was incorrectly `Super+D` in postinstall)
+  - Prevents "missing field `phonetic_threshold`" parse error that caused daemon crashes
+  - File: config/config.example.toml, npm-package/postinstall.js (lines 1218-1223)
+
+### Notes
+This is a **critical hotfix** for v0.6.2 which shipped with a breaking config change.
+Users upgrading from v0.6.1 or earlier would experience daemon crash loops.
+
 ## [0.6.2] - 2025-11-22
 
 ### Changed

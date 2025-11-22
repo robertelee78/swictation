@@ -1224,7 +1224,7 @@ phonetic_threshold = 0.3
 
 [hotkeys]
 # Main toggle hotkey for start/stop recording
-toggle = "Super+D"
+toggle = "Super+Shift+D"
 # Push-to-talk (hold to record)
 push_to_talk = "Super+Space"
 `;
