@@ -118,8 +118,8 @@ impl Resampler {
         let mut interleaved_output = Vec::with_capacity(output_frames * self.channels as usize);
 
         for frame_idx in 0..output_frames {
-            for ch_idx in 0..self.channels as usize {
-                interleaved_output.push(planar_output[ch_idx][frame_idx]);
+            for channel_data in planar_output.iter().take(self.channels as usize) {
+                interleaved_output.push(channel_data[frame_idx]);
             }
         }
 
@@ -128,7 +128,7 @@ impl Resampler {
 
     /// Convert stereo to mono by averaging channels
     pub fn stereo_to_mono(stereo: &[f32]) -> Vec<f32> {
-        if stereo.len() % 2 != 0 {
+        if !stereo.len().is_multiple_of(2) {
             // Odd length, just take every other sample
             return stereo.iter().step_by(2).copied().collect();
         }

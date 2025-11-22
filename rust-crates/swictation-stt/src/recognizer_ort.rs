@@ -29,6 +29,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
+/// Decoder state returned by decode_frames_with_state
+/// Format: (tokens, final_decoder_token, final_decoder_out, (blank_count, nonblank_count))
+type DecoderState = (Vec<i64>, i64, Array1<f32>, (usize, usize));
+
 /// Model configuration for different Parakeet-TDT variants
 #[derive(Debug, Clone, Copy)]
 struct ModelConfig {
@@ -356,7 +360,7 @@ impl OrtRecognizer {
         use ort::value::Tensor;
 
         // audio_signal: (batch=1, num_frames=80, num_features=128)
-        let audio_signal_data: Vec<f32> = vec![0.0; 1 * 80 * 128];
+        let audio_signal_data: Vec<f32> = vec![0.0; 80 * 128];
         let audio_signal = Tensor::from_array((vec![1usize, 80, 128], audio_signal_data.into_boxed_slice()))
             .map_err(|e| SttError::InferenceError(format!("Failed to create audio_signal tensor: {}", e)))?;
 
@@ -434,7 +438,7 @@ impl OrtRecognizer {
             info!("Large file: {} frames total - processing all at once (no chunking)", features.nrows());
 
             // Pad to multiple of 80 for encoder
-            let padded_rows = ((features.nrows() + 79) / 80) * 80;
+            let padded_rows = features.nrows().div_ceil(80) * 80;
             let mut padded = Array2::zeros((padded_rows, features.ncols()));
             padded.slice_mut(s![..features.nrows(), ..]).assign(&features);
 
@@ -498,7 +502,7 @@ impl OrtRecognizer {
             info!("Large audio: {} frames total - chunking", features.nrows());
 
             // Pad to multiple of 80 for encoder
-            let padded_rows = ((features.nrows() + 79) / 80) * 80;
+            let padded_rows = features.nrows().div_ceil(80) * 80;
             let mut padded = Array2::zeros((padded_rows, features.ncols()));
             padded.slice_mut(s![..features.nrows(), ..]).assign(&features);
 
@@ -581,6 +585,7 @@ impl OrtRecognizer {
     /// Automatically detects and applies correct input format based on model:
     /// - 0.6B models: (batch, 128 features, 80 time) - TRANSPOSED
     /// - 1.1B models: (batch, 80 time, features) - NOT TRANSPOSED
+    ///
     /// Detection happens in constructor based on encoder input shape.
     fn run_encoder(&mut self, features: &Array2<f32>) -> Result<Array3<f32>> {
         // Prepare input tensors
@@ -669,7 +674,7 @@ impl OrtRecognizer {
         encoder_out: &Array3<f32>,
         prev_decoder_out: Option<Array1<f32>>,
         initial_token: i64
-    ) -> Result<(Vec<i64>, i64, Array1<f32>, (usize, usize))> {
+    ) -> Result<DecoderState> {
         // Encoder output shape: (batch, encoder_dim, num_frames)
         let _encoder_dim = encoder_out.shape()[1];
         let num_frames = encoder_out.shape()[2];

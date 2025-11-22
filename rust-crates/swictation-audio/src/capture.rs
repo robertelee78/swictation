@@ -430,6 +430,7 @@ impl AudioCapture {
     }
 
     /// Common audio data processing logic
+    #[allow(clippy::too_many_arguments)]
     fn process_audio_data(
         data: &[f32],
         source_channels: u16,
