@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 
 interface Correction {
@@ -89,14 +89,17 @@ export function LearnedPatterns() {
   };
 
   // Filter and search
-  const filteredCorrections = corrections.filter((c) => {
-    const matchesFilter = filter === 'all' || c.mode === filter;
-    const matchesSearch =
-      search === '' ||
-      c.original.toLowerCase().includes(search.toLowerCase()) ||
-      c.corrected.toLowerCase().includes(search.toLowerCase());
-    return matchesFilter && matchesSearch;
-  });
+  // Memoized to prevent unnecessary recomputation on every render (e.g., during edit mode typing)
+  const filteredCorrections = useMemo(() => {
+    return corrections.filter((c) => {
+      const matchesFilter = filter === 'all' || c.mode === filter;
+      const matchesSearch =
+        search === '' ||
+        c.original.toLowerCase().includes(search.toLowerCase()) ||
+        c.corrected.toLowerCase().includes(search.toLowerCase());
+      return matchesFilter && matchesSearch;
+    });
+  }, [corrections, filter, search]);
 
   const getModeLabel = (mode: string) => {
     switch (mode) {
