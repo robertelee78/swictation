@@ -599,12 +599,19 @@ mod tests {
 
     #[test]
     fn test_list_devices() {
+        // This test verifies that list_devices() doesn't crash
+        // In CI environments (GitHub Actions), there may be no audio devices
         let devices = AudioCapture::list_devices().unwrap();
-        assert!(!devices.is_empty(), "Should have at least one audio device");
 
-        for device in &devices {
-            println!("{}: {} ({} input channels)",
-                     device.index, device.name, device.max_input_channels);
+        // Print devices if any are available
+        if !devices.is_empty() {
+            println!("Found {} audio device(s):", devices.len());
+            for device in &devices {
+                println!("  {}: {} ({} input channels)",
+                         device.index, device.name, device.max_input_channels);
+            }
+        } else {
+            println!("No audio devices found (expected in CI environments)");
         }
     }
 
