@@ -39,6 +39,11 @@ fi
 echo ""
 echo "Adding Swictation keybinding to Sway config..."
 
+# Add blank line only if the last line isn't already blank
+if [ -n "$(tail -c 1 "$SWAY_CONFIG")" ] || [ "$(tail -n 1 "$SWAY_CONFIG")" != "" ]; then
+    echo "" >> "$SWAY_CONFIG"
+fi
+
 cat >> "$SWAY_CONFIG" << 'EOF'
 # ======================================================================
 # Swictation voice dictation
