@@ -162,6 +162,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_recent_sessions,
+            commands::get_session_count,
             commands::get_session_details,
             commands::search_transcriptions,
             commands::get_lifetime_stats,

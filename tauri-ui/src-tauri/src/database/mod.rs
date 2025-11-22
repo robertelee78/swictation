@@ -47,8 +47,8 @@ impl Database {
         Ok(expanded)
     }
 
-    /// Get recent sessions with transcription counts
-    pub fn get_recent_sessions(&self, limit: usize) -> Result<Vec<SessionSummary>> {
+    /// Get recent sessions with pagination support
+    pub fn get_recent_sessions(&self, limit: usize, offset: usize) -> Result<Vec<SessionSummary>> {
         let conn = self.conn.lock().unwrap();
 
         let mut stmt = conn.prepare(
@@ -62,10 +62,10 @@ impl Database {
                 s.average_latency_ms
              FROM sessions s
              ORDER BY s.start_time DESC
-             LIMIT ?1"
+             LIMIT ?1 OFFSET ?2"
         )?;
 
-        let sessions = stmt.query_map([limit], |row| {
+        let sessions = stmt.query_map(params![limit, offset], |row| {
             let start_time: f64 = row.get(1)?;
             let end_time: Option<f64> = row.get(2)?;
             let duration_s: f64 = row.get(3)?;
@@ -86,6 +86,17 @@ impl Database {
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
         Ok(sessions)
+    }
+
+    /// Get total count of sessions for pagination
+    pub fn get_session_count(&self) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sessions",
+            [],
+            |row| row.get(0)
+        )?;
+        Ok(count as usize)
     }
 
     /// Get all transcriptions for a session (from segments table)

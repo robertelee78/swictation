@@ -15,18 +15,32 @@ pub struct AppState {
     pub db: Mutex<Database>,
 }
 
-/// Get recent sessions from database
+/// Get recent sessions from database with pagination support
 #[tauri::command]
 pub async fn get_recent_sessions(
     state: State<'_, AppState>,
     limit: usize,
+    offset: Option<usize>,
 ) -> Result<Vec<SessionSummary>, String> {
     state
         .db
         .lock()
         .unwrap()
-        .get_recent_sessions(limit)
+        .get_recent_sessions(limit, offset.unwrap_or(0))
         .map_err(|e| format!("Failed to get recent sessions: {}", e))
+}
+
+/// Get total count of sessions for pagination
+#[tauri::command]
+pub async fn get_session_count(
+    state: State<'_, AppState>,
+) -> Result<usize, String> {
+    state
+        .db
+        .lock()
+        .unwrap()
+        .get_session_count()
+        .map_err(|e| format!("Failed to get session count: {}", e))
 }
 
 /// Get session details (all transcriptions)

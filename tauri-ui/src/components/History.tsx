@@ -1,8 +1,10 @@
 import { useState } from 'react';
+import { FixedSizeList as List } from 'react-window';
+import InfiniteLoader from 'react-window-infinite-loader';
 import { useDatabase } from '../hooks/useDatabase';
 
 export function History() {
-  const { history, lifetimeStats, loading, refresh, resetDatabase } = useDatabase();
+  const { history, totalCount, lifetimeStats, loading, refresh, resetDatabase, loadMoreSessions } = useDatabase();
   const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   const handleReset = async () => {
@@ -10,11 +12,52 @@ export function History() {
     setShowResetConfirm(false);
   };
 
+  // Check if item is loaded
+  const isItemLoaded = (index: number) => index < history.length && !!history[index];
+
+  // Render individual session row
+  const SessionRow = ({ index, style }: { index: number; style: React.CSSProperties }) => {
+    const session = history[index];
+
+    if (!session) {
+      return (
+        <div style={style} className="flex items-center justify-center">
+          <div className="text-muted text-sm">Loading...</div>
+        </div>
+      );
+    }
+
+    return (
+      <div style={style} className="px-5 py-1.5">
+        <div className="bg-card rounded border border-border p-4 flex items-center gap-5">
+          <div className="text-primary font-bold text-lg">#{session.id}</div>
+
+          <div className="flex-1">
+            <div className="text-foreground text-sm mb-1">
+              {new Date(session.start_time * 1000).toLocaleString()}
+            </div>
+            <div className="flex gap-4">
+              <span className="text-success text-xs">{session.words_dictated} words</span>
+              <span className="text-primary text-xs">{Math.round(session.wpm)} WPM</span>
+              <span className="text-warning text-xs">{session.avg_latency_ms.toFixed(0)}ms</span>
+            </div>
+          </div>
+
+          <div className="text-muted text-sm">
+            {(session.duration_s / 60).toFixed(1)}m
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
-    <div className="flex flex-col gap-4 p-5">
+    <div className="flex flex-col gap-4 p-5 h-full">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h2 className="text-foreground text-xl font-bold">All Sessions</h2>
+        <h2 className="text-foreground text-xl font-bold">
+          All Sessions ({totalCount})
+        </h2>
         <div className="flex gap-2">
           <button
             onClick={refresh}
@@ -55,31 +98,33 @@ export function History() {
         </div>
       )}
 
-      {/* Sessions List */}
-      <div className="space-y-3 flex-1 overflow-auto">
-        {history.map((session) => (
-          <div
-            key={session.id}
-            className="bg-card rounded border border-border p-4 flex items-center gap-5"
+      {/* Virtualized Sessions List */}
+      <div className="flex-1 min-h-0">
+        {totalCount > 0 ? (
+          <InfiniteLoader
+            isItemLoaded={isItemLoaded}
+            itemCount={totalCount}
+            loadMoreItems={loadMoreSessions}
+            threshold={15}
           >
-            <div className="text-primary font-bold text-lg">#{session.id}</div>
-
-            <div className="flex-1">
-              <div className="text-foreground text-sm mb-1">
-                {new Date(session.start_time * 1000).toLocaleString()}
-              </div>
-              <div className="flex gap-4">
-                <span className="text-success text-xs">{session.words_dictated} words</span>
-                <span className="text-primary text-xs">{Math.round(session.wpm)} WPM</span>
-                <span className="text-warning text-xs">{session.avg_latency_ms.toFixed(0)}ms</span>
-              </div>
-            </div>
-
-            <div className="text-muted text-sm">
-              {(session.duration_s / 60).toFixed(1)}m
-            </div>
+            {({ onItemsRendered, ref }) => (
+              <List
+                height={window.innerHeight - 350}
+                itemCount={totalCount}
+                itemSize={100}
+                onItemsRendered={onItemsRendered}
+                ref={ref}
+                width="100%"
+              >
+                {SessionRow}
+              </List>
+            )}
+          </InfiniteLoader>
+        ) : (
+          <div className="flex items-center justify-center h-full text-muted">
+            {loading ? 'Loading sessions...' : 'No sessions yet'}
           </div>
-        ))}
+        )}
       </div>
 
       {/* Lifetime Stats */}
