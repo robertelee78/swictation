@@ -20,10 +20,20 @@ window.addEventListener('unhandledrejection', (e) => {
   }
 });
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <ErrorBoundary>
-      <App />
-    </ErrorBoundary>
-  </React.StrictMode>
+// Prepare app component
+const rootElement = document.getElementById('root')!;
+const app = (
+  <ErrorBoundary>
+    <App />
+  </ErrorBoundary>
+);
+
+// Enable StrictMode only in development for bug detection
+// Disable in production to avoid double-invocation overhead
+ReactDOM.createRoot(rootElement).render(
+  import.meta.env.DEV ? (
+    <React.StrictMode>{app}</React.StrictMode>
+  ) : (
+    app
+  )
 );
