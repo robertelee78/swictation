@@ -18,6 +18,9 @@ env:
 jobs:
   build-linux:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write  # Required for npm provenance
 
     steps:
     - uses: actions/checkout@v3
@@ -117,18 +120,20 @@ jobs:
         npm pack
         mv swictation-*.tgz ../
 
-    - name: Publish to npm
+    - name: Publish to npm (with provenance)
       if: startsWith(github.ref, 'refs/tags/')
       env:
         NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       run: |
         cd npm-package
-        npm publish
+        npm publish --provenance --access public
 
   create-release:
     if: startsWith(github.ref, 'refs/tags/')
     needs: [build-linux]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Required for creating releases
 
     steps:
     - uses: actions/checkout@v3
