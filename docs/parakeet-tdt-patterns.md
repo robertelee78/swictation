@@ -286,14 +286,17 @@ Based on these patterns, the MidStream transformation layer needs:
 
 ## 7. Model Comparison: 0.6B vs 1.1B
 
-### ⚠️ CRITICAL DIFFERENCE: Inference Backend Behavior
+### ⚠️ HISTORICAL: Inference Backend Behavior Changed in v0.6.0
 
-**The two Parakeet-TDT models behave COMPLETELY differently** due to their inference backends:
+**⚠️ NOTE: As of v0.6.0, both models use OrtRecognizer with identical behavior (raw lowercase, no punctuation).**
+
+**Historical comparison (pre-v0.6.0):**
 
 | Model | Backend | Capitalization | Punctuation | Secretary Mode Compatible |
 |-------|---------|----------------|-------------|---------------------------|
 | **1.1B INT8** | Direct ONNX Runtime | ❌ None (all lowercase) | ❌ None | ✅ Yes (raw output) |
-| **0.6B** | Sherpa-RS | ✅ Auto-added | ✅ Auto-added | ⚠️ Requires stripping |
+| **0.6B (old)** | Sherpa-RS (removed) | ✅ Auto-added | ✅ Auto-added | ⚠️ Required stripping |
+| **0.6B (current)** | Direct ONNX Runtime | ❌ None (all lowercase) | ❌ None | ✅ Yes (raw output) |
 
 ### 1.1B Model (Direct ONNX Runtime)
 
@@ -316,7 +319,9 @@ After Transform:  "Testing 1 2 3"  (number transformation working)
 - ✅ Numbers as words ("one two three")
 - ✅ Behavior matches documentation
 
-### 0.6B Model (Sherpa-RS)
+### 0.6B Model (Historical Sherpa-RS Behavior - Pre-v0.6.0)
+
+**⚠️ DEPRECATED: This section describes old sherpa-rs behavior. As of v0.6.0, 0.6B uses OrtRecognizer (same as 1.1B).**
 
 **Test Input:** Same audio file
 
@@ -341,11 +346,14 @@ Sherpa-RS outputs: "Hello, comma world period."  (auto-comma after Hello!)
 Transform adds:    "Hello,, world period."       (double comma!)
 ```
 
-### Fix: Punctuation Stripping (v0.4.2+)
+### Fix: Punctuation Stripping (v0.4.2 - v0.5.x)
 
-The daemon now strips auto-added formatting before Secretary Mode:
+**⚠️ DEPRECATED in v0.6.0**: This stripping logic was removed when 0.6B migrated to OrtRecognizer.
+
+The daemon used to strip auto-added formatting (v0.4.2-v0.5.x only):
 
 ```rust
+// REMOVED IN v0.6.0 - No longer needed with OrtRecognizer
 let cleaned_text = text
     .to_lowercase()          // Remove auto-capitalization
     .replace(",", "")        // Remove auto-commas
@@ -353,17 +361,14 @@ let cleaned_text = text
     .replace("?", "")        // etc...
 ```
 
-This normalizes both models to lowercase + no punctuation before transformation.
+This was removed in v0.6.0 when sherpa-rs was fully replaced with OrtRecognizer.
 
-### Recommendation
+### Recommendation (Updated for v0.6.0+)
 
-**For Secretary Mode:**
-- ✅ **1.1B Model Preferred** - Native raw output, no preprocessing needed
-- ⚠️ **0.6B Model OK** - Works with v0.4.2+ stripping fix
-
-**For Standard Dictation:**
-- ✅ **0.6B Model** - Auto-formatting saves post-processing
-- ⚠️ **1.1B Model** - Requires capitalization pipeline
+**Both models now behave identically (v0.6.0+):**
+- ✅ **Both use OrtRecognizer** - Raw lowercase output, no auto-punctuation
+- ✅ **Perfect for Secretary Mode** - No preprocessing needed
+- ✅ **Choose based on GPU VRAM only**: 5GB+ use 1.1B (better accuracy), <5GB use 0.6B
 
 ---
 

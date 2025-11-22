@@ -25,7 +25,7 @@ fn get_default_model_dir() -> PathBuf {
 
 /// Get default path for 0.6B model
 fn get_default_0_6b_model_path() -> PathBuf {
-    get_default_model_dir().join("sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-onnx")
+    get_default_model_dir().join("parakeet-tdt-0.6b-v3-onnx")
 }
 
 /// Get default path for 1.1B model
@@ -91,7 +91,7 @@ pub struct DaemonConfig {
     /// Options: "auto" (VRAM-based), "0.6b-cpu", "0.6b-gpu", "1.1b-gpu"
     pub stt_model_override: String,
 
-    /// Path to 0.6B model directory (sherpa-rs)
+    /// Path to 0.6B model directory (OrtRecognizer)
     pub stt_0_6b_model_path: PathBuf,
 
     /// Path to 1.1B INT8 model directory (ONNX Runtime)

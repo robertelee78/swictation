@@ -104,14 +104,14 @@ pub struct AudioCapture {
 ```
 
 **Implementation:**
-- **Backend:** cpal with PipeWire support
+- **Backend:** cpal with ALSA (PipeWire compatible via pipewire-alsa plugin)
 - **Buffer:** Lock-free ring buffer (ringbuf crate)
 - **Resampling:** rubato for non-16kHz sources
 - **Integration:** Direct into VAD processing pipeline
 
 **Performance:**
 - Latency: <5ms overhead
-- Chunk size: Configurable (default 512 samples)
+- Chunk size: Configurable (default 1024 samples)
 - Buffer: Lock-free for real-time performance
 
 **Key Files:**
@@ -131,7 +131,7 @@ pub struct AudioCapture {
 ```rust
 pub struct VadDetector {
     model: Session,           // ort 2.0.0-rc.10
-    threshold: f32,           // 0.003 (ONNX threshold, NOT 0.5!)
+    threshold: f32,           // 0.25 (balanced default for production use)
     min_silence: Duration,    // 0.5-0.8s typical
     min_speech: Duration,     // 0.25s minimum
     sample_rate: u32,         // 16000 Hz
@@ -143,20 +143,7 @@ pub struct VadDetector {
 - **VRAM usage:** ~630 KB
 - **Latency:** <50ms per window
 - **Accuracy:** 16% better on noisy data vs v5
-- **Threshold:** 0.001-0.005 (ONNX outputs ~100-200x lower than PyTorch!)
-
-**CRITICAL: ONNX Threshold Configuration**
-
-The ONNX model outputs probabilities ~100-200x lower than PyTorch JIT:
-- **PyTorch JIT:** probabilities ~0.02-0.2, use threshold ~0.5
-- **ONNX:** probabilities ~0.0005-0.002, use threshold 0.001-0.005
-
-**Recommended thresholds:**
-- `0.001` - Most sensitive (catches quiet speech, may have false positives)
-- `0.003` - Balanced (recommended default)
-- `0.005` - Conservative (fewer false positives, may miss quiet speech)
-
-See `rust-crates/swictation-vad/ONNX_THRESHOLD_GUIDE.md` for technical details.
+- **Threshold:** 0.25 (optimized through real-world testing for reliable silence detection)
 
 **Integration:**
 ```rust
@@ -348,13 +335,13 @@ let stt = if config.stt_model_override != "auto" {
             SttEngine::Parakeet1_1B(ort_recognizer)
         }
         "0.6b-gpu" => {
-            info!("  Loading Parakeet-TDT-0.6B via sherpa-rs (GPU, forced)...");
+            info!("  Loading Parakeet-TDT-0.6B via OrtRecognizer (GPU, forced)...");
             let recognizer = Recognizer::new(&config.stt_0_6b_model_path, true)?;
             info!("✓ Parakeet-TDT-0.6B loaded successfully (GPU, forced)");
             SttEngine::Parakeet0_6B(recognizer)
         }
         "0.6b-cpu" => {
-            info!("  Loading Parakeet-TDT-0.6B via sherpa-rs (CPU, forced)...");
+            info!("  Loading Parakeet-TDT-0.6B via OrtRecognizer (CPU, forced)...");
             let recognizer = Recognizer::new(&config.stt_0_6b_model_path, false)?;
             info!("✓ Parakeet-TDT-0.6B loaded successfully (CPU, forced)");
             SttEngine::Parakeet0_6B(recognizer)
@@ -915,7 +902,7 @@ pub fn detect_display_server() -> DisplayServerInfo {
 ```
 
 **Test coverage:**
-- ✅ 19 environment detection tests (100% code paths)
+- ✅ Comprehensive environment detection tests (100% code paths)
 - ✅ Pure X11, Wayland (GNOME), Wayland (KDE/Sway), XWayland
 - ✅ Confidence scoring (High/Medium/Low thresholds)
 - ✅ GNOME detection (all variations: "GNOME", "ubuntu:GNOME", "gnome")
@@ -991,7 +978,7 @@ pub fn detect_display_server() -> DisplayServerInfo {
 
 - **Display server detection:** `src/display_server.rs` (428 lines)
 - **Text injection:** `src/text_injection.rs` (344 lines)
-- **Tests:** `tests/display_server_detection.rs` (285 lines, 19 tests)
+- **Tests:** `tests/display_server_detection.rs` (285 lines)
 - **Documentation:** `docs/display-servers.md` (comprehensive guide)
 
 ---
@@ -1062,9 +1049,9 @@ pub fn detect_display_server() -> DisplayServerInfo {
 | VAD Silence Detection | 800ms | Configurable (default 0.8s in config.rs) |
 | Audio Accumulation | Continuous | Zero overhead (lock-free buffer) |
 | VAD Check per Chunk | <50ms | ONNX Runtime (CPU/GPU) |
-| Mel Feature Extraction | 10-20ms | Pure Rust or sherpa-rs internal |
-| STT Processing (0.6B GPU) | 100-150ms | sherpa-rs with CUDA |
-| STT Processing (0.6B CPU) | 200-400ms | sherpa-rs CPU fallback |
+| Mel Feature Extraction | 10-20ms | Pure Rust (AudioProcessor) |
+| STT Processing (0.6B GPU) | 100-150ms | Direct ort with CUDA |
+| STT Processing (0.6B CPU) | 200-400ms | Direct ort CPU fallback |
 | STT Processing (1.1B GPU) | 150-250ms | Direct ort with INT8 quantization |
 | Text Transformation | ~5μs | Native Rust (O(1) HashMap lookups) |
 | Text Injection | 10-50ms | wtype latency |
@@ -1133,7 +1120,7 @@ rust-crates/
 ├── swictation-daemon/      # Main daemon binary (tokio async)
 ├── swictation-audio/       # Audio capture (cpal/PipeWire)
 ├── swictation-vad/         # Voice Activity Detection (Silero v6 + ort)
-├── swictation-stt/         # Speech-to-Text (Parakeet-TDT + sherpa-rs)
+├── swictation-stt/         # Speech-to-Text (Parakeet-TDT + ort 2.0)
 ├── swictation-metrics/     # Performance tracking
 └── swictation-broadcaster/ # Real-time metrics broadcast
 

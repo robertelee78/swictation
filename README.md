@@ -14,7 +14,7 @@ Pure Rust daemon with VAD-triggered auto-transcription, sub-second latency, and 
 
 ### Prerequisites
 
-- **NVIDIA GPU** with 4GB+ VRAM (or CPU fallback)
+- **NVIDIA GPU** with 4GB+ VRAM for 0.6B model, 5GB+ for 1.1B model (or CPU fallback)
 - **Ubuntu 24.04+** (GLIBC 2.39+ required)
 - **Node.js 18+**
 - **Text injection tool:**
@@ -72,8 +72,10 @@ swictation start
 - Total: ~1s after you pause speaking
 
 **Memory:**
-- GPU: 2.2GB typical, 3.5GB peak
-- RAM: 150MB
+- GPU VRAM: 4GB for 0.6B model, 5GB for 1.1B model
+- System RAM: 150MB
+
+**Note:** The STT engine outputs raw lowercase text without punctuation. All formatting (punctuation, capitalization) comes from Secretary Mode commands or intelligent corrections.
 
 ---
 
@@ -97,6 +99,35 @@ SWICTATION TYPES: 42 items
 **60+ commands:** punctuation, quotes, brackets, symbols, numbers, formatting, capitalization
 
 📖 **[Full Secretary Mode Guide](docs/secretary-mode.md)** - Complete command reference and examples
+
+---
+
+## Intelligent Corrections
+
+Learn personalized corrections from your editing:
+
+```
+YOU SAY:          "arkon"
+SWICTATION TYPES: arkon           [you edit to "Archon"]
+                  ↓
+LEARNED:          "arkon" → "Archon" (fuzzy match, force uppercase)
+FOREVER:          All future "arkon" → "Archon" automatically
+```
+
+**Features:**
+- **Zero-friction learning**: Edit transcription → Click "Learn" → Saved forever
+- **Phonetic fuzzy matching**: "arkon" matches "archon", "arkohn", "arckon" (configurable threshold 0.0-1.0, default 0.3)
+- **Case intelligence**: Force "API" uppercase, "iPhone" title case, or preserve input case
+- **Hot-reload**: No daemon restart needed (file-watched `~/.config/swictation/corrections.toml`)
+- **Usage tracking**: See which patterns save you the most time
+
+**Perfect for:**
+- Technical jargon (Kubernetes, PostgreSQL, TypeScript)
+- Personal names (Archon, Seraphina)
+- Domain vocabulary (medical terms, legal phrases)
+- Brand names (iPhone, GitHub, OpenAI)
+
+Configure phonetic sensitivity in Settings UI (0.0 = exact only, 1.0 = very fuzzy, default: 0.3).
 
 ---
 
@@ -157,7 +188,7 @@ echo $XDG_SESSION_TYPE
 
 ## Architecture
 
-**Pure Rust** - no Python runtime required (optional Python for system tray UI only)
+**Pure Rust** - no Python runtime required (optional Python tray for Sway/Wayland, Tauri UI for monitoring)
 
 ```
 Audio (cpal/PipeWire) → VAD (Silero v6) → STT (Parakeet-TDT) →
@@ -172,6 +203,12 @@ Transform (MidStream) → Inject (xdotool/wtype/ydotool)
 - `swictation-metrics` - Performance tracking
 - `swictation-broadcaster` - Real-time metrics
 - `external/midstream/text-transform` - Secretary Mode (submodule)
+
+**Audio Configuration:**
+- Sample rate: 16kHz mono
+- Capture chunks: 1024 samples (~64ms)
+- VAD windows: 8000 samples (0.5s)
+- Processing: Lock-free circular buffer
 
 📖 **[Architecture Details](docs/architecture.md)**
 
@@ -217,7 +254,6 @@ Configure in `config.toml`.
 - **[Display Server Support](docs/display-servers.md)** - X11/Wayland deep dive
 - **[Installation by Distro](docs/installation-by-distro.md)** - Distro-specific setup
 - **[Architecture](docs/architecture.md)** - Technical implementation
-- **[ONNX Threshold Tuning](rust-crates/swictation-vad/ONNX_THRESHOLD_GUIDE.md)** - VAD configuration
 - **[MidStream Transform](external/midstream/)** - Text transformation library
 
 ---

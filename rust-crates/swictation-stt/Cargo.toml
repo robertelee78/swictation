@@ -2,7 +2,7 @@
 name = "swictation-stt"
 version = "0.2.2"
 edition = "2021"
-description = "Pure Rust speech-to-text with ONNX Runtime and Parakeet-TDT-0.6B-V3"
+description = "Pure Rust speech-to-text with direct ONNX Runtime and Parakeet-TDT models"
 license = "Apache-2.0"
 repository = "https://github.com/robertelee78/swictation"
 keywords = ["stt", "speech-to-text", "onnx", "parakeet", "asr"]
@@ -14,11 +14,7 @@ path = "src/lib.rs"
 crate-type = ["rlib"]
 
 [dependencies]
-# Sherpa-RS for Parakeet-TDT inference (supports separate decoder/joiner)
-# Using git version with sherpa-onnx v1.12.15 for CUDA 12.x + cuDNN 9.x support
-sherpa-rs = { git = "https://github.com/thewh1teagle/sherpa-rs.git", default-features = false, features = ["cuda"] }
-
-# Direct ONNX Runtime for 1.1B model (bypasses sherpa-rs external weights bug)
+# Direct ONNX Runtime for all models (0.6B and 1.1B)
 # Using rc.8 which supports ORT 1.21.x (system has 1.21.0)
 ort = { version = "2.0.0-rc.8", features = ["ndarray", "half", "load-dynamic"] }
 ndarray = "0.16"  # Match ort's ndarray version

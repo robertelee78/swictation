@@ -1,8 +1,18 @@
 //! Unified STT engine interface supporting multiple model implementations
 
 use crate::error::Result;
-use crate::recognizer::RecognitionResult;
 use crate::recognizer_ort::OrtRecognizer;
+
+/// Recognition result from STT engine
+#[derive(Debug, Clone)]
+pub struct RecognitionResult {
+    /// Transcribed text
+    pub text: String,
+    /// Confidence score (0.0 to 1.0) - not currently provided by OrtRecognizer
+    pub confidence: f32,
+    /// Processing time in milliseconds
+    pub processing_time_ms: f64,
+}
 
 /// Unified STT engine supporting multiple Parakeet-TDT model implementations
 ///
