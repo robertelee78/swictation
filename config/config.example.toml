@@ -52,6 +52,13 @@ num_threads = 4
 # Use `arecord -l` to list available devices
 audio_device_index = null
 
+# Corrections Engine - Phonetic matching threshold
+# Controls how fuzzy the phonetic matching is for learned corrections
+# - 0.0 = Exact match only (very strict)
+# - 0.3 = Default (balanced fuzzy matching)
+# - 1.0 = Very fuzzy (may over-correct)
+phonetic_threshold = 0.3
+
 # Hotkey configuration
 [hotkeys]
 # Toggle recording on/off

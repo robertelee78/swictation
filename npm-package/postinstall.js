@@ -1215,6 +1215,13 @@ stt_0_6b_model_path = "${modelDir}/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-onnx"
 stt_1_1b_model_path = "${modelDir}/parakeet-tdt-1.1b-onnx"
 num_threads = 4
 
+# Corrections Engine - Phonetic matching threshold
+# Controls how fuzzy the phonetic matching is for learned corrections
+# - 0.0 = Exact match only (very strict)
+# - 0.3 = Default (balanced fuzzy matching)
+# - 1.0 = Very fuzzy (may over-correct)
+phonetic_threshold = 0.3
+
 [hotkeys]
 # Main toggle hotkey for start/stop recording
 toggle = "Super+D"
