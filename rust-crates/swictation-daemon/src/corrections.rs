@@ -667,9 +667,9 @@ mod tests {
 
     #[test]
     fn test_preserve_case() {
-        assert_eq!(CorrectionEngine::preserve_case("Hello", "world"), "World");
-        assert_eq!(CorrectionEngine::preserve_case("HELLO", "world"), "WORLD");
-        assert_eq!(CorrectionEngine::preserve_case("hello", "World"), "world");
+        assert_eq!(CorrectionEngine::preserve_case("Hello", "world", CaseMode::PreserveInput), "World");
+        assert_eq!(CorrectionEngine::preserve_case("HELLO", "world", CaseMode::PreserveInput), "WORLD");
+        assert_eq!(CorrectionEngine::preserve_case("hello", "World", CaseMode::PreserveInput), "world");
     }
 
     #[test]
