@@ -40,7 +40,6 @@ echo ""
 echo "Adding Swictation keybinding to Sway config..."
 
 cat >> "$SWAY_CONFIG" << 'EOF'
-
 # ======================================================================
 # Swictation voice dictation
 # ======================================================================
