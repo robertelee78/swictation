@@ -5,6 +5,7 @@ const path = require('path');
 const { execSync } = require('child_process');
 const os = require('os');
 const https = require('https');
+const crypto = require('crypto');
 const { checkNvidiaHibernationStatus } = require('./src/nvidia-hibernation-setup');
 
 // Environment variable support for model test-loading
@@ -592,6 +593,91 @@ async function downloadFile(url, dest) {
   });
 }
 
+/**
+ * Load expected checksums from checksums.txt
+ * @returns {Map<string, string>} Map of filename -> sha512 hash
+ */
+function loadChecksums() {
+  const checksumsPath = path.join(__dirname, 'checksums.txt');
+
+  if (!fs.existsSync(checksumsPath)) {
+    throw new Error('checksums.txt not found - package may be corrupted');
+  }
+
+  const content = fs.readFileSync(checksumsPath, 'utf8');
+  const checksums = new Map();
+
+  for (const line of content.split('\n')) {
+    // Skip comments and empty lines
+    if (line.trim().startsWith('#') || line.trim() === '') {
+      continue;
+    }
+
+    // Parse "hash  filename" format
+    const match = line.match(/^([a-f0-9]{128})\s+(.+)$/);
+    if (match) {
+      const [, hash, filename] = match;
+      checksums.set(filename, hash);
+    }
+  }
+
+  return checksums;
+}
+
+/**
+ * Calculate SHA-512 checksum of a file
+ * @param {string} filePath - Path to file
+ * @returns {Promise<string>} SHA-512 hash in hex format
+ */
+function calculateChecksum(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha512');
+    const stream = fs.createReadStream(filePath);
+
+    stream.on('data', (chunk) => {
+      hash.update(chunk);
+    });
+
+    stream.on('end', () => {
+      resolve(hash.digest('hex'));
+    });
+
+    stream.on('error', (err) => {
+      reject(err);
+    });
+  });
+}
+
+/**
+ * Verify downloaded file checksum matches expected value
+ * @param {string} filePath - Path to downloaded file
+ * @param {string} filename - Original filename for lookup
+ * @param {Map<string, string>} checksums - Expected checksums map
+ * @throws {Error} If checksum doesn't match or file is missing from checksums
+ */
+async function verifyChecksum(filePath, filename, checksums) {
+  const expectedChecksum = checksums.get(filename);
+
+  if (!expectedChecksum) {
+    throw new Error(`No checksum found for ${filename} - package may be corrupted`);
+  }
+
+  log('cyan', '  Verifying file integrity...');
+  const actualChecksum = await calculateChecksum(filePath);
+
+  if (actualChecksum !== expectedChecksum) {
+    throw new Error(
+      `SECURITY: Checksum mismatch for ${filename}!\n` +
+      `  Expected: ${expectedChecksum}\n` +
+      `  Actual:   ${actualChecksum}\n` +
+      `  This could indicate a corrupted download or supply chain attack.\n` +
+      `  DO NOT extract this file. Please report this issue.`
+    );
+  }
+
+  log('green', `  ✓ Checksum verified (SHA-512)`);
+}
+
 async function downloadGPULibraries() {
   const hasGPU = detectNvidiaGPU();
 
@@ -643,6 +729,16 @@ async function downloadGPULibraries() {
   const gpuLibsDir = path.join(os.homedir(), '.local', 'share', 'swictation', 'gpu-libs');
 
   try {
+    // Load checksums for verification
+    let checksums;
+    try {
+      checksums = loadChecksums();
+      log('green', '  ✓ Loaded integrity checksums');
+    } catch (err) {
+      log('red', `  ✗ Failed to load checksums: ${err.message}`);
+      throw new Error('Cannot proceed without checksums - package integrity cannot be verified');
+    }
+
     // Create directories
     if (!fs.existsSync(tmpDir)) {
       fs.mkdirSync(tmpDir, { recursive: true });
@@ -677,6 +773,16 @@ async function downloadGPULibraries() {
       log('cyan', `  URL: ${releaseUrl}`);
       await downloadFile(releaseUrl, tarPath);
       log('green', `  ✓ Downloaded ${variant} package (~1.5GB)`);
+
+      // Verify cryptographic checksum before extraction
+      const filename = `cuda-libs-${variant}.tar.gz`;
+      try {
+        await verifyChecksum(tarPath, filename, checksums);
+      } catch (err) {
+        // Delete potentially malicious file
+        fs.unlinkSync(tarPath);
+        throw err;
+      }
 
       // Extract tarball to gpu-libs directory
       log('cyan', '  Extracting libraries...');
