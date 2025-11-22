@@ -1,9 +1,9 @@
 # Swictation Tauri UI Build Checksums
-# Generated: 2025-11-22 02:34:10 UTC
+# Generated: 2025-11-22 02:49:59 UTC
 
 ef348364addfd0b0ca0d9fb6960c33874c275905969488cc0467e93cc0803e7f  src-tauri/target/release/swictation-ui
 ef348364addfd0b0ca0d9fb6960c33874c275905969488cc0467e93cc0803e7f  /opt/swictation/tauri-ui/../npm-package/bin/swictation-ui
 8d9cce6459b6823bb726ddf4776b81d3d4c13f7ed07f170fa86763a73381ce78  dist/assets/index-Cxzp7uTE.js
-b84e2768eeae49c3106253cb2ba544b2913222fab7ff7d6726817b477a1a08c1  src-tauri/target/release/bundle/deb/Swictation_0.1.0_amd64.deb
-281f8f65214db5e1a7a4dc2418e9f54f24942b3856c9e31ea78df0edbe54ad17  src-tauri/target/release/bundle/rpm/Swictation-0.1.0-1.x86_64.rpm
-d0a0a53976b659984710c49e46d0a49ccee80cd4ec021a1fd6389a1a7e476dbc  src-tauri/target/release/bundle/appimage/Swictation_0.1.0_amd64.AppImage
+8c160804d3a9c5d672961ec36934d05b38934e44269a64e017eee2a385e05e09  src-tauri/target/release/bundle/deb/Swictation_0.1.0_amd64.deb
+56494e17a39c605b80f707053077275d93c794ac674dff209991b63734a8a0f6  src-tauri/target/release/bundle/rpm/Swictation-0.1.0-1.x86_64.rpm
+c604217f2e35eb63fe4750382163238f7b8e1fa2776ca05075229ec0b828294f  src-tauri/target/release/bundle/appimage/Swictation_0.1.0_amd64.AppImage
