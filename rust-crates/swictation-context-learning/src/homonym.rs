@@ -30,8 +30,8 @@ pub fn learn_homonym_rules(
 
     // Common homonyms to analyze
     let homonyms = [
-        "class", "object", "method", "read", "write", "to", "too", "two",
-        "their", "there", "theyre", "your", "youre",
+        "class", "object", "method", "read", "write", "to", "too", "two", "their", "there",
+        "theyre", "your", "youre",
     ];
 
     for homonym in &homonyms {
@@ -68,7 +68,9 @@ fn analyze_homonym(
         let topic = find_segment_topic(segment, topics);
 
         // Create interpretation based on topic
-        let interpretation_key = topic.as_ref().map(|t| t.name.clone())
+        let interpretation_key = topic
+            .as_ref()
+            .map(|t| t.name.clone())
             .unwrap_or_else(|| "General".to_string());
 
         interpretations
@@ -78,9 +80,7 @@ fn analyze_homonym(
             })
             .or_insert_with(|| Interpretation {
                 meaning: format!("{} in {} context", word, interpretation_key),
-                context_keywords: topic
-                    .map(|t| t.keywords.clone())
-                    .unwrap_or_default(),
+                context_keywords: topic.map(|t| t.keywords.clone()).unwrap_or_default(),
                 confidence: 0.0, // Will be calculated later
                 frequency: 1,
             });
@@ -98,9 +98,7 @@ fn analyze_homonym(
     }
 
     // Sort by frequency
-    let mut interp_list: Vec<Interpretation> = interpretations
-        .into_values()
-        .collect();
+    let mut interp_list: Vec<Interpretation> = interpretations.into_values().collect();
     interp_list.sort_by(|a, b| b.frequency.cmp(&a.frequency));
 
     Ok(HomonymResolver {

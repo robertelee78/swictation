@@ -102,7 +102,8 @@ impl SessionMetrics {
     /// Calculate words per minute from active time
     pub fn calculate_wpm(&mut self) {
         if self.active_dictation_time_s > 0.0 {
-            self.words_per_minute = (self.words_dictated as f64 / self.active_dictation_time_s) * 60.0;
+            self.words_per_minute =
+                (self.words_dictated as f64 / self.active_dictation_time_s) * 60.0;
         } else {
             self.words_per_minute = 0.0;
         }

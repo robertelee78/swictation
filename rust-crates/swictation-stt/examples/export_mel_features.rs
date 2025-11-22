@@ -22,9 +22,7 @@ use tracing_subscriber;
 
 fn main() -> Result<(), SttError> {
     // Initialize logging
-    tracing_subscriber::fmt()
-        .with_max_level(Level::INFO)
-        .init();
+    tracing_subscriber::fmt().with_max_level(Level::INFO).init();
 
     // Parse command line arguments
     let args: Vec<String> = std::env::args().collect();
@@ -51,16 +49,20 @@ fn main() -> Result<(), SttError> {
     // Load audio file
     info!("Loading audio...");
     let samples = processor.load_audio(&audio_file)?;
-    info!("Loaded {} samples ({:.2}s at 16kHz)",
+    info!(
+        "Loaded {} samples ({:.2}s at 16kHz)",
         samples.len(),
-        samples.len() as f32 / 16000.0);
+        samples.len() as f32 / 16000.0
+    );
 
     // Extract mel features
     info!("Extracting mel features...");
     let features = processor.extract_mel_features(&samples)?;
-    info!("Extracted features: {} frames x {} mel bins",
+    info!(
+        "Extracted features: {} frames x {} mel bins",
         features.nrows(),
-        features.ncols());
+        features.ncols()
+    );
 
     // Calculate and display statistics
     let mean = features.mean().unwrap_or(0.0);

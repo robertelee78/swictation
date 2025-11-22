@@ -9,9 +9,10 @@ fn main() {
         Ok(devices) => {
             for device in devices {
                 println!("Device {}: {}", device.index, device.name);
-                println!("  Channels: {} input, {} output",
-                         device.max_input_channels,
-                         device.max_output_channels);
+                println!(
+                    "  Channels: {} input, {} output",
+                    device.max_input_channels, device.max_output_channels
+                );
                 println!("  Sample Rate: {} Hz", device.default_sample_rate);
                 if device.is_default {
                     println!("  [DEFAULT INPUT DEVICE]");

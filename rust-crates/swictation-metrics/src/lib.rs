@@ -23,12 +23,9 @@ pub use collector::MetricsCollector;
 pub use database::MetricsDatabase;
 pub use gpu::{GpuMetrics, GpuMonitor};
 pub use memory::{
-    MemoryError, MemoryMonitor, MemoryPressure, MemoryStats, MemoryThresholds,
-    RamStats, VramStats,
+    MemoryError, MemoryMonitor, MemoryPressure, MemoryStats, MemoryThresholds, RamStats, VramStats,
 };
-pub use models::{
-    DaemonState, LifetimeMetrics, RealtimeMetrics, SegmentMetrics, SessionMetrics,
-};
+pub use models::{DaemonState, LifetimeMetrics, RealtimeMetrics, SegmentMetrics, SessionMetrics};
 
 #[cfg(feature = "wasm")]
 pub use wasm::MetricsDatabaseWasm;

@@ -1,8 +1,7 @@
-use swictation_stt::OrtRecognizer;
 use std::path::PathBuf;
+use swictation_stt::OrtRecognizer;
 
 fn main() {
-
     let home = std::env::var("HOME").expect("HOME not set");
     let model_path = PathBuf::from(format!(
         "{}/.local/share/swictation/models/parakeet-tdt-1.1b-onnx",

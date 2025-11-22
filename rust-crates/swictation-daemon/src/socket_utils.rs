@@ -20,8 +20,7 @@ pub fn get_socket_dir() -> Result<PathBuf> {
     }
 
     // Fallback to ~/.local/share/swictation
-    let home = std::env::var("HOME")
-        .context("HOME environment variable not set")?;
+    let home = std::env::var("HOME").context("HOME environment variable not set")?;
 
     let socket_dir = PathBuf::from(home)
         .join(".local")
@@ -30,8 +29,7 @@ pub fn get_socket_dir() -> Result<PathBuf> {
 
     // Create directory if it doesn't exist
     if !socket_dir.exists() {
-        std::fs::create_dir_all(&socket_dir)
-            .context("Failed to create socket directory")?;
+        std::fs::create_dir_all(&socket_dir).context("Failed to create socket directory")?;
     }
 
     // Ensure directory has secure permissions (0700 = owner-only)

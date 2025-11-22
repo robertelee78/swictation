@@ -17,7 +17,7 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use midstreamer_strange_loop::{MetaLevel, StrangeLoop, StrangeLoopConfig};
-use rusqlite::{Connection, params};
+use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -127,8 +127,8 @@ impl Default for RetrainingConfig {
     fn default() -> Self {
         Self {
             min_new_segments: 25,          // Retrain every ~25 new segments
-            max_model_age_days: 1,          // Force retrain daily
-            min_retrain_interval_hours: 6,  // But never more than 4x/day
+            max_model_age_days: 1,         // Force retrain daily
+            min_retrain_interval_hours: 6, // But never more than 4x/day
             auto_retrain: true,
         }
     }
@@ -166,13 +166,11 @@ impl ContextLearner {
         db_path: P,
         months_back: i64,
     ) -> Result<TrainingData> {
-        let conn = Connection::open(db_path.as_ref())
-            .context("Failed to open metrics database")?;
+        let conn = Connection::open(db_path.as_ref()).context("Failed to open metrics database")?;
 
         // Calculate date threshold
-        let threshold_timestamp = Utc::now()
-            .timestamp() as f64
-            - (months_back * 30 * 24 * 60 * 60) as f64;
+        let threshold_timestamp =
+            Utc::now().timestamp() as f64 - (months_back * 30 * 24 * 60 * 60) as f64;
 
         info!(
             "Loading segments from last {} months (threshold: {})",
@@ -186,14 +184,14 @@ impl ContextLearner {
              WHERE timestamp >= ?1
                AND text IS NOT NULL
                AND text != ''
-             ORDER BY timestamp ASC"
+             ORDER BY timestamp ASC",
         )?;
 
         let segments: Vec<Segment> = stmt
             .query_map(params![threshold_timestamp], |row| {
                 let timestamp_f64: f64 = row.get(2)?;
-                let naive = NaiveDateTime::from_timestamp_opt(timestamp_f64 as i64, 0)
-                    .unwrap_or_default();
+                let naive =
+                    NaiveDateTime::from_timestamp_opt(timestamp_f64 as i64, 0).unwrap_or_default();
                 let timestamp = DateTime::from_naive_utc_and_offset(naive, Utc);
 
                 Ok(Segment {
@@ -259,36 +257,26 @@ impl ContextLearner {
         info!("Extracted {} context patterns", patterns.len());
 
         // 4. Meta-learning with strange-loop
-        let (meta_level_0, meta_level_1, meta_level_2) = if let Some(ref mut sl) = self.strange_loop {
+        let (meta_level_0, meta_level_1, meta_level_2) = if let Some(ref mut sl) = self.strange_loop
+        {
             info!("Running meta-learning (strange-loop)...");
 
             // Level 0: Raw segment patterns
-            let level0_data: Vec<String> = patterns
-                .iter()
-                .map(|p| p.to_pattern_string())
-                .collect();
+            let level0_data: Vec<String> = patterns.iter().map(|p| p.to_pattern_string()).collect();
 
-            let level0_knowledge = sl.learn_at_level(MetaLevel::base(), &level0_data)
+            let level0_knowledge = sl
+                .learn_at_level(MetaLevel::base(), &level0_data)
                 .context("Failed to learn at meta-level 0")?;
 
-            let meta_0: Vec<String> = level0_knowledge
-                .iter()
-                .map(|k| k.pattern.clone())
-                .collect();
+            let meta_0: Vec<String> = level0_knowledge.iter().map(|k| k.pattern.clone()).collect();
 
             // Level 1 & 2 are automatically learned by strange-loop
             let level1_knowledge = sl.get_knowledge_at_level(MetaLevel::base().next());
             let level2_knowledge = sl.get_knowledge_at_level(MetaLevel::base().next().next());
 
-            let meta_1: Vec<String> = level1_knowledge
-                .iter()
-                .map(|k| k.pattern.clone())
-                .collect();
+            let meta_1: Vec<String> = level1_knowledge.iter().map(|k| k.pattern.clone()).collect();
 
-            let meta_2: Vec<String> = level2_knowledge
-                .iter()
-                .map(|k| k.pattern.clone())
-                .collect();
+            let meta_2: Vec<String> = level2_knowledge.iter().map(|k| k.pattern.clone()).collect();
 
             info!(
                 "Meta-learning complete: L0={} L1={} L2={}",
@@ -343,10 +331,7 @@ impl ContextLearner {
 }
 
 /// Split data into train/test sets
-pub fn train_test_split(
-    data: &TrainingData,
-    train_ratio: f64,
-) -> (Vec<Segment>, Vec<Segment>) {
+pub fn train_test_split(data: &TrainingData, train_ratio: f64) -> (Vec<Segment>, Vec<Segment>) {
     let split_idx = (data.segments.len() as f64 * train_ratio) as usize;
     let train = data.segments[..split_idx].to_vec();
     let test = data.segments[split_idx..].to_vec();
@@ -370,10 +355,10 @@ pub fn should_retrain(
     }
 
     // Check 2: When was model last trained?
-    let model_metadata = fs::metadata(model_path)
-        .context("Failed to read model metadata")?;
+    let model_metadata = fs::metadata(model_path).context("Failed to read model metadata")?;
 
-    let model_modified = model_metadata.modified()
+    let model_modified = model_metadata
+        .modified()
         .context("Failed to get model modification time")?;
 
     let model_age = SystemTime::now()
@@ -421,8 +406,7 @@ pub fn should_retrain(
 
 /// Count segments added since a specific time
 fn count_segments_since(db_path: &Path, since: SystemTime) -> Result<usize> {
-    let conn = Connection::open(db_path)
-        .context("Failed to open metrics database")?;
+    let conn = Connection::open(db_path).context("Failed to open metrics database")?;
 
     let since_timestamp = since
         .duration_since(UNIX_EPOCH)
@@ -454,7 +438,8 @@ pub fn load_or_train_model(
         if data.segments.len() < learning_config.min_segments {
             warn!(
                 "Insufficient data for training: {} segments (need {})",
-                data.segments.len(), learning_config.min_segments
+                data.segments.len(),
+                learning_config.min_segments
             );
             return Ok(None);
         }
@@ -462,20 +447,17 @@ pub fn load_or_train_model(
         let model = learner.train(&data)?;
 
         // Save model
-        let model_json = serde_json::to_string_pretty(&model)
-            .context("Failed to serialize model")?;
-        fs::write(model_path, model_json)
-            .context("Failed to write model file")?;
+        let model_json =
+            serde_json::to_string_pretty(&model).context("Failed to serialize model")?;
+        fs::write(model_path, model_json).context("Failed to write model file")?;
 
         info!("Context model trained and saved successfully");
         Ok(Some(model))
     } else if model_path.exists() {
         // Load existing model
         info!("Loading existing context model");
-        let model_json = fs::read_to_string(model_path)
-            .context("Failed to read model file")?;
-        let model = serde_json::from_str(&model_json)
-            .context("Failed to deserialize model")?;
+        let model_json = fs::read_to_string(model_path).context("Failed to read model file")?;
+        let model = serde_json::from_str(&model_json).context("Failed to deserialize model")?;
         Ok(Some(model))
     } else {
         Ok(None)

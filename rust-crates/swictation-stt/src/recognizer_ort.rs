@@ -49,7 +49,7 @@ struct ModelConfig {
 impl ModelConfig {
     fn for_0_6b() -> Self {
         Self {
-            decoder_hidden_size: 640,  // Both 0.6B and 1.1B use 640 hidden size
+            decoder_hidden_size: 640, // Both 0.6B and 1.1B use 640 hidden size
             n_mel_features: 128,
             transpose_input: true,
             model_name: "Parakeet-TDT-0.6B",
@@ -123,22 +123,31 @@ impl OrtRecognizer {
         let tokens = Self::load_tokens(&model_path)?;
 
         // Find blank token (usually "<blk>")
-        let blank_id = tokens.iter()
+        let blank_id = tokens
+            .iter()
             .position(|t| t == "<blk>" || t == "<blank>")
-            .ok_or_else(|| SttError::ModelLoadError("Could not find <blk> token".to_string()))? as i64;
+            .ok_or_else(|| SttError::ModelLoadError("Could not find <blk> token".to_string()))?
+            as i64;
 
         // Find unk token (usually "<unk>")
-        let unk_id = tokens.iter()
-            .position(|t| t == "<unk>")
-            .unwrap_or(0) as i64;
+        let unk_id = tokens.iter().position(|t| t == "<unk>").unwrap_or(0) as i64;
 
-        info!("Loaded {} tokens (blank_id={}, unk_id={})", tokens.len(), blank_id, unk_id);
+        info!(
+            "Loaded {} tokens (blank_id={}, unk_id={})",
+            tokens.len(),
+            blank_id,
+            unk_id
+        );
 
         // Configure ONNX Runtime session options
         let mut session_builder = Session::builder()
-            .map_err(|e| SttError::ModelLoadError(format!("Failed to create session builder: {}", e)))?
+            .map_err(|e| {
+                SttError::ModelLoadError(format!("Failed to create session builder: {}", e))
+            })?
             .with_optimization_level(GraphOptimizationLevel::Level3)
-            .map_err(|e| SttError::ModelLoadError(format!("Failed to set optimization level: {}", e)))?
+            .map_err(|e| {
+                SttError::ModelLoadError(format!("Failed to set optimization level: {}", e))
+            })?
             .with_intra_threads(4)
             .map_err(|e| SttError::ModelLoadError(format!("Failed to set intra threads: {}", e)))?;
 
@@ -149,7 +158,9 @@ impl OrtRecognizer {
                     ep::CUDAExecutionProvider::default().build(),
                     ep::CPUExecutionProvider::default().build(),
                 ])
-                .map_err(|e| SttError::ModelLoadError(format!("Failed to set execution providers: {}", e)))?;
+                .map_err(|e| {
+                    SttError::ModelLoadError(format!("Failed to set execution providers: {}", e))
+                })?;
         } else {
             info!("Using CPU execution provider");
         }
@@ -192,13 +203,22 @@ impl OrtRecognizer {
         // CRITICAL FIX: Change to model directory before loading
         // ONNX Runtime 1.22+ looks for external data files (encoder.weights)
         // relative to the current working directory, not the .onnx file location
-        let original_dir = std::env::current_dir()
-            .map_err(|e| SttError::ModelLoadError(format!("Failed to get current directory: {}", e)))?;
+        let original_dir = std::env::current_dir().map_err(|e| {
+            SttError::ModelLoadError(format!("Failed to get current directory: {}", e))
+        })?;
 
-        std::env::set_current_dir(&model_path)
-            .map_err(|e| SttError::ModelLoadError(format!("Failed to change to model directory {}: {}", model_path.display(), e)))?;
+        std::env::set_current_dir(&model_path).map_err(|e| {
+            SttError::ModelLoadError(format!(
+                "Failed to change to model directory {}: {}",
+                model_path.display(),
+                e
+            ))
+        })?;
 
-        info!("Changed working directory to {} for model loading", model_path.display());
+        info!(
+            "Changed working directory to {} for model loading",
+            model_path.display()
+        );
 
         // Load the three ONNX models (external weights load automatically!)
         info!("Loading encoder...");
@@ -234,7 +254,10 @@ impl OrtRecognizer {
                 ])
                 .map_err(|e| {
                     let _ = std::env::set_current_dir(&original_dir);
-                    SttError::ModelLoadError(format!("Failed to set decoder execution providers: {}", e))
+                    SttError::ModelLoadError(format!(
+                        "Failed to set decoder execution providers: {}",
+                        e
+                    ))
                 })?;
         }
 
@@ -268,21 +291,23 @@ impl OrtRecognizer {
                 ])
                 .map_err(|e| {
                     let _ = std::env::set_current_dir(&original_dir);
-                    SttError::ModelLoadError(format!("Failed to set joiner execution providers: {}", e))
+                    SttError::ModelLoadError(format!(
+                        "Failed to set joiner execution providers: {}",
+                        e
+                    ))
                 })?;
         }
 
-        let joiner = joiner_builder
-            .commit_from_file(&joiner_path)
-            .map_err(|e| {
-                let _ = std::env::set_current_dir(&original_dir);
-                SttError::ModelLoadError(format!("Failed to load joiner: {}", e))
-            })?;
+        let joiner = joiner_builder.commit_from_file(&joiner_path).map_err(|e| {
+            let _ = std::env::set_current_dir(&original_dir);
+            SttError::ModelLoadError(format!("Failed to load joiner: {}", e))
+        })?;
         info!("✓ Joiner loaded");
 
         // Restore original working directory after all models loaded
-        std::env::set_current_dir(&original_dir)
-            .map_err(|e| SttError::ModelLoadError(format!("Failed to restore original directory: {}", e)))?;
+        std::env::set_current_dir(&original_dir).map_err(|e| {
+            SttError::ModelLoadError(format!("Failed to restore original directory: {}", e))
+        })?;
         info!("Restored working directory to {}", original_dir.display());
 
         // Auto-detect model configuration from path
@@ -327,19 +352,14 @@ impl OrtRecognizer {
     fn load_tokens(model_dir: &Path) -> Result<Vec<String>> {
         let tokens_path = model_dir.join("tokens.txt");
         let contents = fs::read_to_string(&tokens_path)
-            .map_err(|e| SttError::ModelLoadError(
-                format!("Failed to read tokens.txt: {}", e)
-            ))?;
+            .map_err(|e| SttError::ModelLoadError(format!("Failed to read tokens.txt: {}", e)))?;
 
         // Parse each line as "<token_text> <token_id>" and extract token_text
         let tokens: Vec<String> = contents
             .lines()
             .map(|line| {
                 // Split on whitespace and take first part (token text)
-                line.split_whitespace()
-                    .next()
-                    .unwrap_or("")
-                    .to_string()
+                line.split_whitespace().next().unwrap_or("").to_string()
             })
             .collect();
 
@@ -361,22 +381,37 @@ impl OrtRecognizer {
 
         // audio_signal: (batch=1, num_frames=80, num_features=128)
         let audio_signal_data: Vec<f32> = vec![0.0; 80 * 128];
-        let audio_signal = Tensor::from_array((vec![1usize, 80, 128], audio_signal_data.into_boxed_slice()))
-            .map_err(|e| SttError::InferenceError(format!("Failed to create audio_signal tensor: {}", e)))?;
+        let audio_signal =
+            Tensor::from_array((vec![1usize, 80, 128], audio_signal_data.into_boxed_slice()))
+                .map_err(|e| {
+                    SttError::InferenceError(format!("Failed to create audio_signal tensor: {}", e))
+                })?;
 
         // length: (batch=1,)
         let length_data: Vec<i64> = vec![80];
         let length_tensor = Tensor::from_array((vec![1usize], length_data.into_boxed_slice()))
-            .map_err(|e| SttError::InferenceError(format!("Failed to create length tensor: {}", e)))?;
+            .map_err(|e| {
+                SttError::InferenceError(format!("Failed to create length tensor: {}", e))
+            })?;
 
         // Get output info before running
-        let output_names: Vec<_> = self.encoder.outputs.iter().map(|o| o.name.clone()).collect();
+        let output_names: Vec<_> = self
+            .encoder
+            .outputs
+            .iter()
+            .map(|o| o.name.clone())
+            .collect();
 
         // Run encoder
-        let _outputs = self.encoder.run(ort::inputs!["audio_signal" => audio_signal, "length" => length_tensor])
+        let _outputs = self
+            .encoder
+            .run(ort::inputs!["audio_signal" => audio_signal, "length" => length_tensor])
             .map_err(|e| SttError::InferenceError(format!("Encoder inference failed: {}", e)))?;
 
-        Ok(format!("✅ Encoder inference successful! Outputs: {}", output_names.join(", ")))
+        Ok(format!(
+            "✅ Encoder inference successful! Outputs: {}",
+            output_names.join(", ")
+        ))
     }
 
     /// Recognize speech from audio file
@@ -399,7 +434,10 @@ impl OrtRecognizer {
         let audio_min = samples.iter().fold(f32::INFINITY, |a, &b| a.min(b));
         let audio_max = samples.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
         let audio_mean = samples.iter().sum::<f32>() / samples.len() as f32;
-        debug!("Audio stats: min={:.6}, max={:.6}, mean={:.6}", audio_min, audio_max, audio_mean);
+        debug!(
+            "Audio stats: min={:.6}, max={:.6}, mean={:.6}",
+            audio_min, audio_max, audio_mean
+        );
 
         // Extract mel-spectrogram features
         let features = self.audio_processor.extract_mel_features(&samples)?;
@@ -408,18 +446,30 @@ impl OrtRecognizer {
         // Debug: Mel-spectrogram statistics
         let features_flat: Vec<f32> = features.iter().copied().collect();
         let mel_min = features_flat.iter().fold(f32::INFINITY, |a, &b| a.min(b));
-        let mel_max = features_flat.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+        let mel_max = features_flat
+            .iter()
+            .fold(f32::NEG_INFINITY, |a, &b| a.max(b));
         let mel_mean = features_flat.iter().sum::<f32>() / features_flat.len() as f32;
-        debug!("Mel-spectrogram stats: min={:.6}, max={:.6}, mean={:.6}", mel_min, mel_max, mel_mean);
+        debug!(
+            "Mel-spectrogram stats: min={:.6}, max={:.6}, mean={:.6}",
+            mel_min, mel_max, mel_mean
+        );
 
         // Show first and middle frames of mel-spectrogram
         if features.nrows() > 0 {
-            debug!("First frame (first 10 values): {:?}", &features.row(0).as_slice().unwrap()[..10.min(features.ncols())]);
+            debug!(
+                "First frame (first 10 values): {:?}",
+                &features.row(0).as_slice().unwrap()[..10.min(features.ncols())]
+            );
 
             // Show middle frame to see if it's different
             let mid_frame = features.nrows() / 2;
             if mid_frame > 0 {
-                debug!("Middle frame {} (first 10 values): {:?}", mid_frame, &features.row(mid_frame).as_slice().unwrap()[..10.min(features.ncols())]);
+                debug!(
+                    "Middle frame {} (first 10 values): {:?}",
+                    mid_frame,
+                    &features.row(mid_frame).as_slice().unwrap()[..10.min(features.ncols())]
+                );
             }
 
             // Check if features need normalization (typical for NeMo models)
@@ -435,16 +485,24 @@ impl OrtRecognizer {
             self.greedy_search_decode(&chunks)?
         } else {
             // Large file - try processing ALL frames at once (no chunking)
-            info!("Large file: {} frames total - processing all at once (no chunking)", features.nrows());
+            info!(
+                "Large file: {} frames total - processing all at once (no chunking)",
+                features.nrows()
+            );
 
             // Pad to multiple of 80 for encoder
             let padded_rows = features.nrows().div_ceil(80) * 80;
             let mut padded = Array2::zeros((padded_rows, features.ncols()));
-            padded.slice_mut(s![..features.nrows(), ..]).assign(&features);
+            padded
+                .slice_mut(s![..features.nrows(), ..])
+                .assign(&features);
 
             // Process all 80-frame chunks in sequence but decode all at once
             let chunks = self.audio_processor.chunk_features(&padded);
-            info!("Processing {} encoder chunks without decoder reset between chunks", chunks.len());
+            info!(
+                "Processing {} encoder chunks without decoder reset between chunks",
+                chunks.len()
+            );
             self.greedy_search_decode(&chunks)?
         };
 
@@ -478,7 +536,10 @@ impl OrtRecognizer {
         let audio_min = samples.iter().fold(f32::INFINITY, |a, &b| a.min(b));
         let audio_max = samples.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
         let audio_mean = samples.iter().sum::<f32>() / samples.len() as f32;
-        debug!("Audio stats: min={:.6}, max={:.6}, mean={:.6}", audio_min, audio_max, audio_mean);
+        debug!(
+            "Audio stats: min={:.6}, max={:.6}, mean={:.6}",
+            audio_min, audio_max, audio_mean
+        );
 
         // Extract mel-spectrogram features
         let features = self.audio_processor.extract_mel_features(samples)?;
@@ -487,9 +548,14 @@ impl OrtRecognizer {
         // Debug: Mel-spectrogram statistics
         let features_flat: Vec<f32> = features.iter().copied().collect();
         let mel_min = features_flat.iter().fold(f32::INFINITY, |a, &b| a.min(b));
-        let mel_max = features_flat.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+        let mel_max = features_flat
+            .iter()
+            .fold(f32::NEG_INFINITY, |a, &b| a.max(b));
         let mel_mean = features_flat.iter().sum::<f32>() / features_flat.len() as f32;
-        debug!("Mel-spectrogram stats: min={:.6}, max={:.6}, mean={:.6}", mel_min, mel_max, mel_mean);
+        debug!(
+            "Mel-spectrogram stats: min={:.6}, max={:.6}, mean={:.6}",
+            mel_min, mel_max, mel_mean
+        );
 
         // Process frames (chunking handled internally)
         let text = if features.nrows() <= 80 {
@@ -504,7 +570,9 @@ impl OrtRecognizer {
             // Pad to multiple of 80 for encoder
             let padded_rows = features.nrows().div_ceil(80) * 80;
             let mut padded = Array2::zeros((padded_rows, features.ncols()));
-            padded.slice_mut(s![..features.nrows(), ..]).assign(&features);
+            padded
+                .slice_mut(s![..features.nrows(), ..])
+                .assign(&features);
 
             // Process all 80-frame chunks
             let chunks = self.audio_processor.chunk_features(&padded);
@@ -524,7 +592,10 @@ impl OrtRecognizer {
     /// 4. Greedy selection picks highest probability token
     /// 5. Loop until blank or end-of-sequence
     fn greedy_search_decode(&mut self, chunks: &[Array2<f32>]) -> Result<String> {
-        eprintln!("🎯 greedy_search_decode() called with {} chunks", chunks.len());
+        eprintln!(
+            "🎯 greedy_search_decode() called with {} chunks",
+            chunks.len()
+        );
         let mut all_tokens = Vec::new();
 
         // Reset decoder states at the start of the FIRST chunk only
@@ -551,28 +622,49 @@ impl OrtRecognizer {
             // Run encoder
             eprintln!("   Calling run_encoder()...");
             let encoder_out = self.run_encoder(chunk)?;
-            eprintln!("   ✅ Encoder finished! Output shape: {:?}", encoder_out.shape());
+            eprintln!(
+                "   ✅ Encoder finished! Output shape: {:?}",
+                encoder_out.shape()
+            );
 
             // Decode each frame with greedy search
             // Pass both the decoder_out and token from previous chunk
-            let (chunk_tokens, final_token, final_decoder_out, stats) =
-                self.decode_frames_with_state(&encoder_out, decoder_out_opt.take(), last_decoder_token)?;
-            eprintln!("   Chunk produced {} tokens (final_token={})", chunk_tokens.len(), final_token);
-            eprintln!("   Chunk stats: {} blank predictions, {} non-blank predictions",
-                     stats.0, stats.1);
+            let (chunk_tokens, final_token, final_decoder_out, stats) = self
+                .decode_frames_with_state(
+                    &encoder_out,
+                    decoder_out_opt.take(),
+                    last_decoder_token,
+                )?;
+            eprintln!(
+                "   Chunk produced {} tokens (final_token={})",
+                chunk_tokens.len(),
+                final_token
+            );
+            eprintln!(
+                "   Chunk stats: {} blank predictions, {} non-blank predictions",
+                stats.0, stats.1
+            );
 
             total_blank_predictions += stats.0;
             total_nonblank_predictions += stats.1;
 
             all_tokens.extend(chunk_tokens);
-            last_decoder_token = final_token;  // Carry forward for next chunk
-            decoder_out_opt = Some(final_decoder_out);  // Carry forward decoder output
+            last_decoder_token = final_token; // Carry forward for next chunk
+            decoder_out_opt = Some(final_decoder_out); // Carry forward decoder output
         }
 
-        eprintln!("\n📊 TOTAL: {} tokens from {} chunks", all_tokens.len(), chunks.len());
-        eprintln!("📊 PREDICTIONS: {} blank, {} non-blank ({:.1}% blank)",
-                 total_blank_predictions, total_nonblank_predictions,
-                 100.0 * total_blank_predictions as f32 / (total_blank_predictions + total_nonblank_predictions).max(1) as f32);
+        eprintln!(
+            "\n📊 TOTAL: {} tokens from {} chunks",
+            all_tokens.len(),
+            chunks.len()
+        );
+        eprintln!(
+            "📊 PREDICTIONS: {} blank, {} non-blank ({:.1}% blank)",
+            total_blank_predictions,
+            total_nonblank_predictions,
+            100.0 * total_blank_predictions as f32
+                / (total_blank_predictions + total_nonblank_predictions).max(1) as f32
+        );
 
         // Convert tokens to text
         let text = self.tokens_to_text(&all_tokens);
@@ -595,7 +687,10 @@ impl OrtRecognizer {
 
         // NOTE: Encoder can handle variable frame counts (tested with 615 frames successfully in Python)
         // No need for fixed 80-frame chunks - the model uses dynamic shape inference
-        debug!("Encoder processing {} frames x {} features", num_frames, num_features);
+        debug!(
+            "Encoder processing {} frames x {} features",
+            num_frames, num_features
+        );
 
         // CRITICAL FIX: Encoder ALWAYS expects (batch, features, time) format!
         // The ONNX input signature shows: audio_signal: [batch, 80, time]
@@ -604,7 +699,10 @@ impl OrtRecognizer {
         let (shape, audio_data) = {
             // TRANSPOSE FOR ALL MODELS: (batch, num_features, num_frames)
             // Layout: Row-major transposed - all frames for feature 0, then feature 1, etc.
-            debug!("Using TRANSPOSED input format: (batch, features={}, time={})", num_features, num_frames);
+            debug!(
+                "Using TRANSPOSED input format: (batch, features={}, time={})",
+                num_features, num_frames
+            );
             let mut data = Vec::with_capacity(batch_size * num_frames * num_features);
             for col_idx in 0..num_features {
                 for row in features.outer_iter() {
@@ -614,13 +712,17 @@ impl OrtRecognizer {
             (vec![batch_size, num_features, num_frames], data)
         };
 
-        let audio_signal = Tensor::from_array((shape, audio_data.into_boxed_slice()))
-        .map_err(|e| SttError::InferenceError(format!("Failed to create audio tensor: {}", e)))?;
+        let audio_signal =
+            Tensor::from_array((shape, audio_data.into_boxed_slice())).map_err(|e| {
+                SttError::InferenceError(format!("Failed to create audio tensor: {}", e))
+            })?;
 
         // length: (batch=1,)
         let length_data = vec![num_frames as i64];
         let length_tensor = Tensor::from_array((vec![batch_size], length_data.into_boxed_slice()))
-            .map_err(|e| SttError::InferenceError(format!("Failed to create length tensor: {}", e)))?;
+            .map_err(|e| {
+                SttError::InferenceError(format!("Failed to create length tensor: {}", e))
+            })?;
 
         // Run encoder
         let outputs = self
@@ -632,20 +734,27 @@ impl OrtRecognizer {
         let encoder_out_tensor = &outputs[0];
         let (shape, data) = encoder_out_tensor
             .try_extract_tensor::<f32>()
-            .map_err(|e| SttError::InferenceError(format!("Failed to extract encoder output: {}", e)))?;
+            .map_err(|e| {
+                SttError::InferenceError(format!("Failed to extract encoder output: {}", e))
+            })?;
 
         // Convert to ndarray - shape should be (batch, encoder_dim, num_frames)
         let encoder_out = Array3::from_shape_vec(
             (shape[0] as usize, shape[1] as usize, shape[2] as usize),
             data.to_vec(),
         )
-        .map_err(|e| SttError::InferenceError(format!("Failed to reshape encoder output: {}", e)))?;
+        .map_err(|e| {
+            SttError::InferenceError(format!("Failed to reshape encoder output: {}", e))
+        })?;
 
         // Debug: Encoder output statistics
         let enc_min = data.iter().fold(f32::INFINITY, |a, &b| a.min(b));
         let enc_max = data.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
         let enc_mean = data.iter().sum::<f32>() / data.len() as f32;
-        debug!("Encoder output stats: min={:.6}, max={:.6}, mean={:.6}", enc_min, enc_max, enc_mean);
+        debug!(
+            "Encoder output stats: min={:.6}, max={:.6}, mean={:.6}",
+            enc_min, enc_max, enc_mean
+        );
 
         Ok(encoder_out)
     }
@@ -673,7 +782,7 @@ impl OrtRecognizer {
         &mut self,
         encoder_out: &Array3<f32>,
         prev_decoder_out: Option<Array1<f32>>,
-        initial_token: i64
+        initial_token: i64,
     ) -> Result<DecoderState> {
         // Encoder output shape: (batch, encoder_dim, num_frames)
         let _encoder_dim = encoder_out.shape()[1];
@@ -689,19 +798,25 @@ impl OrtRecognizer {
         let mut blank_count = 0_usize;
         let mut nonblank_count = 0_usize;
 
-        let max_tokens_per_frame = 5;  // sherpa-onnx uses 5 for TDT
+        let max_tokens_per_frame = 5; // sherpa-onnx uses 5 for TDT
 
         // C++ line 108-113: Initialize decoder output
         // If we have decoder_out from previous chunk, reuse it (don't call run_decoder!)
         // Otherwise, compute it for the first chunk
         let mut decoder_out = if let Some(prev_out) = prev_decoder_out {
-            eprintln!("   Reusing decoder_out from previous chunk (token={})", initial_token);
+            eprintln!(
+                "   Reusing decoder_out from previous chunk (token={})",
+                initial_token
+            );
             prev_out
         } else {
-            eprintln!("   Computing decoder_out for first chunk (token={})", initial_token);
+            eprintln!(
+                "   Computing decoder_out for first chunk (token={})",
+                initial_token
+            );
             self.run_decoder(&[initial_token])?
         };
-        let mut last_emitted_token = initial_token;  // Track for final return
+        let mut last_emitted_token = initial_token; // Track for final return
 
         let mut tokens_this_frame = 0;
         let mut t = 0_usize;
@@ -716,11 +831,20 @@ impl OrtRecognizer {
         while t < num_frames {
             iteration_count += 1;
             if iteration_count > 100000 {
-                eprintln!("❌ INFINITE LOOP DETECTED after 100k iterations! t={}, num_frames={}", t, num_frames);
+                eprintln!(
+                    "❌ INFINITE LOOP DETECTED after 100k iterations! t={}, num_frames={}",
+                    t, num_frames
+                );
                 break;
             }
             if iteration_count % 1000 == 0 {
-                eprintln!("⚠️  Loop iteration {}: t={}/{} frames, tokens={}", iteration_count, t, num_frames, tokens.len());
+                eprintln!(
+                    "⚠️  Loop iteration {}: t={}/{} frames, tokens={}",
+                    iteration_count,
+                    t,
+                    num_frames,
+                    tokens.len()
+                );
             }
 
             // C++ line 122-124: Extract single encoder frame
@@ -728,7 +852,10 @@ impl OrtRecognizer {
 
             // C++ line 126-127: Run joiner ONCE per frame iteration (NOT in a loop!)
             if iteration_count <= 5 {
-                eprintln!("   Iteration {}: calling run_joiner() for frame {}", iteration_count, t);
+                eprintln!(
+                    "   Iteration {}: calling run_joiner() for frame {}",
+                    iteration_count, t
+                );
             }
             let logits = self.run_joiner(&encoder_frame, &decoder_out)?;
             if iteration_count <= 5 {
@@ -781,10 +908,17 @@ impl OrtRecognizer {
                 let dec_before_max = decoder_out.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
                 let dec_before_mean = decoder_out.iter().sum::<f32>() / decoder_out.len() as f32;
 
-                debug!("🔄 NON-BLANK token emitted: y={}, vocab_token={}", y,
-                       self.tokens.get(y as usize).unwrap_or(&"<unknown>".to_string()));
-                debug!("   decoder_out BEFORE run_decoder: ({:.3} to {:.3}, mean={:.3})",
-                       dec_before_min, dec_before_max, dec_before_mean);
+                debug!(
+                    "🔄 NON-BLANK token emitted: y={}, vocab_token={}",
+                    y,
+                    self.tokens
+                        .get(y as usize)
+                        .unwrap_or(&"<unknown>".to_string())
+                );
+                debug!(
+                    "   decoder_out BEFORE run_decoder: ({:.3} to {:.3}, mean={:.3})",
+                    dec_before_min, dec_before_max, dec_before_mean
+                );
 
                 decoder_out = self.run_decoder(&[y])?;
 
@@ -792,18 +926,21 @@ impl OrtRecognizer {
                 let dec_after_max = decoder_out.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
                 let dec_after_mean = decoder_out.iter().sum::<f32>() / decoder_out.len() as f32;
 
-                debug!("   decoder_out AFTER run_decoder: ({:.3} to {:.3}, mean={:.3})",
-                       dec_after_min, dec_after_max, dec_after_mean);
+                debug!(
+                    "   decoder_out AFTER run_decoder: ({:.3} to {:.3}, mean={:.3})",
+                    dec_after_min, dec_after_max, dec_after_mean
+                );
 
-                if (dec_after_min - dec_before_min).abs() < 1e-6 &&
-                   (dec_after_max - dec_before_max).abs() < 1e-6 &&
-                   (dec_after_mean - dec_before_mean).abs() < 1e-6 {
+                if (dec_after_min - dec_before_min).abs() < 1e-6
+                    && (dec_after_max - dec_before_max).abs() < 1e-6
+                    && (dec_after_mean - dec_before_mean).abs() < 1e-6
+                {
                     debug!("❌ WARNING: decoder_out DID NOT CHANGE after run_decoder! LSTM bug confirmed!");
                 } else {
                     debug!("✅ decoder_out changed successfully");
                 }
 
-                last_emitted_token = y;  // Track for cross-chunk persistence
+                last_emitted_token = y; // Track for cross-chunk persistence
 
                 tokens_this_frame += 1;
             }
@@ -834,20 +971,33 @@ impl OrtRecognizer {
             if skip > 0 {
                 t += skip;
             } else if iteration_count % 100 == 0 {
-                eprintln!("⚠️  Skip=0 at iteration {}, t={}, y={}, blank_id={}, tokens_this_frame={}",
-                         iteration_count, t, y, blank_id, tokens_this_frame);
+                eprintln!(
+                    "⚠️  Skip=0 at iteration {}, t={}, y={}, blank_id={}, tokens_this_frame={}",
+                    iteration_count, t, y, blank_id, tokens_this_frame
+                );
             }
             // Otherwise stay at same frame to potentially emit more tokens
         }
 
         eprintln!("\n🔍 DECODER OUTPUT:");
-        eprintln!("   Decoded {} tokens from {} frames", tokens.len(), num_frames);
-        eprintln!("   Statistics: {} blank predictions, {} non-blank predictions ({:.1}% blank)",
-                 blank_count, nonblank_count,
-                 100.0 * blank_count as f32 / (blank_count + nonblank_count).max(1) as f32);
+        eprintln!(
+            "   Decoded {} tokens from {} frames",
+            tokens.len(),
+            num_frames
+        );
+        eprintln!(
+            "   Statistics: {} blank predictions, {} non-blank predictions ({:.1}% blank)",
+            blank_count,
+            nonblank_count,
+            100.0 * blank_count as f32 / (blank_count + nonblank_count).max(1) as f32
+        );
         if !tokens.is_empty() {
-            eprintln!("   First 10 token IDs: {:?}", &tokens[..10.min(tokens.len())]);
-            let text_preview: String = tokens[..10.min(tokens.len())].iter()
+            eprintln!(
+                "   First 10 token IDs: {:?}",
+                &tokens[..10.min(tokens.len())]
+            );
+            let text_preview: String = tokens[..10.min(tokens.len())]
+                .iter()
                 .map(|&id| {
                     if id < self.tokens.len() as i64 {
                         self.tokens[id as usize].clone()
@@ -859,10 +1009,21 @@ impl OrtRecognizer {
                 .join("");
             eprintln!("   First 10 tokens as text: '{}'", text_preview);
         }
-        eprintln!("   Final decoder token for next chunk: {}", last_emitted_token);
-        eprintln!("   Returning decoder_out for next chunk (shape: {})", decoder_out.len());
+        eprintln!(
+            "   Final decoder token for next chunk: {}",
+            last_emitted_token
+        );
+        eprintln!(
+            "   Returning decoder_out for next chunk (shape: {})",
+            decoder_out.len()
+        );
 
-        Ok((tokens, last_emitted_token, decoder_out, (blank_count, nonblank_count)))
+        Ok((
+            tokens,
+            last_emitted_token,
+            decoder_out,
+            (blank_count, nonblank_count),
+        ))
     }
 
     /// Run decoder with token history and RNN states
@@ -878,18 +1039,21 @@ impl OrtRecognizer {
 
         // Prepare targets tensor: (batch, seq_len) - convert i64 to i32
         let targets_i32: Vec<i32> = tokens.iter().map(|&t| t as i32).collect();
-        let targets = Tensor::from_array((
-            vec![batch_size, seq_len],
-            targets_i32.into_boxed_slice(),
-        ))
-        .map_err(|e| SttError::InferenceError(format!("Failed to create targets tensor: {}", e)))?;
+        let targets =
+            Tensor::from_array((vec![batch_size, seq_len], targets_i32.into_boxed_slice()))
+                .map_err(|e| {
+                    SttError::InferenceError(format!("Failed to create targets tensor: {}", e))
+                })?;
 
         // Prepare target_length tensor: (batch,)
-        let target_length = Tensor::from_array((
-            vec![batch_size],
-            vec![seq_len as i32].into_boxed_slice(),
-        ))
-        .map_err(|e| SttError::InferenceError(format!("Failed to create target_length tensor: {}", e)))?;
+        let target_length =
+            Tensor::from_array((vec![batch_size], vec![seq_len as i32].into_boxed_slice()))
+                .map_err(|e| {
+                    SttError::InferenceError(format!(
+                        "Failed to create target_length tensor: {}",
+                        e
+                    ))
+                })?;
 
         // Initialize or reuse decoder states
         let hidden_size = self.config.decoder_hidden_size;
@@ -899,19 +1063,30 @@ impl OrtRecognizer {
             self.decoder_state2 = Some(Array3::zeros((2, 1, hidden_size)));
         }
 
-        let state1_data = self.decoder_state1.as_ref().unwrap().as_slice().unwrap().to_vec();
+        let state1_data = self
+            .decoder_state1
+            .as_ref()
+            .unwrap()
+            .as_slice()
+            .unwrap()
+            .to_vec();
         let state1 = Tensor::from_array((
             vec![2, batch_size, hidden_size],
             state1_data.into_boxed_slice(),
         ))
         .map_err(|e| SttError::InferenceError(format!("Failed to create state1 tensor: {}", e)))?;
 
-        let state2_data = self.decoder_state2.as_ref().unwrap().as_slice().unwrap().to_vec();
-        let state2 = Tensor::from_array((
-            vec![2, 1, hidden_size],
-            state2_data.into_boxed_slice(),
-        ))
-        .map_err(|e| SttError::InferenceError(format!("Failed to create state2 tensor: {}", e)))?;
+        let state2_data = self
+            .decoder_state2
+            .as_ref()
+            .unwrap()
+            .as_slice()
+            .unwrap()
+            .to_vec();
+        let state2 = Tensor::from_array((vec![2, 1, hidden_size], state2_data.into_boxed_slice()))
+            .map_err(|e| {
+                SttError::InferenceError(format!("Failed to create state2 tensor: {}", e))
+            })?;
 
         // Run decoder with all 4 inputs
         let outputs = self
@@ -928,7 +1103,9 @@ impl OrtRecognizer {
         let decoder_out_tensor = &outputs[0];
         let (shape, data) = decoder_out_tensor
             .try_extract_tensor::<f32>()
-            .map_err(|e| SttError::InferenceError(format!("Failed to extract decoder output: {}", e)))?;
+            .map_err(|e| {
+                SttError::InferenceError(format!("Failed to extract decoder output: {}", e))
+            })?;
 
         // Update states for next iteration
         debug!("🔍 Attempting to extract decoder LSTM states from outputs...");
@@ -936,32 +1113,60 @@ impl OrtRecognizer {
 
         // outputs[2] is the new state (2, batch, hidden_size)
         if let Ok((state_shape, state_data)) = outputs[2].try_extract_tensor::<f32>() {
-            debug!("✅ Successfully extracted state1: shape={:?}, data_len={}", state_shape, state_data.len());
+            debug!(
+                "✅ Successfully extracted state1: shape={:?}, data_len={}",
+                state_shape,
+                state_data.len()
+            );
             let state_min = state_data.iter().fold(f32::INFINITY, |a, &b| a.min(b));
             let state_max = state_data.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
             let state_mean = state_data.iter().sum::<f32>() / state_data.len() as f32;
-            debug!("   state1 stats: min={:.3}, max={:.3}, mean={:.3}", state_min, state_max, state_mean);
+            debug!(
+                "   state1 stats: min={:.3}, max={:.3}, mean={:.3}",
+                state_min, state_max, state_mean
+            );
 
-            self.decoder_state1 = Some(Array3::from_shape_vec(
-                (state_shape[0] as usize, state_shape[1] as usize, state_shape[2] as usize),
-                state_data.to_vec(),
-            ).unwrap());
+            self.decoder_state1 = Some(
+                Array3::from_shape_vec(
+                    (
+                        state_shape[0] as usize,
+                        state_shape[1] as usize,
+                        state_shape[2] as usize,
+                    ),
+                    state_data.to_vec(),
+                )
+                .unwrap(),
+            );
         } else {
             debug!("❌ FAILED to extract state1 from outputs[2] - LSTM states NOT UPDATING!");
         }
 
         // outputs[3] is the second state (2, batch, hidden_size)
         if let Ok((state_shape, state_data)) = outputs[3].try_extract_tensor::<f32>() {
-            debug!("✅ Successfully extracted state2: shape={:?}, data_len={}", state_shape, state_data.len());
+            debug!(
+                "✅ Successfully extracted state2: shape={:?}, data_len={}",
+                state_shape,
+                state_data.len()
+            );
             let state_min = state_data.iter().fold(f32::INFINITY, |a, &b| a.min(b));
             let state_max = state_data.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
             let state_mean = state_data.iter().sum::<f32>() / state_data.len() as f32;
-            debug!("   state2 stats: min={:.3}, max={:.3}, mean={:.3}", state_min, state_max, state_mean);
+            debug!(
+                "   state2 stats: min={:.3}, max={:.3}, mean={:.3}",
+                state_min, state_max, state_mean
+            );
 
-            self.decoder_state2 = Some(Array3::from_shape_vec(
-                (state_shape[0] as usize, state_shape[1] as usize, state_shape[2] as usize),
-                state_data.to_vec(),
-            ).unwrap());
+            self.decoder_state2 = Some(
+                Array3::from_shape_vec(
+                    (
+                        state_shape[0] as usize,
+                        state_shape[1] as usize,
+                        state_shape[2] as usize,
+                    ),
+                    state_data.to_vec(),
+                )
+                .unwrap(),
+            );
         } else {
             debug!("❌ FAILED to extract state2 from outputs[3] - LSTM states NOT UPDATING!");
         }
@@ -973,7 +1178,9 @@ impl OrtRecognizer {
 
         // Reshape and extract last frame
         let decoder_out_3d = Array3::from_shape_vec((batch, hidden_size, seq), data.to_vec())
-            .map_err(|e| SttError::InferenceError(format!("Failed to reshape decoder output: {}", e)))?;
+            .map_err(|e| {
+                SttError::InferenceError(format!("Failed to reshape decoder output: {}", e))
+            })?;
 
         let last_frame = decoder_out_3d.slice(s![0, .., seq - 1]).to_owned();
 
@@ -981,7 +1188,11 @@ impl OrtRecognizer {
     }
 
     /// Run joiner to combine encoder and decoder outputs
-    fn run_joiner(&mut self, encoder_out: &Array1<f32>, decoder_out: &Array1<f32>) -> Result<Array1<f32>> {
+    fn run_joiner(
+        &mut self,
+        encoder_out: &Array1<f32>,
+        decoder_out: &Array1<f32>,
+    ) -> Result<Array1<f32>> {
         // DEBUG: Check input statistics
         let enc_min = encoder_out.iter().fold(f32::INFINITY, |a, &b| a.min(b));
         let enc_max = encoder_out.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
@@ -996,16 +1207,20 @@ impl OrtRecognizer {
 
         // Prepare joiner inputs
         let encoder_input = Tensor::from_array((
-            vec![1, encoder_out.len(), 1],  // (batch, 1024, 1)
+            vec![1, encoder_out.len(), 1], // (batch, 1024, 1)
             encoder_out.to_vec().into_boxed_slice(),
         ))
-        .map_err(|e| SttError::InferenceError(format!("Failed to create encoder input for joiner: {}", e)))?;
+        .map_err(|e| {
+            SttError::InferenceError(format!("Failed to create encoder input for joiner: {}", e))
+        })?;
 
         let decoder_input = Tensor::from_array((
-            vec![1, decoder_out.len(), 1],  // (batch, hidden_size, 1)
+            vec![1, decoder_out.len(), 1], // (batch, hidden_size, 1)
             decoder_out.to_vec().into_boxed_slice(),
         ))
-        .map_err(|e| SttError::InferenceError(format!("Failed to create decoder input for joiner: {}", e)))?;
+        .map_err(|e| {
+            SttError::InferenceError(format!("Failed to create decoder input for joiner: {}", e))
+        })?;
 
         // Run joiner with correct input names
         let outputs = self
@@ -1016,11 +1231,15 @@ impl OrtRecognizer {
         // Extract logits from 4D tensor (batch, frames, frames, vocab_size)
         // With inputs (1, 1024, 1) and (1, hidden_size, 1), output is (1, 1, 1, vocab_size)
         let logits_tensor = &outputs[0];
-        let (shape, data) = logits_tensor
-            .try_extract_tensor::<f32>()
-            .map_err(|e| SttError::InferenceError(format!("Failed to extract joiner output: {}", e)))?;
+        let (shape, data) = logits_tensor.try_extract_tensor::<f32>().map_err(|e| {
+            SttError::InferenceError(format!("Failed to extract joiner output: {}", e))
+        })?;
 
-        debug!("Joiner output shape: {:?}, data.len()={}", shape, data.len());
+        debug!(
+            "Joiner output shape: {:?}, data.len()={}",
+            shape,
+            data.len()
+        );
 
         // Extract the actual logits: [0, 0, 0, :] gives us the vocab_size dimension
         let _vocab_size = shape[3] as usize;
@@ -1030,35 +1249,57 @@ impl OrtRecognizer {
 
         // COMPREHENSIVE LOGIT ANALYSIS for debugging
         // Find max and top-10 tokens
-        let mut indexed_logits: Vec<(usize, f32)> = data.iter().enumerate()
-            .map(|(i, &v)| (i, v))
-            .collect();
+        let mut indexed_logits: Vec<(usize, f32)> =
+            data.iter().enumerate().map(|(i, &v)| (i, v)).collect();
         indexed_logits.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
 
         let max_logit = indexed_logits[0].1;
         let blank_logit = data[self.blank_id as usize];
-        let blank_rank = indexed_logits.iter().position(|(id, _)| *id == self.blank_id as usize).unwrap_or(9999);
+        let blank_rank = indexed_logits
+            .iter()
+            .position(|(id, _)| *id == self.blank_id as usize)
+            .unwrap_or(9999);
 
         // Calculate softmax probabilities for top tokens
         let exp_max = max_logit.exp();
         let sum_exp: f32 = data.iter().map(|&x| (x - max_logit).exp()).sum();
         let blank_prob = (blank_logit - max_logit).exp() / sum_exp * 100.0;
 
-        debug!("Joiner logits: blank_id={} has logit={:.4} (rank #{}, prob={:.2}%), max_logit={:.4}",
-               self.blank_id, blank_logit, blank_rank + 1, blank_prob, max_logit);
+        debug!(
+            "Joiner logits: blank_id={} has logit={:.4} (rank #{}, prob={:.2}%), max_logit={:.4}",
+            self.blank_id,
+            blank_logit,
+            blank_rank + 1,
+            blank_prob,
+            max_logit
+        );
 
         if data.len() >= 10 {
             debug!("Top 10 predictions:");
-            for (i, &(token_id, logit_val)) in indexed_logits[..10.min(indexed_logits.len())].iter().enumerate() {
+            for (i, &(token_id, logit_val)) in indexed_logits[..10.min(indexed_logits.len())]
+                .iter()
+                .enumerate()
+            {
                 let token_text = if token_id < self.tokens.len() {
                     &self.tokens[token_id]
                 } else {
                     "???"
                 };
                 let prob = (logit_val - max_logit).exp() / sum_exp * 100.0;
-                let marker = if token_id == self.blank_id as usize { " ← BLANK" } else { "" };
-                debug!("  #{}: token={:4} ('{}'), logit={:8.4}, prob={:6.2}%{}",
-                       i+1, token_id, token_text, logit_val, prob, marker);
+                let marker = if token_id == self.blank_id as usize {
+                    " ← BLANK"
+                } else {
+                    ""
+                };
+                debug!(
+                    "  #{}: token={:4} ('{}'), logit={:8.4}, prob={:6.2}%{}",
+                    i + 1,
+                    token_id,
+                    token_text,
+                    logit_val,
+                    prob,
+                    marker
+                );
             }
         }
 
@@ -1083,7 +1324,7 @@ impl OrtRecognizer {
             })
             .collect::<Vec<_>>()
             .join("")
-            .replace("▁", " ")  // Replace BPE underscores with spaces
+            .replace("▁", " ") // Replace BPE underscores with spaces
             .trim()
             .to_string();
 

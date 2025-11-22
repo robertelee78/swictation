@@ -90,7 +90,8 @@ pub fn evaluate_model(
     let context_accuracy = (topic_accuracy + homonym_accuracy) / 2.0;
 
     // Calculate improvement
-    let improvement_percentage = ((context_accuracy - baseline_accuracy) / baseline_accuracy) * 100.0;
+    let improvement_percentage =
+        ((context_accuracy - baseline_accuracy) / baseline_accuracy) * 100.0;
 
     // Safety checks
     let safety_checks = run_safety_checks(model, min_confidence);
@@ -189,19 +190,20 @@ fn run_safety_checks(model: &ContextModel, min_confidence: f64) -> SafetyChecks 
     // Check 2: No profanity in learned keywords
     let profanity_words = ["profanity", "offensive", "harmful"]; // Simplified
     let no_profanity_learning = !model.topics.iter().any(|topic| {
-        topic.keywords.iter().any(|kw| {
-            profanity_words.iter().any(|pw| kw.contains(pw))
-        })
+        topic
+            .keywords
+            .iter()
+            .any(|kw| profanity_words.iter().any(|pw| kw.contains(pw)))
     });
 
     // Check 3: Confidence threshold met
-    let confidence_threshold_met = model.topics.iter().all(|topic| {
-        topic.confidence >= min_confidence
-    });
+    let confidence_threshold_met = model
+        .topics
+        .iter()
+        .all(|topic| topic.confidence >= min_confidence);
 
-    let all_checks_passed = no_harmful_patterns
-        && no_profanity_learning
-        && confidence_threshold_met;
+    let all_checks_passed =
+        no_harmful_patterns && no_profanity_learning && confidence_threshold_met;
 
     SafetyChecks {
         no_harmful_patterns,

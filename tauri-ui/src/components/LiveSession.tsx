@@ -1,10 +1,11 @@
+import { memo } from 'react';
 import type { LiveMetrics } from '../hooks/useMetrics';
 
 interface Props {
   metrics: LiveMetrics;
 }
 
-export function LiveSession({ metrics }: Props) {
+export const LiveSession = memo(function LiveSession({ metrics }: Props) {
   const getStateIcon = () => {
     switch (metrics.state) {
       case 'recording':
@@ -87,7 +88,7 @@ export function LiveSession({ metrics }: Props) {
       </div>
     </div>
   );
-}
+});
 
 interface MetricCardProps {
   label: string;

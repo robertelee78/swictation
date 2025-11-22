@@ -143,8 +143,8 @@ impl CorrectionEngine {
         let config_path = self.config_path.clone();
         let threshold = self.phonetic_threshold;
 
-        let mut watcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
-            match res {
+        let mut watcher =
+            notify::recommended_watcher(move |res: Result<Event, notify::Error>| match res {
                 Ok(event) => {
                     if event.kind.is_modify() || event.kind.is_create() {
                         info!("Corrections file changed, reloading...");
@@ -161,8 +161,7 @@ impl CorrectionEngine {
                     }
                 }
                 Err(e) => error!("File watch error: {}", e),
-            }
-        })?;
+            })?;
 
         // Watch the config directory (not just the file, in case it's recreated)
         if let Some(parent) = self.config_path.parent() {
@@ -197,7 +196,10 @@ impl CorrectionEngine {
         let content = match fs::read_to_string(config_path) {
             Ok(c) => c,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                info!("No corrections file found at {:?}, starting fresh", config_path);
+                info!(
+                    "No corrections file found at {:?}, starting fresh",
+                    config_path
+                );
                 return Ok(());
             }
             Err(e) => return Err(Box::new(e)),
@@ -235,7 +237,9 @@ impl CorrectionEngine {
 
         // Sort phonetic patterns by length (longest first)
         new_phonetic_phrases.sort_by(|a, b| {
-            b.original.split_whitespace().count()
+            b.original
+                .split_whitespace()
+                .count()
                 .cmp(&a.original.split_whitespace().count())
         });
         new_phonetic_words.sort_by(|a, b| b.original.len().cmp(&a.original.len()));
@@ -303,7 +307,11 @@ impl CorrectionEngine {
                                 result.push(' ');
                             }
                             // Apply case mode to replacement
-                            let replacement = Self::preserve_case(words[i], &correction.corrected, correction.case_mode);
+                            let replacement = Self::preserve_case(
+                                words[i],
+                                &correction.corrected,
+                                correction.case_mode,
+                            );
                             result.push_str(&replacement);
 
                             // Track usage
@@ -327,7 +335,8 @@ impl CorrectionEngine {
                     if !result.is_empty() {
                         result.push(' ');
                     }
-                    let replacement = Self::preserve_case(words[i], &correction.corrected, correction.case_mode);
+                    let replacement =
+                        Self::preserve_case(words[i], &correction.corrected, correction.case_mode);
                     result.push_str(&replacement);
 
                     // Track usage
@@ -357,12 +366,19 @@ impl CorrectionEngine {
                         key_buf.push_str(&words_lower[i + j]);
                     }
 
-                    let distance = Self::normalized_edit_distance(&key_buf, &correction.original.to_lowercase());
+                    let distance = Self::normalized_edit_distance(
+                        &key_buf,
+                        &correction.original.to_lowercase(),
+                    );
                     if distance <= self.phonetic_threshold {
                         if !result.is_empty() {
                             result.push(' ');
                         }
-                        let replacement = Self::preserve_case(words[i], &correction.corrected, correction.case_mode);
+                        let replacement = Self::preserve_case(
+                            words[i],
+                            &correction.corrected,
+                            correction.case_mode,
+                        );
                         result.push_str(&replacement);
 
                         // Track usage
@@ -385,12 +401,16 @@ impl CorrectionEngine {
                     continue;
                 }
 
-                let distance = Self::normalized_edit_distance(&words_lower[i], &correction.original.to_lowercase());
+                let distance = Self::normalized_edit_distance(
+                    &words_lower[i],
+                    &correction.original.to_lowercase(),
+                );
                 if distance <= self.phonetic_threshold {
                     if !result.is_empty() {
                         result.push(' ');
                     }
-                    let replacement = Self::preserve_case(words[i], &correction.corrected, correction.case_mode);
+                    let replacement =
+                        Self::preserve_case(words[i], &correction.corrected, correction.case_mode);
                     result.push_str(&replacement);
 
                     // Track usage
@@ -433,7 +453,9 @@ impl CorrectionEngine {
             }
             CaseMode::Smart => {
                 // Use correction case unless input is all-caps
-                let all_upper = original.chars().all(|c| c.is_uppercase() || !c.is_alphabetic());
+                let all_upper = original
+                    .chars()
+                    .all(|c| c.is_uppercase() || !c.is_alphabetic());
 
                 if all_upper && original.len() > 1 {
                     // Input is ALL CAPS -> make output all caps
@@ -446,7 +468,9 @@ impl CorrectionEngine {
             CaseMode::PreserveInput => {
                 // Match output case to input case (original behavior)
                 let first_char = original.chars().next().unwrap();
-                let all_upper = original.chars().all(|c| c.is_uppercase() || !c.is_alphabetic());
+                let all_upper = original
+                    .chars()
+                    .all(|c| c.is_uppercase() || !c.is_alphabetic());
 
                 if all_upper && original.len() > 1 {
                     // ALL CAPS -> ALL CAPS
@@ -489,7 +513,11 @@ impl CorrectionEngine {
             curr_row[0] = i;
 
             for j in 1..=m {
-                let cost = if a_chars[i - 1] == b_chars[j - 1] { 0 } else { 1 };
+                let cost = if a_chars[i - 1] == b_chars[j - 1] {
+                    0
+                } else {
+                    1
+                };
                 curr_row[j] = (prev_row[j] + 1)
                     .min(curr_row[j - 1] + 1)
                     .min(prev_row[j - 1] + cost);
@@ -533,7 +561,10 @@ impl CorrectionEngine {
         file.corrections.push(correction.clone());
         self.save_file(&file)?;
 
-        info!("Learned correction: '{}' -> '{}'", correction.original, correction.corrected);
+        info!(
+            "Learned correction: '{}' -> '{}'",
+            correction.original, correction.corrected
+        );
         Ok(correction)
     }
 
@@ -568,7 +599,9 @@ impl CorrectionEngine {
     ) -> Result<Correction, Box<dyn std::error::Error + Send + Sync>> {
         let mut file = self.load_file()?;
 
-        let correction = file.corrections.iter_mut()
+        let correction = file
+            .corrections
+            .iter_mut()
             .find(|c| c.id == id)
             .ok_or("Correction not found")?;
 
@@ -641,7 +674,10 @@ impl CorrectionEngine {
         }
     }
 
-    fn save_file(&self, file: &CorrectionsFile) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    fn save_file(
+        &self,
+        file: &CorrectionsFile,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Ensure directory exists
         if let Some(parent) = self.config_path.parent() {
             fs::create_dir_all(parent)?;
@@ -659,17 +695,32 @@ mod tests {
 
     #[test]
     fn test_edit_distance() {
-        assert_eq!(CorrectionEngine::normalized_edit_distance("kitten", "sitting"), 3.0 / 7.0);
-        assert_eq!(CorrectionEngine::normalized_edit_distance("hello", "hello"), 0.0);
+        assert_eq!(
+            CorrectionEngine::normalized_edit_distance("kitten", "sitting"),
+            3.0 / 7.0
+        );
+        assert_eq!(
+            CorrectionEngine::normalized_edit_distance("hello", "hello"),
+            0.0
+        );
         assert_eq!(CorrectionEngine::normalized_edit_distance("", ""), 0.0);
         assert_eq!(CorrectionEngine::normalized_edit_distance("abc", ""), 1.0);
     }
 
     #[test]
     fn test_preserve_case() {
-        assert_eq!(CorrectionEngine::preserve_case("Hello", "world", CaseMode::PreserveInput), "World");
-        assert_eq!(CorrectionEngine::preserve_case("HELLO", "world", CaseMode::PreserveInput), "WORLD");
-        assert_eq!(CorrectionEngine::preserve_case("hello", "World", CaseMode::PreserveInput), "world");
+        assert_eq!(
+            CorrectionEngine::preserve_case("Hello", "world", CaseMode::PreserveInput),
+            "World"
+        );
+        assert_eq!(
+            CorrectionEngine::preserve_case("HELLO", "world", CaseMode::PreserveInput),
+            "WORLD"
+        );
+        assert_eq!(
+            CorrectionEngine::preserve_case("hello", "World", CaseMode::PreserveInput),
+            "world"
+        );
     }
 
     #[test]

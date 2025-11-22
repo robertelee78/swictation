@@ -1,5 +1,5 @@
-use swictation_stt::OrtRecognizer;
 use std::path::PathBuf;
+use swictation_stt::OrtRecognizer;
 
 fn main() {
     let home = std::env::var("HOME").expect("HOME not set");

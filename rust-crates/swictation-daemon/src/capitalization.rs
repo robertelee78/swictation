@@ -69,9 +69,17 @@ pub fn apply_capitalization(text: &str) -> String {
                 if at_word_start && (ch == 'm' || ch == 'd') {
                     // Peek ahead to see if this is a title
                     let remaining: String = chars.clone().collect();
-                    let next_word = format!("{}{}", ch, remaining.split_whitespace().next().unwrap_or(""));
+                    let next_word = format!(
+                        "{}{}",
+                        ch,
+                        remaining.split_whitespace().next().unwrap_or("")
+                    );
 
-                    if next_word == "mr." || next_word == "mrs." || next_word == "ms." || next_word == "dr." {
+                    if next_word == "mr."
+                        || next_word == "mrs."
+                        || next_word == "ms."
+                        || next_word == "dr."
+                    {
                         result.push(ch.to_uppercase().next().unwrap_or(ch));
                     } else {
                         result.push(ch);
@@ -83,8 +91,11 @@ pub fn apply_capitalization(text: &str) -> String {
         }
 
         // Check if we just wrote a title (Mr., Mrs., Dr., Ms.)
-        if result.ends_with("Mr.") || result.ends_with("Mrs.") ||
-           result.ends_with("Dr.") || result.ends_with("Ms.") {
+        if result.ends_with("Mr.")
+            || result.ends_with("Mrs.")
+            || result.ends_with("Dr.")
+            || result.ends_with("Ms.")
+        {
             prev_was_title = true;
             capitalize_next = true; // Capitalize next word after title
         }
@@ -164,20 +175,32 @@ mod tests {
 
     #[test]
     fn test_quotes() {
-        assert_eq!(apply_capitalization("she said \"hello world\""), "She said \"Hello world\"");
-        assert_eq!(apply_capitalization("\"attention\" she yelled"), "\"Attention\" she yelled");
+        assert_eq!(
+            apply_capitalization("she said \"hello world\""),
+            "She said \"Hello world\""
+        );
+        assert_eq!(
+            apply_capitalization("\"attention\" she yelled"),
+            "\"Attention\" she yelled"
+        );
     }
 
     #[test]
     fn test_titles() {
         assert_eq!(apply_capitalization("mr. smith"), "Mr. Smith");
-        assert_eq!(apply_capitalization("dr. jones and dr. brown"), "Dr. Jones and Dr. Brown");
+        assert_eq!(
+            apply_capitalization("dr. jones and dr. brown"),
+            "Dr. Jones and Dr. Brown"
+        );
     }
 
     #[test]
     fn test_capital_commands() {
         assert_eq!(process_capital_commands("capital r robert"), "Robert");
-        assert_eq!(process_capital_commands("my name is capital j jones"), "my name is Jones");
+        assert_eq!(
+            process_capital_commands("my name is capital j jones"),
+            "my name is Jones"
+        );
         assert_eq!(process_capital_commands("all caps fbi"), "FBI");
     }
 }

@@ -1,9 +1,9 @@
-use tokio::net::UnixStream;
-use tokio::io::AsyncWriteExt;
-use std::sync::Arc;
-use tokio::sync::Mutex;
 use crate::error::Result;
 use crate::events::{BroadcastEvent, TranscriptionSegment};
+use std::sync::Arc;
+use tokio::io::AsyncWriteExt;
+use tokio::net::UnixStream;
+use tokio::sync::Mutex;
 
 /// Client connection wrapper
 pub struct Client {

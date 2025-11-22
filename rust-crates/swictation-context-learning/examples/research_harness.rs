@@ -8,10 +8,8 @@
 //! 5. Generate research report
 
 use anyhow::Result;
-use swictation_context_learning::{
-    ContextLearner, LearningConfig, train_test_split,
-};
 use std::path::PathBuf;
+use swictation_context_learning::{train_test_split, ContextLearner, LearningConfig};
 
 fn main() -> Result<()> {
     // Initialize logging
@@ -55,8 +53,11 @@ fn main() -> Result<()> {
     println!();
 
     if data.segments.len() < config.min_segments {
-        eprintln!("❌ Insufficient data: {} segments (need {})",
-                  data.segments.len(), config.min_segments);
+        eprintln!(
+            "❌ Insufficient data: {} segments (need {})",
+            data.segments.len(),
+            config.min_segments
+        );
         eprintln!("   Run swictation for a while to collect more segment data.");
         return Ok(());
     }
@@ -99,30 +100,62 @@ fn main() -> Result<()> {
     println!("║          PHASE 3 RESEARCH RESULTS                     ║");
     println!("╠═══════════════════════════════════════════════════════╣");
     println!("║                                                       ║");
-    println!("║  Topic Clustering Accuracy:    {:.1}%                   ║",
-             report.topic_accuracy * 100.0);
-    println!("║  Homonym Resolution Accuracy:  {:.1}%                   ║",
-             report.homonym_accuracy * 100.0);
-    println!("║  Overall Context Accuracy:     {:.1}%                   ║",
-             report.context_accuracy * 100.0);
+    println!(
+        "║  Topic Clustering Accuracy:    {:.1}%                   ║",
+        report.topic_accuracy * 100.0
+    );
+    println!(
+        "║  Homonym Resolution Accuracy:  {:.1}%                   ║",
+        report.homonym_accuracy * 100.0
+    );
+    println!(
+        "║  Overall Context Accuracy:     {:.1}%                   ║",
+        report.context_accuracy * 100.0
+    );
     println!("║                                                       ║");
     println!("║  Baseline (random guess):      67.0%                  ║");
-    println!("║  Improvement:                  {:+.1}%                  ║",
-             report.improvement_percentage);
+    println!(
+        "║  Improvement:                  {:+.1}%                  ║",
+        report.improvement_percentage
+    );
     println!("║                                                       ║");
     println!("╠═══════════════════════════════════════════════════════╣");
     println!("║  Safety Validation                                    ║");
     println!("╠═══════════════════════════════════════════════════════╣");
     println!("║                                                       ║");
-    println!("║  No harmful patterns:         {}                     ║",
-             if report.safety_checks.no_harmful_patterns { "✓ PASS" } else { "✗ FAIL" });
-    println!("║  No profanity learning:       {}                     ║",
-             if report.safety_checks.no_profanity_learning { "✓ PASS" } else { "✗ FAIL" });
-    println!("║  Confidence threshold met:    {}                     ║",
-             if report.safety_checks.confidence_threshold_met { "✓ PASS" } else { "✗ FAIL" });
+    println!(
+        "║  No harmful patterns:         {}                     ║",
+        if report.safety_checks.no_harmful_patterns {
+            "✓ PASS"
+        } else {
+            "✗ FAIL"
+        }
+    );
+    println!(
+        "║  No profanity learning:       {}                     ║",
+        if report.safety_checks.no_profanity_learning {
+            "✓ PASS"
+        } else {
+            "✗ FAIL"
+        }
+    );
+    println!(
+        "║  Confidence threshold met:    {}                     ║",
+        if report.safety_checks.confidence_threshold_met {
+            "✓ PASS"
+        } else {
+            "✗ FAIL"
+        }
+    );
     println!("║                                                       ║");
-    println!("║  All safety checks:           {}                     ║",
-             if report.safety_checks.all_checks_passed { "✓ PASSED" } else { "✗ FAILED" });
+    println!(
+        "║  All safety checks:           {}                     ║",
+        if report.safety_checks.all_checks_passed {
+            "✓ PASSED"
+        } else {
+            "✗ FAILED"
+        }
+    );
     println!("║                                                       ║");
     println!("╚═══════════════════════════════════════════════════════╝");
     println!();
@@ -130,11 +163,13 @@ fn main() -> Result<()> {
     // Discovered topics
     println!("📚 Discovered Topic Clusters:");
     for (i, topic) in model.topics.iter().enumerate() {
-        println!("  {}. {} (confidence: {:.0}%, {} segments)",
-                 i + 1,
-                 topic.name,
-                 topic.confidence * 100.0,
-                 topic.segment_count);
+        println!(
+            "  {}. {} (confidence: {:.0}%, {} segments)",
+            i + 1,
+            topic.name,
+            topic.confidence * 100.0,
+            topic.segment_count
+        );
         println!("     Keywords: {}", topic.keywords.join(", "));
     }
     println!();
@@ -145,11 +180,13 @@ fn main() -> Result<()> {
         for (word, resolver) in model.homonym_rules.iter().take(5) {
             println!("  \"{}\":", word);
             for (i, interp) in resolver.interpretations.iter().take(3).enumerate() {
-                println!("    {}. {} (confidence: {:.0}%, freq: {})",
-                         i + 1,
-                         interp.meaning,
-                         interp.confidence * 100.0,
-                         interp.frequency);
+                println!(
+                    "    {}. {} (confidence: {:.0}%, freq: {})",
+                    i + 1,
+                    interp.meaning,
+                    interp.confidence * 100.0,
+                    interp.frequency
+                );
             }
         }
         println!();
@@ -159,10 +196,12 @@ fn main() -> Result<()> {
     if !model.patterns.is_empty() {
         println!("🔍 Top Context Patterns:");
         for (i, pattern) in model.patterns.iter().take(10).enumerate() {
-            println!("  {}. {} (support: {})",
-                     i + 1,
-                     pattern.description,
-                     pattern.support);
+            println!(
+                "  {}. {} (support: {})",
+                i + 1,
+                pattern.description,
+                pattern.support
+            );
         }
         println!();
     }
@@ -176,7 +215,10 @@ fn main() -> Result<()> {
     if report.improvement_percentage >= 10.0 && report.safety_checks.all_checks_passed {
         println!("✅ DEPLOY TO PRODUCTION");
         println!();
-        println!("Context-aware meta-learning provides {:.1}% improvement", report.improvement_percentage);
+        println!(
+            "Context-aware meta-learning provides {:.1}% improvement",
+            report.improvement_percentage
+        );
         println!("over baseline with acceptable safety profile.");
         println!();
         println!("Suggested next steps:");
@@ -187,17 +229,26 @@ fn main() -> Result<()> {
     } else if report.improvement_percentage >= 5.0 {
         println!("🔄 ITERATE");
         println!();
-        println!("Shows promise ({:.1}% improvement) but needs tuning.", report.improvement_percentage);
+        println!(
+            "Shows promise ({:.1}% improvement) but needs tuning.",
+            report.improvement_percentage
+        );
         println!();
         println!("Suggested improvements:");
-        println!("1. Collect more training data (current: {} segments)", data.segments.len());
+        println!(
+            "1. Collect more training data (current: {} segments)",
+            data.segments.len()
+        );
         println!("2. Tune confidence thresholds");
         println!("3. Add more homonym examples");
         println!("4. Refine topic clustering parameters");
     } else {
         println!("❌ DON'T DEPLOY");
         println!();
-        println!("Insufficient improvement ({:.1}%).", report.improvement_percentage);
+        println!(
+            "Insufficient improvement ({:.1}%).",
+            report.improvement_percentage
+        );
         println!("Meta-learning did not beat baseline significantly.");
         println!();
         println!("Consider:");

@@ -1,10 +1,10 @@
+use chrono::Local;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use swictation_metrics::{DaemonState, RealtimeMetrics};
 use tokio::net::UnixListener;
 use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
-use swictation_metrics::{RealtimeMetrics, DaemonState};
-use chrono::Local;
 
 use crate::client::{Client, ClientManager};
 use crate::error::{BroadcasterError, Result};
@@ -62,7 +62,10 @@ impl MetricsBroadcaster {
             }
         }
 
-        tracing::info!("Metrics broadcaster started on {:?} (permissions: 0600)", self.socket_path);
+        tracing::info!(
+            "Metrics broadcaster started on {:?} (permissions: 0600)",
+            self.socket_path
+        );
 
         // Mark as running
         *self.running.write().await = true;
@@ -91,11 +94,10 @@ impl MetricsBroadcaster {
                         let current_session = *session_id.read().await;
                         let buffer_snapshot = buffer.read().await.clone();
 
-                        if let Err(e) = client.send_catch_up(
-                            &current_state,
-                            current_session,
-                            &buffer_snapshot,
-                        ).await {
+                        if let Err(e) = client
+                            .send_catch_up(&current_state, current_session, &buffer_snapshot)
+                            .await
+                        {
                             tracing::warn!("Failed to send catch-up data: {}", e);
                             continue;
                         }
@@ -182,13 +184,7 @@ impl MetricsBroadcaster {
     }
 
     /// Add transcription segment to buffer and broadcast
-    pub async fn add_transcription(
-        &self,
-        text: String,
-        wpm: f64,
-        latency_ms: f64,
-        words: i32,
-    ) {
+    pub async fn add_transcription(&self, text: String, wpm: f64, latency_ms: f64, words: i32) {
         let timestamp = Self::current_time_string();
 
         // Create segment
@@ -323,14 +319,18 @@ mod tests {
         let broadcaster = MetricsBroadcaster::new(path).await.unwrap();
 
         // Start session should clear buffer
-        broadcaster.add_transcription("test".to_string(), 100.0, 200.0, 1).await;
+        broadcaster
+            .add_transcription("test".to_string(), 100.0, 200.0, 1)
+            .await;
         assert_eq!(broadcaster.buffer_size().await, 1);
 
         broadcaster.start_session(123).await;
         assert_eq!(broadcaster.buffer_size().await, 0);
 
         // Add new transcription
-        broadcaster.add_transcription("new".to_string(), 150.0, 180.0, 1).await;
+        broadcaster
+            .add_transcription("new".to_string(), 150.0, 180.0, 1)
+            .await;
         assert_eq!(broadcaster.buffer_size().await, 1);
 
         // End session should keep buffer

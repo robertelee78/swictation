@@ -37,5 +37,4 @@ pub use error::{Result, SttError};
 pub use recognizer_ort::OrtRecognizer;
 
 /// Default model path
-pub const DEFAULT_MODEL_PATH: &str =
-    "/opt/swictation/models/parakeet-tdt-0.6b-v3-onnx";
+pub const DEFAULT_MODEL_PATH: &str = "/opt/swictation/models/parakeet-tdt-0.6b-v3-onnx";

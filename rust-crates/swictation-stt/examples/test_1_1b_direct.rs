@@ -3,9 +3,9 @@
 //! Usage:
 //!   cargo run --release --example test_1_1b_direct <audio_file>
 
-use swictation_stt::{OrtRecognizer, Result};
 use std::env;
 use std::time::Instant;
+use swictation_stt::{OrtRecognizer, Result};
 
 fn main() -> Result<()> {
     // Initialize logging
@@ -53,7 +53,8 @@ fn main() -> Result<()> {
         times.push(duration.as_secs_f64() * 1000.0);
         transcriptions.push(text.clone());
 
-        println!("  Run {}: {:.2}ms - '{}'",
+        println!(
+            "  Run {}: {:.2}ms - '{}'",
             i,
             duration.as_secs_f64() * 1000.0,
             text.chars().take(60).collect::<String>()

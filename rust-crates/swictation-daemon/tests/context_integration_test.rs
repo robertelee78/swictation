@@ -4,9 +4,7 @@
 //! at startup without errors.
 
 use std::path::PathBuf;
-use swictation_context_learning::{
-    load_or_train_model, LearningConfig, RetrainingConfig,
-};
+use swictation_context_learning::{load_or_train_model, LearningConfig, RetrainingConfig};
 
 #[test]
 fn test_context_model_integration() {
@@ -38,14 +36,23 @@ fn test_context_model_integration() {
             println!("   - Meta-learning levels:");
             println!("     * Level 0: {} patterns", model.meta_level_0.len());
             println!("     * Level 1: {} meta-patterns", model.meta_level_1.len());
-            println!("     * Level 2: {} meta-strategies", model.meta_level_2.len());
+            println!(
+                "     * Level 2: {} meta-strategies",
+                model.meta_level_2.len()
+            );
 
             // Verify model structure
-            assert!(!model.topics.is_empty(), "Model should have discovered topics");
+            assert!(
+                !model.topics.is_empty(),
+                "Model should have discovered topics"
+            );
         }
         Ok(None) => {
             println!("⚠️  Context model not available");
-            println!("   Reason: Insufficient training data (< {} segments)", learning_config.min_segments);
+            println!(
+                "   Reason: Insufficient training data (< {} segments)",
+                learning_config.min_segments
+            );
             println!("   This is expected if database is empty or has few segments");
             // This is OK - not an error, just means not enough data yet
         }

@@ -21,12 +21,12 @@ use tracing::{debug, info};
 pub const SAMPLE_RATE: u32 = 16000;
 
 /// Mel-spectrogram parameters for Parakeet-TDT models
-pub const N_MEL_FEATURES: usize = 128;  // Number of mel filters (0.6B model)
+pub const N_MEL_FEATURES: usize = 128; // Number of mel filters (0.6B model)
 pub const N_MEL_FEATURES_1_1B: usize = 80; // Number of mel filters (1.1B model)
-pub const N_FFT: usize = 512;            // FFT size
-pub const HOP_LENGTH: usize = 160;       // 10ms hop at 16kHz
-pub const WIN_LENGTH: usize = 400;       // 25ms window at 16kHz
-pub const CHUNK_FRAMES: usize = 10000;    // Frames per encoder chunk (increased to process full audio)
+pub const N_FFT: usize = 512; // FFT size
+pub const HOP_LENGTH: usize = 160; // 10ms hop at 16kHz
+pub const WIN_LENGTH: usize = 400; // 25ms window at 16kHz
+pub const CHUNK_FRAMES: usize = 10000; // Frames per encoder chunk (increased to process full audio)
 
 /// Audio processor for Parakeet-TDT models
 pub struct AudioProcessor {
@@ -55,8 +55,8 @@ impl AudioProcessor {
             n_mel_features,
             N_FFT,
             SAMPLE_RATE as f32,
-            0.0,     // low_freq = 0 for NeMo models
-            7600.0,  // high_freq = -400 = 16000/2 - 400 = 7600 Hz
+            0.0,    // low_freq = 0 for NeMo models
+            7600.0, // high_freq = -400 = 16000/2 - 400 = 7600 Hz
         );
 
         Ok(Self {
@@ -69,12 +69,9 @@ impl AudioProcessor {
     /// Load audio from file (WAV or MP3)
     pub fn load_audio<P: AsRef<Path>>(&self, path: P) -> Result<Vec<f32>> {
         let path = path.as_ref();
-        let extension = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .ok_or_else(|| SttError::AudioLoadError(
-                "Could not determine file extension".to_string()
-            ))?;
+        let extension = path.extension().and_then(|e| e.to_str()).ok_or_else(|| {
+            SttError::AudioLoadError("Could not determine file extension".to_string())
+        })?;
 
         match extension.to_lowercase().as_str() {
             "wav" => self.load_wav(path),
@@ -270,9 +267,11 @@ impl AudioProcessor {
         let rms = (samples.iter().map(|&x| x * x).sum::<f32>() / samples.len() as f32).sqrt();
         debug!("RAW audio BEFORE normalization:");
         debug!("  Mean: {:.6}, RMS: {:.6}", mean, rms);
-        debug!("  Min: {:.6}, Max: {:.6}",
-               samples.iter().fold(f32::INFINITY, |a, &b| a.min(b)),
-               samples.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b)));
+        debug!(
+            "  Min: {:.6}, Max: {:.6}",
+            samples.iter().fold(f32::INFINITY, |a, &b| a.min(b)),
+            samples.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b))
+        );
 
         // TEST 4: Remove sample normalization (reference parakeet-rs doesn't have this)
         // The Queen's analysis identified "Extra sample normalization" as a potential problem
@@ -315,9 +314,8 @@ impl AudioProcessor {
         for feat_idx in 0..num_features {
             let mut column = log_mel.column_mut(feat_idx);
             let mean: f32 = column.iter().sum::<f32>() / num_frames as f32;
-            let variance: f32 = column.iter()
-                .map(|&x| (x - mean).powi(2))
-                .sum::<f32>() / num_frames as f32;
+            let variance: f32 =
+                column.iter().map(|&x| (x - mean).powi(2)).sum::<f32>() / num_frames as f32;
             let std = variance.sqrt().max(1e-10);
 
             for val in column.iter_mut() {
@@ -325,26 +323,38 @@ impl AudioProcessor {
             }
         }
 
-        debug!("Per-feature normalization applied: {} features normalized", num_features);
+        debug!(
+            "Per-feature normalization applied: {} features normalized",
+            num_features
+        );
 
         // DEBUG: Check log_mel values AFTER per-feature normalization
         if log_mel.nrows() > 0 {
-            debug!("AFTER per-feature normalization - first frame (first 10): {:?}",
-                   &log_mel.row(0).as_slice().unwrap()[..10.min(log_mel.ncols())]);
+            debug!(
+                "AFTER per-feature normalization - first frame (first 10): {:?}",
+                &log_mel.row(0).as_slice().unwrap()[..10.min(log_mel.ncols())]
+            );
             if log_mel.nrows() > 10 {
-                debug!("AFTER per-feature normalization - middle frame {} (first 10): {:?}",
-                       log_mel.nrows() / 2,
-                       &log_mel.row(log_mel.nrows() / 2).as_slice().unwrap()[..10.min(log_mel.ncols())]);
+                debug!(
+                    "AFTER per-feature normalization - middle frame {} (first 10): {:?}",
+                    log_mel.nrows() / 2,
+                    &log_mel.row(log_mel.nrows() / 2).as_slice().unwrap()
+                        [..10.min(log_mel.ncols())]
+                );
             }
-            debug!("AFTER per-feature normalization - stats: min={:.6}, max={:.6}, mean={:.6}",
-                   log_mel.iter().fold(f32::INFINITY, |a, &b| a.min(b)),
-                   log_mel.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b)),
-                   log_mel.mean().unwrap_or(0.0));
+            debug!(
+                "AFTER per-feature normalization - stats: min={:.6}, max={:.6}, mean={:.6}",
+                log_mel.iter().fold(f32::INFINITY, |a, &b| a.min(b)),
+                log_mel.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b)),
+                log_mel.mean().unwrap_or(0.0)
+            );
 
             // DEBUG: Check mel filterbank to ensure it's not all zeros
-            debug!("Mel filterbank sum: {:.6}, shape: {:?}",
-                   self.mel_filters.sum(),
-                   self.mel_filters.shape());
+            debug!(
+                "Mel filterbank sum: {:.6}, shape: {:?}",
+                self.mel_filters.sum(),
+                self.mel_filters.shape()
+            );
 
             // Check which mel bins have non-zero sum (should be ALL of them!)
             for mel_idx in 0..8 {
@@ -359,8 +369,10 @@ impl AudioProcessor {
         // Previous implementation had NO per-feature normalization based on sherpa-onnx investigation
         // Now testing if adding it matches reference implementation behavior
 
-        debug!("Extracted features: shape {:?} (with per-feature normalization - TEST 1)",
-               log_mel.shape());
+        debug!(
+            "Extracted features: shape {:?} (with per-feature normalization - TEST 1)",
+            log_mel.shape()
+        );
         Ok(log_mel)
     }
 
@@ -443,12 +455,18 @@ impl AudioProcessor {
         // Write data: (frame, feature_idx, value)
         for (frame_idx, frame) in features.axis_iter(ndarray::Axis(0)).enumerate() {
             for (feat_idx, &value) in frame.iter().enumerate() {
-                writeln!(file, "{},{},{}", frame_idx, feat_idx, value)
-                    .map_err(|e| SttError::AudioLoadError(format!("Failed to write CSV data: {}", e)))?;
+                writeln!(file, "{},{},{}", frame_idx, feat_idx, value).map_err(|e| {
+                    SttError::AudioLoadError(format!("Failed to write CSV data: {}", e))
+                })?;
             }
         }
 
-        info!("Exported {} frames x {} features to {}", features.nrows(), features.ncols(), path);
+        info!(
+            "Exported {} frames x {} features to {}",
+            features.nrows(),
+            features.ncols(),
+            path
+        );
         Ok(())
     }
 
@@ -458,7 +476,7 @@ impl AudioProcessor {
     /// Uses the instance's n_mel_features (80 for 1.1B, 128 for 0.6B) for padding.
     pub fn chunk_features(&self, features: &Array2<f32>) -> Vec<Array2<f32>> {
         let total_frames = features.nrows();
-        let n_features = self.n_mel_features;  // Use instance field, not hardcoded constant!
+        let n_features = self.n_mel_features; // Use instance field, not hardcoded constant!
         let mut chunks = Vec::new();
 
         for start in (0..total_frames).step_by(CHUNK_FRAMES) {
@@ -495,7 +513,7 @@ fn povey_window(window_length: usize) -> Vec<f32> {
         .map(|n| {
             let factor = 2.0 * PI * n as f32 / (window_length - 1) as f32;
             let base = 0.5 - 0.5 * factor.cos();
-            base.powf(0.85)  // Kaldi's Povey window exponent
+            base.powf(0.85) // Kaldi's Povey window exponent
         })
         .collect()
 }
@@ -524,21 +542,16 @@ fn normalize_audio_samples(samples: &[f32]) -> Vec<f32> {
     let mean: f32 = samples.iter().sum::<f32>() / samples.len() as f32;
 
     // Compute standard deviation (population std, ddof=0)
-    let variance: f32 = samples.iter()
-        .map(|&x| (x - mean).powi(2))
-        .sum::<f32>() / samples.len() as f32;
+    let variance: f32 =
+        samples.iter().map(|&x| (x - mean).powi(2)).sum::<f32>() / samples.len() as f32;
     let std = variance.sqrt();
 
     // Normalize: (x - mean) / std
     if std > 1e-8 {
-        samples.iter()
-            .map(|&x| (x - mean) / std)
-            .collect()
+        samples.iter().map(|&x| (x - mean) / std).collect()
     } else {
         // If std is too small, just subtract mean
-        samples.iter()
-            .map(|&x| x - mean)
-            .collect()
+        samples.iter().map(|&x| x - mean).collect()
     }
 }
 
@@ -641,6 +654,9 @@ mod tests {
     fn test_mel_filterbank() {
         let processor = AudioProcessor::new().unwrap();
         // Verify mel filterbank has correct shape (n_mels, n_fft/2 + 1)
-        assert_eq!(processor.mel_filters.shape(), &[N_MEL_FEATURES, N_FFT / 2 + 1]);
+        assert_eq!(
+            processor.mel_filters.shape(),
+            &[N_MEL_FEATURES, N_FFT / 2 + 1]
+        );
     }
 }

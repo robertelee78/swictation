@@ -12,7 +12,7 @@ use std::process::Command;
 use tracing::{debug, info};
 
 use crate::display_server::{
-    detect_display_server, detect_available_tools, select_best_tool, DisplayServerInfo,
+    detect_available_tools, detect_display_server, select_best_tool, DisplayServerInfo,
     TextInjectionTool,
 };
 
@@ -317,7 +317,10 @@ mod tests {
                 injector.selected_tool().name()
             );
         } else if let Err(e) = result {
-            println!("Text injector creation failed (expected if no tools installed): {}", e);
+            println!(
+                "Text injector creation failed (expected if no tools installed): {}",
+                e
+            );
         }
     }
 

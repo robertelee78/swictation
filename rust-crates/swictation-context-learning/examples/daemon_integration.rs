@@ -10,10 +10,10 @@
 //! 4. Background retrain monitoring
 
 use anyhow::Result;
+use std::path::PathBuf;
 use swictation_context_learning::{
     load_or_train_model, ContextModel, LearningConfig, RetrainingConfig,
 };
-use std::path::PathBuf;
 
 fn main() -> Result<()> {
     // Initialize logging
@@ -47,8 +47,8 @@ fn main() -> Result<()> {
     // Adaptive retraining configuration
     let retrain_config = RetrainingConfig {
         min_new_segments: 25,          // Retrain every 25 new segments
-        max_model_age_days: 1,          // Force retrain daily
-        min_retrain_interval_hours: 6,  // Max 4 times per day
+        max_model_age_days: 1,         // Force retrain daily
+        min_retrain_interval_hours: 6, // Max 4 times per day
         auto_retrain: true,
     };
 
@@ -56,14 +56,33 @@ fn main() -> Result<()> {
     println!("  Min segments: {}", learning_config.min_segments);
     println!("  Topics: {}", learning_config.num_topics);
     println!("  Context window: {}", learning_config.context_window);
-    println!("  Min confidence: {:.0}%", learning_config.min_confidence * 100.0);
+    println!(
+        "  Min confidence: {:.0}%",
+        learning_config.min_confidence * 100.0
+    );
     println!();
 
     println!("🔄 Retraining Policy:");
-    println!("  New segments threshold: {}", retrain_config.min_new_segments);
-    println!("  Max model age: {} days", retrain_config.max_model_age_days);
-    println!("  Min interval: {} hours", retrain_config.min_retrain_interval_hours);
-    println!("  Auto-retrain: {}", if retrain_config.auto_retrain { "enabled" } else { "disabled" });
+    println!(
+        "  New segments threshold: {}",
+        retrain_config.min_new_segments
+    );
+    println!(
+        "  Max model age: {} days",
+        retrain_config.max_model_age_days
+    );
+    println!(
+        "  Min interval: {} hours",
+        retrain_config.min_retrain_interval_hours
+    );
+    println!(
+        "  Auto-retrain: {}",
+        if retrain_config.auto_retrain {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
     println!();
 
     // Load or train model

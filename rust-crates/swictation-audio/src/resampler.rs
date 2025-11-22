@@ -3,8 +3,8 @@
 //! Converts audio from any sample rate to 16kHz mono for STT models.
 
 use rubato::{
-    Resampler as RubatoResampler, SincFixedIn, SincInterpolationParameters,
-    SincInterpolationType, WindowFunction,
+    Resampler as RubatoResampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType,
+    WindowFunction,
 };
 
 use crate::error::{AudioError, Result};
@@ -73,7 +73,8 @@ impl Resampler {
             params,
             chunk_size,
             channels as usize,
-        ).map_err(|e| AudioError::ResampleError(format!("Failed to create resampler: {:?}", e)))?;
+        )
+        .map_err(|e| AudioError::ResampleError(format!("Failed to create resampler: {:?}", e)))?;
 
         Ok(resampler)
     }
@@ -110,7 +111,8 @@ impl Resampler {
         }
 
         // Process with resampler
-        let planar_output = resampler.process(&planar_input, None)
+        let planar_output = resampler
+            .process(&planar_input, None)
             .map_err(|e| AudioError::ResampleError(format!("Resampling failed: {:?}", e)))?;
 
         // Convert planar back to interleaved
@@ -133,7 +135,8 @@ impl Resampler {
             return stereo.iter().step_by(2).copied().collect();
         }
 
-        stereo.chunks(2)
+        stereo
+            .chunks(2)
             .map(|frame| (frame[0] + frame[1]) / 2.0)
             .collect()
     }
@@ -145,7 +148,8 @@ impl Resampler {
         }
 
         let frames = input_len / self.channels as usize;
-        let output_frames = (frames as f64 * self.target_rate as f64 / self.source_rate as f64) as usize;
+        let output_frames =
+            (frames as f64 * self.target_rate as f64 / self.source_rate as f64) as usize;
         output_frames * self.channels as usize
     }
 }
@@ -175,8 +179,11 @@ mod tests {
 
         // Output should be approximately 1/3 the length (48kHz → 16kHz)
         // Expected: 4800 / 3 = 1600 samples
-        assert!(output.len() > 1500 && output.len() < 1700,
-                "Output length {} not in expected range (expected ~1600)", output.len());
+        assert!(
+            output.len() > 1500 && output.len() < 1700,
+            "Output length {} not in expected range (expected ~1600)",
+            output.len()
+        );
     }
 
     #[test]

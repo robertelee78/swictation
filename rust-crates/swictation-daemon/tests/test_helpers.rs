@@ -73,7 +73,10 @@ pub fn wayland_gnome_env() -> HashMap<String, String> {
 /// Test fixture for Sway environment
 pub fn sway_env() -> HashMap<String, String> {
     let mut env = HashMap::new();
-    env.insert("SWAYSOCK".to_string(), "/run/user/1000/sway-ipc.sock".to_string());
+    env.insert(
+        "SWAYSOCK".to_string(),
+        "/run/user/1000/sway-ipc.sock".to_string(),
+    );
     env.insert("WAYLAND_DISPLAY".to_string(), "wayland-0".to_string());
     env.insert("XDG_SESSION_TYPE".to_string(), "wayland".to_string());
     env.insert("XDG_CURRENT_DESKTOP".to_string(), "sway".to_string());

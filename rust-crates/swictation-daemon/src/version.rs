@@ -41,7 +41,11 @@ impl VersionInfo {
             daemon_version: env!("CARGO_PKG_VERSION"),
             ort_version,
             target: env!("TARGET"),
-            profile: if cfg!(debug_assertions) { "debug" } else { "release" },
+            profile: if cfg!(debug_assertions) {
+                "debug"
+            } else {
+                "release"
+            },
             features,
             git_commit: option_env!("GIT_COMMIT_HASH"),
             build_timestamp: env!("BUILD_TIMESTAMP"),
@@ -57,10 +61,7 @@ impl VersionInfo {
 
     /// Get model compatibility information
     pub fn model_compatibility(&self) -> Vec<&'static str> {
-        vec![
-            "Parakeet-TDT-0.6B-V3 (ONNX)",
-            "Parakeet-TDT-1.1B-V3 (ONNX)",
-        ]
+        vec!["Parakeet-TDT-0.6B-V3 (ONNX)", "Parakeet-TDT-1.1B-V3 (ONNX)"]
     }
 
     /// Get GPU library compatibility

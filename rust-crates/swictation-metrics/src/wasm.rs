@@ -12,9 +12,9 @@
 //! console.log(JSON.parse(sessions));
 //! ```
 
-use wasm_bindgen::prelude::*;
 use crate::database::MetricsDatabase;
-use crate::models::{SessionMetrics, SegmentMetrics, LifetimeMetrics};
+use crate::models::{LifetimeMetrics, SegmentMetrics, SessionMetrics};
+use wasm_bindgen::prelude::*;
 
 /// WebAssembly wrapper for MetricsDatabase
 ///
@@ -56,7 +56,9 @@ impl MetricsDatabaseWasm {
     /// ```
     #[wasm_bindgen]
     pub fn get_recent_sessions(&self, limit: usize) -> Result<String, JsValue> {
-        let sessions = self.db.get_recent_sessions(limit)
+        let sessions = self
+            .db
+            .get_recent_sessions(limit)
             .map_err(|e| JsValue::from_str(&format!("Query failed: {}", e)))?;
 
         serde_json::to_string(&sessions)
@@ -78,7 +80,9 @@ impl MetricsDatabaseWasm {
     /// ```
     #[wasm_bindgen]
     pub fn get_session_segments(&self, session_id: i64) -> Result<String, JsValue> {
-        let segments = self.db.get_session_segments(session_id)
+        let segments = self
+            .db
+            .get_session_segments(session_id)
             .map_err(|e| JsValue::from_str(&format!("Query failed: {}", e)))?;
 
         serde_json::to_string(&segments)
@@ -101,7 +105,9 @@ impl MetricsDatabaseWasm {
     /// ```
     #[wasm_bindgen]
     pub fn search_transcriptions(&self, query: &str, limit: usize) -> Result<String, JsValue> {
-        let results = self.db.search_transcriptions(query, limit)
+        let results = self
+            .db
+            .search_transcriptions(query, limit)
             .map_err(|e| JsValue::from_str(&format!("Search failed: {}", e)))?;
 
         serde_json::to_string(&results)
@@ -121,7 +127,9 @@ impl MetricsDatabaseWasm {
     /// ```
     #[wasm_bindgen]
     pub fn get_lifetime_stats(&self) -> Result<String, JsValue> {
-        let stats = self.db.get_lifetime_stats()
+        let stats = self
+            .db
+            .get_lifetime_stats()
             .map_err(|e| JsValue::from_str(&format!("Query failed: {}", e)))?;
 
         serde_json::to_string(&stats)
@@ -143,7 +151,9 @@ impl MetricsDatabaseWasm {
     /// ```
     #[wasm_bindgen]
     pub fn get_sessions_last_n_days(&self, days: u32) -> Result<String, JsValue> {
-        let sessions = self.db.get_sessions_last_n_days(days)
+        let sessions = self
+            .db
+            .get_sessions_last_n_days(days)
             .map_err(|e| JsValue::from_str(&format!("Query failed: {}", e)))?;
 
         serde_json::to_string(&sessions)
@@ -156,7 +166,8 @@ impl MetricsDatabaseWasm {
     /// Size in MB as f64
     #[wasm_bindgen]
     pub fn get_database_size_mb(&self) -> Result<f64, JsValue> {
-        self.db.get_database_size_mb()
+        self.db
+            .get_database_size_mb()
             .map_err(|e| JsValue::from_str(&format!("Failed to get size: {}", e)))
     }
 }

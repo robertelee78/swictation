@@ -6,7 +6,7 @@ use anyhow::Result;
 use chrono::Utc;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
-use sysinfo::{System, Pid};
+use sysinfo::{Pid, System};
 use tracing::info;
 
 use crate::database::MetricsDatabase;
@@ -186,11 +186,10 @@ impl MetricsCollector {
         // Recalculate lifetime stats after session ends
         self.db.recalculate_lifetime_stats()?;
 
-        info!("📊 Session #{} complete: {} words in {:.1}s ({:.1} WPM)",
-              session_id,
-              session.words_dictated,
-              session.total_duration_s,
-              session.words_per_minute);
+        info!(
+            "📊 Session #{} complete: {} words in {:.1}s ({:.1} WPM)",
+            session_id, session.words_dictated, session.total_duration_s, session.words_per_minute
+        );
 
         Ok(session)
     }
@@ -211,7 +210,8 @@ impl MetricsCollector {
         seg.timestamp = Some(Utc::now());
 
         // Insert into database
-        self.db.insert_segment(&seg, self.store_transcription_text)?;
+        self.db
+            .insert_segment(&seg, self.store_transcription_text)?;
 
         // Update session aggregates
         {
@@ -244,7 +244,8 @@ impl MetricsCollector {
             // Calculate session WPM
             let active_time = *self.active_time_accumulator.lock().unwrap();
             if active_time > 0.0 {
-                realtime.wpm_this_session = (realtime.words_this_session as f64 / active_time) * 60.0;
+                realtime.wpm_this_session =
+                    (realtime.words_this_session as f64 / active_time) * 60.0;
             }
         }
 
@@ -275,8 +276,12 @@ impl MetricsCollector {
         }
 
         // Check threshold
-        if self.warnings_enabled && realtime.gpu_memory_percent > self.gpu_memory_threshold_percent {
-            info!("⚠️  High GPU memory usage: {:.1}%", realtime.gpu_memory_percent);
+        if self.warnings_enabled && realtime.gpu_memory_percent > self.gpu_memory_threshold_percent
+        {
+            info!(
+                "⚠️  High GPU memory usage: {:.1}%",
+                realtime.gpu_memory_percent
+            );
         }
     }
 
@@ -345,7 +350,8 @@ impl MetricsCollector {
             // new_mean = old_mean + (new_value - old_mean) / sample_count
             let sample_count = session.total_samples.saturating_add(1) as f64;
             let old_mean = session.cpu_usage_mean_percent;
-            session.cpu_usage_mean_percent = old_mean + (cpu_percent as f64 - old_mean) / sample_count;
+            session.cpu_usage_mean_percent =
+                old_mean + (cpu_percent as f64 - old_mean) / sample_count;
             session.total_samples += 1;
         }
     }
@@ -371,14 +377,9 @@ mod tests {
         let tmp_dir = TempDir::new().unwrap();
         let db_path = tmp_dir.path().join("test_metrics.db");
 
-        let collector = MetricsCollector::new(
-            db_path.to_str().unwrap(),
-            40.0,
-            false,
-            true,
-            1000.0,
-            80.0,
-        ).unwrap();
+        let collector =
+            MetricsCollector::new(db_path.to_str().unwrap(), 40.0, false, true, 1000.0, 80.0)
+                .unwrap();
 
         // Start session
         let session_id = collector.start_session().unwrap();

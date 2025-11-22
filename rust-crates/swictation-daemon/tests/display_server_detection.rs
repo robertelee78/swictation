@@ -16,9 +16,7 @@ use test_helpers::*;
 
 // Import internal module for testing
 // We need to use the internal detection function that accepts EnvProvider
-use swictation_daemon::display_server::{
-    DisplayServer, ConfidenceLevel,
-};
+use swictation_daemon::display_server::{ConfidenceLevel, DisplayServer};
 
 // Mock environment provider for testing
 struct MockEnv {
@@ -38,7 +36,9 @@ impl swictation_daemon::display_server::EnvProvider for MockEnv {
 }
 
 // Helper to call internal detection function
-fn detect_with_env(env: HashMap<String, String>) -> swictation_daemon::display_server::DisplayServerInfo {
+fn detect_with_env(
+    env: HashMap<String, String>,
+) -> swictation_daemon::display_server::DisplayServerInfo {
     let mock_env = MockEnv::new(env);
     // Call the internal pub(crate) function
     // We'll need to make it pub for tests

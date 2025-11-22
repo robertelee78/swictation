@@ -49,8 +49,7 @@ impl IpcServer {
         // Remove existing socket if it exists
         let _ = std::fs::remove_file(socket_path);
 
-        let listener = UnixListener::bind(socket_path)
-            .context("Failed to bind Unix socket")?;
+        let listener = UnixListener::bind(socket_path).context("Failed to bind Unix socket")?;
 
         // Set secure permissions (0600 = owner-only access)
         #[cfg(unix)]
@@ -64,14 +63,20 @@ impl IpcServer {
             }
         }
 
-        info!("IPC server listening on {} (permissions: 0600)", socket_path);
+        info!(
+            "IPC server listening on {} (permissions: 0600)",
+            socket_path
+        );
 
         Ok(Self { listener, daemon })
     }
 
     /// Accept next IPC connection
     pub async fn accept(&mut self) -> Result<(UnixStream, Arc<Daemon>)> {
-        let (stream, _) = self.listener.accept().await
+        let (stream, _) = self
+            .listener
+            .accept()
+            .await
             .context("Failed to accept connection")?;
         Ok((stream, self.daemon.clone()))
     }
@@ -92,18 +97,16 @@ pub async fn handle_connection(mut stream: UnixStream, daemon: Arc<Daemon>) -> R
     // Create JSON response
     let response = match IpcCommand::parse(&request) {
         Ok(cmd) => match cmd.to_command_type() {
-            Ok(CommandType::Toggle) => {
-                match daemon.toggle().await {
-                    Ok(msg) => serde_json::json!({
-                        "status": "success",
-                        "message": msg
-                    }),
-                    Err(e) => serde_json::json!({
-                        "status": "error",
-                        "error": format!("{}", e)
-                    }),
-                }
-            }
+            Ok(CommandType::Toggle) => match daemon.toggle().await {
+                Ok(msg) => serde_json::json!({
+                    "status": "success",
+                    "message": msg
+                }),
+                Err(e) => serde_json::json!({
+                    "status": "error",
+                    "error": format!("{}", e)
+                }),
+            },
             Ok(CommandType::Status) => {
                 let status = daemon.status().await;
                 serde_json::json!({

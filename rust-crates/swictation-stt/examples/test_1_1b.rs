@@ -1,3 +1,4 @@
+use std::time::Instant;
 /// Test the 1.1B Parakeet-TDT model with real audio transcription
 ///
 /// This example demonstrates the complete pipeline:
@@ -12,9 +13,7 @@
 /// export ORT_DYLIB_PATH=$(python3 -c "import onnxruntime; import os; print(os.path.join(os.path.dirname(onnxruntime.__file__), 'capi/libonnxruntime.so.1.23.2'))")
 /// cargo run --release --example test_1_1b -- /opt/swictation/examples/en-short.mp3
 /// ```
-
 use swictation_stt::OrtRecognizer;
-use std::time::Instant;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging with DEBUG level
@@ -44,7 +43,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut recognizer = match OrtRecognizer::new(model_dir, true) {
         Ok(r) => {
             let load_time = start.elapsed();
-            println!("✅ SUCCESS: Model loaded with GPU in {:.2}s", load_time.as_secs_f32());
+            println!(
+                "✅ SUCCESS: Model loaded with GPU in {:.2}s",
+                load_time.as_secs_f32()
+            );
             println!("   - encoder.onnx + encoder.weights (4GB) loaded");
             println!("   - decoder.onnx loaded");
             println!("   - joiner.onnx loaded");
@@ -61,7 +63,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             match OrtRecognizer::new(model_dir, false) {
                 Ok(r) => {
                     let load_time = start.elapsed();
-                    println!("✅ SUCCESS: Model loaded with CPU in {:.2}s", load_time.as_secs_f32());
+                    println!(
+                        "✅ SUCCESS: Model loaded with CPU in {:.2}s",
+                        load_time.as_secs_f32()
+                    );
                     r
                 }
                 Err(e) => {
@@ -78,7 +83,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     match recognizer.recognize_file(audio_path) {
         Ok(text) => {
             let inference_time = start.elapsed();
-            println!("✅ SUCCESS: Transcription completed in {:.2}s", inference_time.as_secs_f32());
+            println!(
+                "✅ SUCCESS: Transcription completed in {:.2}s",
+                inference_time.as_secs_f32()
+            );
             println!("\n┌─ Transcription Result ─────────────────────────");
             println!("│ {}", text);
             println!("└────────────────────────────────────────────────\n");

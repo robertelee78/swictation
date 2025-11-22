@@ -2,14 +2,14 @@
 //! Replaces sherpa-rs dependency with modern ort crate
 
 use crate::{Result, VadError};
+use ndarray::{Array2, Array3, ArrayView3};
 use ort::{
-    execution_providers::{CUDAExecutionProvider, CPUExecutionProvider},
-    session::Session,
+    execution_providers::{CPUExecutionProvider, CUDAExecutionProvider},
     inputs,
+    session::Session,
     value::Tensor,
 };
 use std::sync::{Arc, Mutex};
-use ndarray::{Array2, Array3, ArrayView3};
 
 /// Silero VAD model using direct ONNX Runtime
 pub struct SileroVadOrt {
@@ -22,8 +22,8 @@ pub struct SileroVadOrt {
 
     // State for streaming - Silero VAD v6 uses LSTM with separate h and c states
     // Each state is [2 layers, 1 batch, 64 hidden units]
-    h_state: Array3<f32>,  // LSTM hidden state [2, 1, 64]
-    c_state: Array3<f32>,  // LSTM cell state [2, 1, 64]
+    h_state: Array3<f32>, // LSTM hidden state [2, 1, 64]
+    c_state: Array3<f32>, // LSTM cell state [2, 1, 64]
     triggered: bool,
     temp_end: usize,
     current_sample: usize,
@@ -52,37 +52,68 @@ impl SileroVadOrt {
             if prov.contains("cuda") || prov.contains("CUDA") {
                 // Try CUDA provider
                 match Session::builder()
-                    .map_err(|e| VadError::initialization(format!("Failed to create session builder: {}", e)))?
+                    .map_err(|e| {
+                        VadError::initialization(format!("Failed to create session builder: {}", e))
+                    })?
                     .with_execution_providers([CUDAExecutionProvider::default().build()])
-                    .map_err(|e| VadError::initialization(format!("Failed to set CUDA provider: {}", e)))?
-                    .commit_from_file(model_path) {
+                    .map_err(|e| {
+                        VadError::initialization(format!("Failed to set CUDA provider: {}", e))
+                    })?
+                    .commit_from_file(model_path)
+                {
                     Ok(s) => {
                         println!("Silero VAD: Using CUDA provider");
                         s
                     }
                     Err(e) => {
-                        println!("Silero VAD: CUDA not available ({}), falling back to CPU", e);
+                        println!(
+                            "Silero VAD: CUDA not available ({}), falling back to CPU",
+                            e
+                        );
                         Session::builder()
-                            .map_err(|e| VadError::initialization(format!("Failed to create session builder: {}", e)))?
+                            .map_err(|e| {
+                                VadError::initialization(format!(
+                                    "Failed to create session builder: {}",
+                                    e
+                                ))
+                            })?
                             .with_execution_providers([CPUExecutionProvider::default().build()])
-                            .map_err(|e| VadError::initialization(format!("Failed to set CPU provider: {}", e)))?
+                            .map_err(|e| {
+                                VadError::initialization(format!(
+                                    "Failed to set CPU provider: {}",
+                                    e
+                                ))
+                            })?
                             .commit_from_file(model_path)
-                            .map_err(|e| VadError::initialization(format!("Failed to load model with CPU: {}", e)))?
+                            .map_err(|e| {
+                                VadError::initialization(format!(
+                                    "Failed to load model with CPU: {}",
+                                    e
+                                ))
+                            })?
                     }
                 }
             } else {
                 Session::builder()
-                    .map_err(|e| VadError::initialization(format!("Failed to create session builder: {}", e)))?
+                    .map_err(|e| {
+                        VadError::initialization(format!("Failed to create session builder: {}", e))
+                    })?
                     .with_execution_providers([CPUExecutionProvider::default().build()])
-                    .map_err(|e| VadError::initialization(format!("Failed to set CPU provider: {}", e)))?
+                    .map_err(|e| {
+                        VadError::initialization(format!("Failed to set CPU provider: {}", e))
+                    })?
                     .commit_from_file(model_path)
                     .map_err(|e| VadError::initialization(format!("Failed to load model: {}", e)))?
             }
         } else {
             Session::builder()
-                .map_err(|e| VadError::initialization(format!("Failed to create session builder: {}", e)))?
+                .map_err(|e| {
+                    VadError::initialization(format!("Failed to create session builder: {}", e))
+                })?
                 .with_execution_providers([CPUExecutionProvider::default().build()])
-                .map_err(|e| VadError::initialization(format!("Failed to set CPU provider: {}", e)))?
+                .map_err(|e| {
+                    VadError::initialization(format!("Failed to set CPU provider: {}", e))
+                })?
                 .commit_from_file(model_path)
                 .map_err(|e| VadError::initialization(format!("Failed to load model: {}", e)))?
         };
@@ -95,13 +126,18 @@ impl SileroVadOrt {
         }
         println!("Model outputs:");
         for output in session.outputs.iter() {
-            println!("  - name: '{}' (type: {:?})", output.name, output.output_type);
+            println!(
+                "  - name: '{}' (type: {:?})",
+                output.name, output.output_type
+            );
         }
         println!("===========================");
 
         // Calculate sample counts from durations
-        let min_speech_samples = (min_speech_duration_ms as f32 * sample_rate as f32 / 1000.0) as usize;
-        let min_silence_samples = (min_silence_duration_ms as f32 * sample_rate as f32 / 1000.0) as usize;
+        let min_speech_samples =
+            (min_speech_duration_ms as f32 * sample_rate as f32 / 1000.0) as usize;
+        let min_silence_samples =
+            (min_silence_duration_ms as f32 * sample_rate as f32 / 1000.0) as usize;
 
         // Initialize LSTM states (2 layers, 1 batch, 64 hidden units each)
         let h_state = Array3::<f32>::zeros((2, 1, 64));
@@ -142,10 +178,18 @@ impl SileroVadOrt {
         if self.debug && self.current_sample == 0 {
             eprintln!("VAD Debug:");
             eprintln!("  input shape: {:?}", input_array.shape());
-            eprintln!("  input is C-contiguous: {}", input_array.is_standard_layout());
-            eprintln!("  input range: [{:.6}, {:.6}]",
-                     input_array.iter().copied().fold(f32::INFINITY, f32::min),
-                     input_array.iter().copied().fold(f32::NEG_INFINITY, f32::max));
+            eprintln!(
+                "  input is C-contiguous: {}",
+                input_array.is_standard_layout()
+            );
+            eprintln!(
+                "  input range: [{:.6}, {:.6}]",
+                input_array.iter().copied().fold(f32::INFINITY, f32::min),
+                input_array
+                    .iter()
+                    .copied()
+                    .fold(f32::NEG_INFINITY, f32::max)
+            );
             eprintln!("  h_state shape: {:?}", self.h_state.shape());
             eprintln!("  c_state shape: {:?}", self.c_state.shape());
         }
@@ -160,7 +204,8 @@ impl SileroVadOrt {
             .map_err(|e| VadError::processing(format!("Failed to create c state: {}", e)))?;
 
         // Run inference with correct tensor names
-        let mut session_guard = self.session
+        let mut session_guard = self
+            .session
             .lock()
             .map_err(|e| VadError::processing(format!("Failed to lock session: {}", e)))?;
 
@@ -219,11 +264,20 @@ impl SileroVadOrt {
             // Print every chunk between 1-2 seconds where we expect speech (RMS=0.087746 in second 1)
             let time_s = self.current_sample as f32 / self.sample_rate as f32;
             if time_s >= 1.0 && time_s <= 2.0 {
-                eprintln!("VAD: t={:.2}s, prob={:.6}, threshold={:.3}", time_s, speech_prob, self.threshold);
+                eprintln!(
+                    "VAD: t={:.2}s, prob={:.6}, threshold={:.3}",
+                    time_s, speech_prob, self.threshold
+                );
             } else if time_s >= 3.0 && time_s <= 4.5 {
-                eprintln!("VAD: t={:.2}s, prob={:.6}, threshold={:.3}", time_s, speech_prob, self.threshold);
+                eprintln!(
+                    "VAD: t={:.2}s, prob={:.6}, threshold={:.3}",
+                    time_s, speech_prob, self.threshold
+                );
             } else if self.current_sample % (self.sample_rate as usize) == 0 {
-                eprintln!("VAD: t={:.2}s, prob={:.6}, threshold={:.3}", time_s, speech_prob, self.threshold);
+                eprintln!(
+                    "VAD: t={:.2}s, prob={:.6}, threshold={:.3}",
+                    time_s, speech_prob, self.threshold
+                );
             }
         }
 

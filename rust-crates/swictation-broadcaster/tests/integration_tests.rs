@@ -1,9 +1,9 @@
+use std::time::Duration;
 use swictation_broadcaster::MetricsBroadcaster;
 use swictation_metrics::{DaemonState, RealtimeMetrics};
-use tokio::net::UnixStream;
-use tokio::io::{AsyncBufReadExt, BufReader};
 use tempfile::tempdir;
-use std::time::Duration;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::net::UnixStream;
 
 // Helper removed since we don't use it in the tests
 
@@ -33,8 +33,12 @@ async fn test_client_connection_and_catch_up() {
 
     // Add some data before client connects
     broadcaster.start_session(123).await;
-    broadcaster.add_transcription("Hello".to_string(), 120.0, 200.0, 1).await;
-    broadcaster.add_transcription("world".to_string(), 130.0, 180.0, 1).await;
+    broadcaster
+        .add_transcription("Hello".to_string(), 120.0, 200.0, 1)
+        .await;
+    broadcaster
+        .add_transcription("world".to_string(), 130.0, 180.0, 1)
+        .await;
 
     // Give broadcaster time to process
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -47,7 +51,8 @@ async fn test_client_connection_and_catch_up() {
     let mut lines = Vec::new();
 
     // Read available events (with timeout)
-    for _ in 0..4 {  // Expect: state_change, session_start, 2x transcription
+    for _ in 0..4 {
+        // Expect: state_change, session_start, 2x transcription
         let mut line = String::new();
         tokio::select! {
             result = reader.read_line(&mut line) => {
@@ -80,10 +85,14 @@ async fn test_session_start_clears_buffer() {
     broadcaster.start().await.unwrap();
 
     // Add transcriptions
-    broadcaster.add_transcription("First".to_string(), 100.0, 200.0, 1).await;
+    broadcaster
+        .add_transcription("First".to_string(), 100.0, 200.0, 1)
+        .await;
     assert_eq!(broadcaster.buffer_size().await, 1);
 
-    broadcaster.add_transcription("Second".to_string(), 110.0, 190.0, 1).await;
+    broadcaster
+        .add_transcription("Second".to_string(), 110.0, 190.0, 1)
+        .await;
     assert_eq!(broadcaster.buffer_size().await, 2);
 
     // Start new session should clear
@@ -91,7 +100,9 @@ async fn test_session_start_clears_buffer() {
     assert_eq!(broadcaster.buffer_size().await, 0);
 
     // Add new transcription
-    broadcaster.add_transcription("Third".to_string(), 120.0, 180.0, 1).await;
+    broadcaster
+        .add_transcription("Third".to_string(), 120.0, 180.0, 1)
+        .await;
     assert_eq!(broadcaster.buffer_size().await, 1);
 
     broadcaster.stop().await.unwrap();
@@ -106,13 +117,18 @@ async fn test_session_end_keeps_buffer() {
     broadcaster.start().await.unwrap();
 
     broadcaster.start_session(789).await;
-    broadcaster.add_transcription("Keep me".to_string(), 100.0, 200.0, 2).await;
+    broadcaster
+        .add_transcription("Keep me".to_string(), 100.0, 200.0, 2)
+        .await;
 
     let size_before = broadcaster.buffer_size().await;
     broadcaster.end_session(789).await;
     let size_after = broadcaster.buffer_size().await;
 
-    assert_eq!(size_before, size_after, "Buffer should persist after session end");
+    assert_eq!(
+        size_before, size_after,
+        "Buffer should persist after session end"
+    );
 
     broadcaster.stop().await.unwrap();
 }
@@ -135,7 +151,9 @@ async fn test_broadcast_to_multiple_clients() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Broadcast transcription
-    broadcaster.add_transcription("Broadcast test".to_string(), 150.0, 220.0, 2).await;
+    broadcaster
+        .add_transcription("Broadcast test".to_string(), 150.0, 220.0, 2)
+        .await;
 
     tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -152,10 +170,10 @@ async fn test_broadcast_to_multiple_clients() {
         let mut line2 = String::new();
 
         if !found1 {
-            if let Ok(_) = tokio::time::timeout(
-                Duration::from_millis(100),
-                reader1.read_line(&mut line1)
-            ).await {
+            if let Ok(_) =
+                tokio::time::timeout(Duration::from_millis(100), reader1.read_line(&mut line1))
+                    .await
+            {
                 if line1.contains("\"type\":\"transcription\"") {
                     found1 = true;
                 }
@@ -163,10 +181,10 @@ async fn test_broadcast_to_multiple_clients() {
         }
 
         if !found2 {
-            if let Ok(_) = tokio::time::timeout(
-                Duration::from_millis(100),
-                reader2.read_line(&mut line2)
-            ).await {
+            if let Ok(_) =
+                tokio::time::timeout(Duration::from_millis(100), reader2.read_line(&mut line2))
+                    .await
+            {
                 if line2.contains("\"type\":\"transcription\"") {
                     found2 = true;
                 }
@@ -230,8 +248,12 @@ async fn test_state_change_broadcast() {
 
     // Broadcast state changes
     broadcaster.broadcast_state_change(DaemonState::Idle).await;
-    broadcaster.broadcast_state_change(DaemonState::Recording).await;
-    broadcaster.broadcast_state_change(DaemonState::Processing).await;
+    broadcaster
+        .broadcast_state_change(DaemonState::Recording)
+        .await;
+    broadcaster
+        .broadcast_state_change(DaemonState::Processing)
+        .await;
 
     // No panic = success
     assert_eq!(broadcaster.client_count().await, 0);

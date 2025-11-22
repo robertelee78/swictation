@@ -58,7 +58,10 @@ impl ContextPattern {
 }
 
 /// Extract context patterns from segments
-pub fn extract_patterns(segments: &[Segment], context_window: usize) -> Result<Vec<ContextPattern>> {
+pub fn extract_patterns(
+    segments: &[Segment],
+    context_window: usize,
+) -> Result<Vec<ContextPattern>> {
     let mut patterns = Vec::new();
 
     // 1. Co-occurrence patterns
@@ -111,17 +114,18 @@ fn extract_cooccurrence_patterns(segments: &[Segment]) -> Result<Vec<ContextPatt
     let patterns: Vec<ContextPattern> = cooccur_map
         .into_iter()
         .filter(|(_, count)| *count >= min_support)
-        .map(|((word_a, word_b, distance), support)| {
-            ContextPattern {
-                pattern_type: PatternType::CoOccurrence {
-                    word_a: word_a.clone(),
-                    word_b: word_b.clone(),
-                    distance,
-                },
-                description: format!("{} appears with {} ({} words apart)", word_a, word_b, distance),
-                confidence: 0.8,
-                support,
-            }
+        .map(|((word_a, word_b, distance), support)| ContextPattern {
+            pattern_type: PatternType::CoOccurrence {
+                word_a: word_a.clone(),
+                word_b: word_b.clone(),
+                distance,
+            },
+            description: format!(
+                "{} appears with {} ({} words apart)",
+                word_a, word_b, distance
+            ),
+            confidence: 0.8,
+            support,
         })
         .collect();
 
@@ -155,8 +159,7 @@ fn extract_temporal_patterns(
 
         if frequent_words.len() >= 2 {
             let time_window = if !window.is_empty() {
-                (window.last().unwrap().timestamp - window.first().unwrap().timestamp)
-                    .num_seconds()
+                (window.last().unwrap().timestamp - window.first().unwrap().timestamp).num_seconds()
             } else {
                 0
             };
@@ -259,8 +262,14 @@ fn infer_context_type(words: &[String]) -> String {
     let technical_words = ["class", "function", "method", "api", "code"];
     let email_words = ["email", "regards", "attached", "please"];
 
-    let tech_score = words.iter().filter(|w| technical_words.contains(&w.as_str())).count();
-    let email_score = words.iter().filter(|w| email_words.contains(&w.as_str())).count();
+    let tech_score = words
+        .iter()
+        .filter(|w| technical_words.contains(&w.as_str()))
+        .count();
+    let email_score = words
+        .iter()
+        .filter(|w| email_words.contains(&w.as_str()))
+        .count();
 
     if tech_score > email_score {
         "Technical".to_string()

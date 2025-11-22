@@ -64,11 +64,7 @@ fn check_directml_available() -> bool {
     unsafe {
         // Try to create a D3D12 device (DirectML requirement)
         let mut device: Option<ID3D12Device> = None;
-        D3D12CreateDevice(
-            None,
-            D3D_FEATURE_LEVEL_11_0,
-            &mut device,
-        ).is_ok()
+        D3D12CreateDevice(None, D3D_FEATURE_LEVEL_11_0, &mut device).is_ok()
     }
 }
 
@@ -135,7 +131,7 @@ pub fn get_gpu_memory_mb() -> Option<(u64, u64)> {
     let output = Command::new("nvidia-smi")
         .args(&[
             "--query-gpu=memory.total,memory.free",
-            "--format=csv,noheader,nounits"
+            "--format=csv,noheader,nounits",
         ])
         .output()
         .ok()?;
@@ -174,7 +170,10 @@ pub fn get_gpu_memory_mb() -> Option<(u64, u64)> {
     }
 
     if free > total {
-        warn!("nvidia-smi reported free ({}) > total ({}) - invalid", free, total);
+        warn!(
+            "nvidia-smi reported free ({}) > total ({}) - invalid",
+            free, total
+        );
         return None;
     }
 
@@ -217,7 +216,7 @@ mod tests {
                 );
 
                 println!("  ✓ Sanity checks passed");
-            },
+            }
             None => {
                 println!("ℹ No NVIDIA GPU detected (expected on CPU-only systems)");
                 // This is not an error - system may not have NVIDIA GPU
@@ -231,42 +230,56 @@ mod tests {
 
         // 1.1B INT8 model requirements
         let model_1_1b_peak = 3500; // 3.5GB peak usage
-        let threshold_1_1b = 4096;  // 4GB minimum threshold
+        let threshold_1_1b = 4096; // 4GB minimum threshold
         let headroom_1_1b = threshold_1_1b - model_1_1b_peak; // 596MB headroom
 
         assert!(
             headroom_1_1b >= 500,
             "1.1B model threshold ({}MB) must have at least 500MB headroom (actual: {}MB)",
-            threshold_1_1b, headroom_1_1b
+            threshold_1_1b,
+            headroom_1_1b
         );
 
-        println!("✓ 1.1B INT8 threshold: {}MB (peak {}MB + {}MB headroom = {:.1}% margin)",
-                 threshold_1_1b, model_1_1b_peak, headroom_1_1b,
-                 (headroom_1_1b as f32 / model_1_1b_peak as f32) * 100.0);
+        println!(
+            "✓ 1.1B INT8 threshold: {}MB (peak {}MB + {}MB headroom = {:.1}% margin)",
+            threshold_1_1b,
+            model_1_1b_peak,
+            headroom_1_1b,
+            (headroom_1_1b as f32 / model_1_1b_peak as f32) * 100.0
+        );
 
         // 0.6B GPU model requirements
         let model_0_6b_peak = 1200; // 1.2GB peak usage
-        let threshold_0_6b = 1536;  // 1.5GB minimum threshold
+        let threshold_0_6b = 1536; // 1.5GB minimum threshold
         let headroom_0_6b = threshold_0_6b - model_0_6b_peak; // 336MB headroom
 
         assert!(
             headroom_0_6b >= 300,
             "0.6B model threshold ({}MB) must have at least 300MB headroom (actual: {}MB)",
-            threshold_0_6b, headroom_0_6b
+            threshold_0_6b,
+            headroom_0_6b
         );
 
-        println!("✓ 0.6B GPU threshold: {}MB (peak {}MB + {}MB headroom = {:.1}% margin)",
-                 threshold_0_6b, model_0_6b_peak, headroom_0_6b,
-                 (headroom_0_6b as f32 / model_0_6b_peak as f32) * 100.0);
+        println!(
+            "✓ 0.6B GPU threshold: {}MB (peak {}MB + {}MB headroom = {:.1}% margin)",
+            threshold_0_6b,
+            model_0_6b_peak,
+            headroom_0_6b,
+            (headroom_0_6b as f32 / model_0_6b_peak as f32) * 100.0
+        );
 
         // Verify threshold ordering
         assert!(
             threshold_1_1b > threshold_0_6b,
             "1.1B threshold ({}MB) must be greater than 0.6B threshold ({}MB)",
-            threshold_1_1b, threshold_0_6b
+            threshold_1_1b,
+            threshold_0_6b
         );
 
-        println!("✓ Threshold ordering correct: {} > {}", threshold_1_1b, threshold_0_6b);
+        println!(
+            "✓ Threshold ordering correct: {} > {}",
+            threshold_1_1b, threshold_0_6b
+        );
     }
 
     #[test]
@@ -346,8 +359,10 @@ mod tests {
                 tc.vram_mb, tc.expected_model, selected, tc.reason
             );
 
-            println!("  ✓ {}MB VRAM → {} ({})",
-                     tc.vram_mb, tc.expected_model, tc.reason);
+            println!(
+                "  ✓ {}MB VRAM → {} ({})",
+                tc.vram_mb, tc.expected_model, tc.reason
+            );
         }
 
         println!("\n✓ All {} test cases passed", test_count);

@@ -6,12 +6,17 @@
 //! - Windows/macOS: Via global-hotkey crate
 
 use anyhow::{Context, Result};
-use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState, hotkey::{HotKey, Code, Modifiers}};
+use global_hotkey::{
+    hotkey::{Code, HotKey, Modifiers},
+    GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState,
+};
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
 use crate::config::HotkeyConfig;
-use crate::display_server::{detect_display_server as detect_display_server_base, DisplayServer as BaseDisplayServer};
+use crate::display_server::{
+    detect_display_server as detect_display_server_base, DisplayServer as BaseDisplayServer,
+};
 
 /// Hotkey events
 #[derive(Debug, Clone)]
@@ -132,7 +137,9 @@ impl HotkeyManager {
                             info!("  3. Name: Swictation Toggle");
                             info!("  4. Command: swictation toggle");
                             info!("     (or: echo '{{\"action\":\"toggle\"}}' | nc -U $XDG_RUNTIME_DIR/swictation.sock)");
-                            info!("  5. Set shortcut: Press Super+Shift+D (or your preferred keys)");
+                            info!(
+                                "  5. Set shortcut: Press Super+Shift+D (or your preferred keys)"
+                            );
                             info!("");
                         }
                     }
@@ -141,7 +148,9 @@ impl HotkeyManager {
                     Ok(None)
                 } else {
                     warn!("Generic Wayland compositor detected");
-                    warn!("Global hotkeys not supported - compositor-specific integration required");
+                    warn!(
+                        "Global hotkeys not supported - compositor-specific integration required"
+                    );
                     warn!("Please configure hotkeys in your compositor to call:");
                     warn!("  - Toggle: swictation toggle");
                     warn!("     (or: echo '{{\"action\":\"toggle\"}}' | nc -U $XDG_RUNTIME_DIR/swictation.sock)");
@@ -170,17 +179,18 @@ impl HotkeyManager {
         };
 
         // Parse and register toggle hotkey
-        let toggle_hotkey = parse_hotkey(&config.toggle)
-            .context("Invalid toggle hotkey")?;
+        let toggle_hotkey = parse_hotkey(&config.toggle).context("Invalid toggle hotkey")?;
         let toggle_hotkey_clone = toggle_hotkey.clone();
-        manager.register(toggle_hotkey)
+        manager
+            .register(toggle_hotkey)
             .context("Failed to register toggle hotkey")?;
 
         // Parse and register push-to-talk hotkey
-        let ptt_hotkey = parse_hotkey(&config.push_to_talk)
-            .context("Invalid push-to-talk hotkey")?;
+        let ptt_hotkey =
+            parse_hotkey(&config.push_to_talk).context("Invalid push-to-talk hotkey")?;
         let ptt_hotkey_clone = ptt_hotkey.clone();
-        manager.register(ptt_hotkey)
+        manager
+            .register(ptt_hotkey)
             .context("Failed to register push-to-talk hotkey")?;
 
         // Create event channel
@@ -189,23 +199,21 @@ impl HotkeyManager {
         // Spawn hotkey event listener thread
         let toggle_id = toggle_hotkey_clone.id();
         let ptt_id = ptt_hotkey_clone.id();
-        std::thread::spawn(move || {
-            loop {
-                if let Ok(event) = GlobalHotKeyEvent::receiver().recv() {
-                    let hotkey_event = if event.id == toggle_id && event.state == HotKeyState::Pressed {
-                        Some(HotkeyEvent::Toggle)
-                    } else if event.id == ptt_id && event.state == HotKeyState::Pressed {
-                        Some(HotkeyEvent::PushToTalkPressed)
-                    } else if event.id == ptt_id && event.state == HotKeyState::Released {
-                        Some(HotkeyEvent::PushToTalkReleased)
-                    } else {
-                        None
-                    };
+        std::thread::spawn(move || loop {
+            if let Ok(event) = GlobalHotKeyEvent::receiver().recv() {
+                let hotkey_event = if event.id == toggle_id && event.state == HotKeyState::Pressed {
+                    Some(HotkeyEvent::Toggle)
+                } else if event.id == ptt_id && event.state == HotKeyState::Pressed {
+                    Some(HotkeyEvent::PushToTalkPressed)
+                } else if event.id == ptt_id && event.state == HotKeyState::Released {
+                    Some(HotkeyEvent::PushToTalkReleased)
+                } else {
+                    None
+                };
 
-                    if let Some(event) = hotkey_event {
-                        if tx.send(event).is_err() {
-                            break;
-                        }
+                if let Some(event) = hotkey_event {
+                    if tx.send(event).is_err() {
+                        break;
                     }
                 }
             }
@@ -297,7 +305,10 @@ impl HotkeyManager {
 
         // Parse the configured hotkeys to Sway format
         let toggle_key = config.toggle.replace("Super", "$mod").replace("+", "+");
-        let ptt_key = config.push_to_talk.replace("Super", "$mod").replace("+", "+");
+        let ptt_key = config
+            .push_to_talk
+            .replace("Super", "$mod")
+            .replace("+", "+");
 
         // Check for potential conflicts
         if config_content.contains(&format!("bindsym {}", toggle_key)) {
@@ -311,8 +322,7 @@ impl HotkeyManager {
 
         // Create backup
         let backup_path = format!("{}.swictation.backup", sway_config_path);
-        std::fs::copy(&sway_config_path, &backup_path)
-            .context("Failed to create config backup")?;
+        std::fs::copy(&sway_config_path, &backup_path).context("Failed to create config backup")?;
         debug!("Created backup at: {}", backup_path);
 
         // Remove any existing Swictation blocks (clean up old configs)
@@ -329,7 +339,10 @@ impl HotkeyManager {
             // Skip lines in Swictation block
             if in_swictation_block {
                 // End block when we hit a non-swictation line (empty line or different section)
-                if line.trim().is_empty() || (!line.trim_start().starts_with("bindsym") && !line.trim_start().starts_with('#')) {
+                if line.trim().is_empty()
+                    || (!line.trim_start().starts_with("bindsym")
+                        && !line.trim_start().starts_with('#'))
+                {
                     in_swictation_block = false;
                     cleaned_content.push_str(line);
                     cleaned_content.push('\n');
@@ -351,8 +364,11 @@ bindsym {} exec swictation toggle
             toggle_key
         );
 
-        std::fs::write(&sway_config_path, format!("{}{}", cleaned_content, hotkey_config))
-            .context("Failed to write Sway config")?;
+        std::fs::write(
+            &sway_config_path,
+            format!("{}{}", cleaned_content, hotkey_config),
+        )
+        .context("Failed to write Sway config")?;
 
         info!("✓ Hotkeys added to Sway config");
         info!("Reloading Sway...");
@@ -381,17 +397,24 @@ bindsym {} exec swictation toggle
             .context("Failed to check for gsettings")?;
 
         if !gsettings_check.status.success() {
-            return Err(anyhow::anyhow!("gsettings command not found - cannot auto-configure GNOME shortcuts"));
+            return Err(anyhow::anyhow!(
+                "gsettings command not found - cannot auto-configure GNOME shortcuts"
+            ));
         }
 
         info!("Configuring GNOME keyboard shortcuts via gsettings...");
 
         // Define the custom keybinding path
-        let custom_path = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/swictation-toggle/";
+        let custom_path =
+            "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/swictation-toggle/";
 
         // Get current custom keybindings list
         let current_bindings_output = Command::new("gsettings")
-            .args(["get", "org.gnome.settings-daemon.plugins.media-keys", "custom-keybindings"])
+            .args([
+                "get",
+                "org.gnome.settings-daemon.plugins.media-keys",
+                "custom-keybindings",
+            ])
             .output()
             .context("Failed to get current custom keybindings")?;
 
@@ -410,7 +433,9 @@ bindsym {} exec swictation toggle
             format!("['{}']", custom_path)
         } else {
             // Add to existing bindings - remove the closing bracket and append
-            let trimmed = current_bindings.trim_start_matches('[').trim_end_matches(']');
+            let trimmed = current_bindings
+                .trim_start_matches('[')
+                .trim_end_matches(']');
             if trimmed.is_empty() {
                 format!("['{}']", custom_path)
             } else {
@@ -430,12 +455,18 @@ bindsym {} exec swictation toggle
                 format!("{}/.local/share/swictation/swictation.sock", home)
             });
 
-        let command = format!("sh -c \"echo '{{\\\"action\\\":\\\"toggle\\\"}}' | nc -U {}\"", socket_path);
+        let command = format!(
+            "sh -c \"echo '{{\\\"action\\\":\\\"toggle\\\"}}' | nc -U {}\"",
+            socket_path
+        );
 
         // Set the custom keybinding properties
         info!("Setting custom keybinding at: {}", custom_path);
 
-        let schema_path = format!("org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:{}", custom_path);
+        let schema_path = format!(
+            "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:{}",
+            custom_path
+        );
 
         // Set name
         let name_result = Command::new("gsettings")
@@ -444,8 +475,10 @@ bindsym {} exec swictation toggle
             .context("Failed to set keybinding name")?;
 
         if !name_result.status.success() {
-            return Err(anyhow::anyhow!("Failed to set keybinding name: {}",
-                String::from_utf8_lossy(&name_result.stderr)));
+            return Err(anyhow::anyhow!(
+                "Failed to set keybinding name: {}",
+                String::from_utf8_lossy(&name_result.stderr)
+            ));
         }
 
         // Set command
@@ -455,8 +488,10 @@ bindsym {} exec swictation toggle
             .context("Failed to set keybinding command")?;
 
         if !cmd_result.status.success() {
-            return Err(anyhow::anyhow!("Failed to set keybinding command: {}",
-                String::from_utf8_lossy(&cmd_result.stderr)));
+            return Err(anyhow::anyhow!(
+                "Failed to set keybinding command: {}",
+                String::from_utf8_lossy(&cmd_result.stderr)
+            ));
         }
 
         // Set binding
@@ -466,19 +501,28 @@ bindsym {} exec swictation toggle
             .context("Failed to set keybinding")?;
 
         if !binding_result.status.success() {
-            return Err(anyhow::anyhow!("Failed to set keybinding: {}",
-                String::from_utf8_lossy(&binding_result.stderr)));
+            return Err(anyhow::anyhow!(
+                "Failed to set keybinding: {}",
+                String::from_utf8_lossy(&binding_result.stderr)
+            ));
         }
 
         // Add our binding to the list
         let list_result = Command::new("gsettings")
-            .args(["set", "org.gnome.settings-daemon.plugins.media-keys", "custom-keybindings", &new_bindings])
+            .args([
+                "set",
+                "org.gnome.settings-daemon.plugins.media-keys",
+                "custom-keybindings",
+                &new_bindings,
+            ])
             .output()
             .context("Failed to update custom keybindings list")?;
 
         if !list_result.status.success() {
-            return Err(anyhow::anyhow!("Failed to update custom keybindings list: {}",
-                String::from_utf8_lossy(&list_result.stderr)));
+            return Err(anyhow::anyhow!(
+                "Failed to update custom keybindings list: {}",
+                String::from_utf8_lossy(&list_result.stderr)
+            ));
         }
 
         info!("✓ GNOME keyboard shortcut configured: {}", toggle_binding);
@@ -497,7 +541,13 @@ bindsym {} exec swictation toggle
 
 impl Drop for HotkeyManager {
     fn drop(&mut self) {
-        if let HotkeyBackend::GlobalHotkey { manager, toggle_hotkey, ptt_hotkey, .. } = &self.backend {
+        if let HotkeyBackend::GlobalHotkey {
+            manager,
+            toggle_hotkey,
+            ptt_hotkey,
+            ..
+        } = &self.backend
+        {
             let _ = manager.unregister(toggle_hotkey.clone());
             let _ = manager.unregister(ptt_hotkey.clone());
         }
@@ -670,12 +720,24 @@ mod tests {
         assert_eq!(convert_to_gnome_binding("Alt+F4").unwrap(), "<Alt>f4");
 
         // Test multiple modifiers
-        assert_eq!(convert_to_gnome_binding("Super+Shift+D").unwrap(), "<Super><Shift>d");
-        assert_eq!(convert_to_gnome_binding("Ctrl+Shift+R").unwrap(), "<Control><Shift>r");
-        assert_eq!(convert_to_gnome_binding("Ctrl+Alt+Delete").unwrap(), "<Control><Alt>delete");
+        assert_eq!(
+            convert_to_gnome_binding("Super+Shift+D").unwrap(),
+            "<Super><Shift>d"
+        );
+        assert_eq!(
+            convert_to_gnome_binding("Ctrl+Shift+R").unwrap(),
+            "<Control><Shift>r"
+        );
+        assert_eq!(
+            convert_to_gnome_binding("Ctrl+Alt+Delete").unwrap(),
+            "<Control><Alt>delete"
+        );
 
         // Test case insensitivity
-        assert_eq!(convert_to_gnome_binding("super+shift+d").unwrap(), "<Super><Shift>d");
+        assert_eq!(
+            convert_to_gnome_binding("super+shift+d").unwrap(),
+            "<Super><Shift>d"
+        );
 
         // Test alternative modifier names
         assert_eq!(convert_to_gnome_binding("Win+D").unwrap(), "<Super>d");

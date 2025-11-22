@@ -221,9 +221,18 @@ mod tests {
         let name_0_6b = "Parakeet-TDT-0.6B";
         let name_1_1b = "Parakeet-TDT-1.1B-INT8";
 
-        assert!(name_0_6b.contains("0.6B"), "0.6B model name should contain size");
-        assert!(name_1_1b.contains("1.1B"), "1.1B model name should contain size");
-        assert!(name_1_1b.contains("INT8"), "1.1B model name should indicate quantization");
+        assert!(
+            name_0_6b.contains("0.6B"),
+            "0.6B model name should contain size"
+        );
+        assert!(
+            name_1_1b.contains("1.1B"),
+            "1.1B model name should contain size"
+        );
+        assert!(
+            name_1_1b.contains("INT8"),
+            "1.1B model name should indicate quantization"
+        );
 
         println!("✓ Model metadata strings verified");
     }

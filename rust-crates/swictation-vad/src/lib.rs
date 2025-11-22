@@ -201,7 +201,9 @@ impl VadConfig {
         }
 
         if self.sample_rate != 16000 {
-            return Err(VadError::config("Sample rate must be 16000 Hz for Silero VAD"));
+            return Err(VadError::config(
+                "Sample rate must be 16000 Hz for Silero VAD",
+            ));
         }
 
         if self.window_size != 512 && self.window_size != 1024 {
@@ -256,7 +258,8 @@ impl VadDetector {
             (config.min_silence_duration * 1000.0) as i32,
             config.provider.clone(),
             config.debug,
-        ).map_err(|e| VadError::initialization(format!("Failed to create VAD: {}", e)))?;
+        )
+        .map_err(|e| VadError::initialization(format!("Failed to create VAD: {}", e)))?;
 
         Ok(Self {
             vad,
@@ -316,8 +319,11 @@ impl VadDetector {
             let chunk = &all_samples[start..end];
 
             // Process this chunk through VAD
-            match self.vad.process(chunk)
-                .map_err(|e| VadError::processing(format!("VAD processing error: {}", e)))? {
+            match self
+                .vad
+                .process(chunk)
+                .map_err(|e| VadError::processing(format!("VAD processing error: {}", e)))?
+            {
                 Some(speech_samples) => {
                     // Speech segment complete from VAD
                     self.is_speaking = true;
@@ -330,7 +336,10 @@ impl VadDetector {
                     }
 
                     // Return this speech segment
-                    let start_sample = (self.total_samples_processed.saturating_sub(speech_samples.len())) as i32;
+                    let start_sample = (self
+                        .total_samples_processed
+                        .saturating_sub(speech_samples.len()))
+                        as i32;
                     result = VadResult::Speech {
                         start_sample,
                         samples: speech_samples,
@@ -349,7 +358,8 @@ impl VadDetector {
         // Save any remaining incomplete chunk for next call
         self.chunk_buffer.clear();
         if samples_to_process < all_samples.len() {
-            self.chunk_buffer.extend_from_slice(&all_samples[samples_to_process..]);
+            self.chunk_buffer
+                .extend_from_slice(&all_samples[samples_to_process..]);
             if self.config.debug {
                 eprintln!(
                     "VAD: Buffering {} incomplete samples for next call",
@@ -383,7 +393,9 @@ impl VadDetector {
             }
 
             self.is_speaking = false;
-            let start_sample = (self.total_samples_processed.saturating_sub(speech_samples.len())) as i32;
+            let start_sample = (self
+                .total_samples_processed
+                .saturating_sub(speech_samples.len())) as i32;
 
             Some(VadResult::Speech {
                 start_sample,
@@ -474,7 +486,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore]  // Only run when explicitly requested
+    #[ignore] // Only run when explicitly requested
     fn test_model_responds_to_input() {
         // Verify the model actually processes different inputs differently
         let config = VadConfig::with_model("/opt/swictation/models/silero-vad/silero_vad.onnx")

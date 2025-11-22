@@ -1,10 +1,10 @@
 //! Minimal live audio level test - just grab audio and print amplitude
 //! Usage: cargo run --release --example test_live_audio [device_index]
 
-use swictation_audio::{AudioCapture, AudioConfig};
+use std::env;
 use std::thread;
 use std::time::Duration;
-use std::env;
+use swictation_audio::{AudioCapture, AudioConfig};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n=== Live Audio Level Test ===\n");
@@ -14,14 +14,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     AudioCapture::print_devices()?;
 
     // Get device index from command line or use default
-    let device_index = env::args()
-        .nth(1)
-        .and_then(|s| s.parse::<usize>().ok());
+    let device_index = env::args().nth(1).and_then(|s| s.parse::<usize>().ok());
 
     if let Some(idx) = device_index {
         println!("\n🎤 Testing device index: {}", idx);
     } else {
-        println!("\n🎤 Testing default device (use 'test_live_audio <index>' to test specific device)");
+        println!(
+            "\n🎤 Testing default device (use 'test_live_audio <index>' to test specific device)"
+        );
     }
 
     // Create audio capture with minimal config
@@ -55,8 +55,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let bars = (peak * 50.0) as usize;
             let bar = "█".repeat(bars.min(50));
 
-            println!("[{:2}s] Peak: {:.4}  RMS: {:.4}  {}",
-                     i as f32 * 0.5, peak, rms, bar);
+            println!(
+                "[{:2}s] Peak: {:.4}  RMS: {:.4}  {}",
+                i as f32 * 0.5,
+                peak,
+                rms,
+                bar
+            );
         }
     }
 

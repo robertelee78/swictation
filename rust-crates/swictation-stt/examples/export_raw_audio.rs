@@ -3,17 +3,15 @@
 //! This tool loads an audio file and exports the raw samples (after resampling)
 //! to CSV format for direct comparison with Python implementations.
 
+use std::fs::File;
+use std::io::Write;
 use swictation_stt::audio::AudioProcessor;
 use swictation_stt::error::SttError;
 use tracing::{info, Level};
-use std::fs::File;
-use std::io::Write;
 
 fn main() -> Result<(), SttError> {
     // Initialize logging
-    tracing_subscriber::fmt()
-        .with_max_level(Level::INFO)
-        .init();
+    tracing_subscriber::fmt().with_max_level(Level::INFO).init();
 
     // Parse command line arguments
     let args: Vec<String> = std::env::args().collect();
@@ -39,9 +37,11 @@ fn main() -> Result<(), SttError> {
     // Load audio file
     info!("Loading audio...");
     let samples = processor.load_audio(&audio_file)?;
-    info!("Loaded {} samples ({:.2}s at 16kHz)",
+    info!(
+        "Loaded {} samples ({:.2}s at 16kHz)",
         samples.len(),
-        samples.len() as f32 / 16000.0);
+        samples.len() as f32 / 16000.0
+    );
 
     // Calculate statistics
     let mean: f32 = samples.iter().sum::<f32>() / samples.len() as f32;

@@ -1,8 +1,8 @@
 //! Test audio recording for 5 seconds
 
-use swictation_audio::{AudioCapture, AudioConfig};
 use std::thread;
 use std::time::Duration;
+use swictation_audio::{AudioCapture, AudioConfig};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Audio Capture Test ===\n");

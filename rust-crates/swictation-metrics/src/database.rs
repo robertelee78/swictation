@@ -30,8 +30,7 @@ impl MetricsDatabase {
         }
 
         // Open connection
-        let conn = Connection::open(&db_path)
-            .context("Failed to open metrics database")?;
+        let conn = Connection::open(&db_path).context("Failed to open metrics database")?;
 
         let db = Self {
             db_path,
@@ -46,8 +45,7 @@ impl MetricsDatabase {
 
     /// Expand ~ and environment variables in path
     fn expand_path<P: AsRef<Path>>(path: P) -> Result<PathBuf> {
-        let path_str = path.as_ref().to_str()
-            .context("Invalid path encoding")?;
+        let path_str = path.as_ref().to_str().context("Invalid path encoding")?;
 
         let expanded = if path_str.starts_with('~') {
             if let Some(home) = dirs::home_dir() {
@@ -176,7 +174,8 @@ impl MetricsDatabase {
     pub fn insert_session(&self, session: &SessionMetrics) -> Result<i64> {
         let conn = self.conn.lock().unwrap();
 
-        let start_time = session.session_start
+        let start_time = session
+            .session_start
             .map(|dt| dt.timestamp() as f64)
             .unwrap_or_else(|| Utc::now().timestamp() as f64);
 
@@ -247,7 +246,8 @@ impl MetricsDatabase {
     pub fn insert_segment(&self, segment: &SegmentMetrics, store_text: bool) -> Result<i64> {
         let conn = self.conn.lock().unwrap();
 
-        let timestamp = segment.timestamp
+        let timestamp = segment
+            .timestamp
             .map(|dt| dt.timestamp() as f64)
             .unwrap_or_else(|| Utc::now().timestamp() as f64);
 
@@ -289,9 +289,7 @@ impl MetricsDatabase {
     pub fn get_session(&self, session_id: i64) -> Result<Option<SessionMetrics>> {
         let conn = self.conn.lock().unwrap();
 
-        let mut stmt = conn.prepare(
-            "SELECT * FROM sessions WHERE id = ?1"
-        )?;
+        let mut stmt = conn.prepare("SELECT * FROM sessions WHERE id = ?1")?;
 
         let mut rows = stmt.query(params![session_id])?;
 
@@ -320,7 +318,8 @@ impl MetricsDatabase {
     pub fn update_lifetime_metrics(&self, metrics: &LifetimeMetrics) -> Result<()> {
         let conn = self.conn.lock().unwrap();
 
-        let last_updated = metrics.last_updated
+        let last_updated = metrics
+            .last_updated
             .map(|dt| dt.timestamp() as f64)
             .unwrap_or_else(|| Utc::now().timestamp() as f64);
 
@@ -400,8 +399,19 @@ impl MetricsDatabase {
              WHERE end_time IS NOT NULL"
         )?;
 
-        let result: Result<(i32, i32, i32, f64, f64, f64, Option<f64>, Option<i64>, Option<f64>, Option<i64>)> =
-            stmt.query_row([], |row| {
+        let result: Result<(
+            i32,
+            i32,
+            i32,
+            f64,
+            f64,
+            f64,
+            Option<f64>,
+            Option<i64>,
+            Option<f64>,
+            Option<i64>,
+        )> = stmt
+            .query_row([], |row| {
                 Ok((
                     row.get(0)?,
                     row.get(1)?,
@@ -414,18 +424,26 @@ impl MetricsDatabase {
                     row.get(8)?,
                     row.get(9)?,
                 ))
-            }).map_err(|e| anyhow::anyhow!("Failed to aggregate sessions: {}", e));
+            })
+            .map_err(|e| anyhow::anyhow!("Failed to aggregate sessions: {}", e));
 
-        let (total_words, total_characters, total_sessions, total_time_minutes,
-             avg_wpm, avg_latency_ms, best_wpm, best_wpm_session,
-             lowest_latency, lowest_latency_session) = result?;
+        let (
+            total_words,
+            total_characters,
+            total_sessions,
+            total_time_minutes,
+            avg_wpm,
+            avg_latency_ms,
+            best_wpm,
+            best_wpm_session,
+            lowest_latency,
+            lowest_latency_session,
+        ) = result?;
 
         // Count total segments
-        let total_segments: i32 = conn.query_row(
-            "SELECT COUNT(*) FROM segments",
-            [],
-            |row| row.get(0)
-        ).unwrap_or(0);
+        let total_segments: i32 = conn
+            .query_row("SELECT COUNT(*) FROM segments", [], |row| row.get(0))
+            .unwrap_or(0);
 
         // Calculate time saved (assuming 40 WPM typing baseline)
         let typing_baseline_wpm = 40.0;
@@ -483,12 +501,10 @@ impl MetricsDatabase {
 
         Ok(SessionMetrics {
             session_id: row.get("id")?,
-            session_start: start_time.map(|t| {
-                DateTime::from_timestamp(t as i64, 0).unwrap_or_else(Utc::now)
-            }),
-            session_end: end_time.map(|t| {
-                DateTime::from_timestamp(t as i64, 0).unwrap_or_else(Utc::now)
-            }),
+            session_start: start_time
+                .map(|t| DateTime::from_timestamp(t as i64, 0).unwrap_or_else(Utc::now)),
+            session_end: end_time
+                .map(|t| DateTime::from_timestamp(t as i64, 0).unwrap_or_else(Utc::now)),
             total_duration_s: row.get("duration_s").unwrap_or(0.0),
             active_dictation_time_s: row.get("active_time_s").unwrap_or(0.0),
             pause_time_s: row.get("pause_time_s").unwrap_or(0.0),
@@ -539,9 +555,8 @@ impl MetricsDatabase {
             longest_session_id: row.get("longest_session_id").ok(),
             lowest_latency_session: row.get("lowest_latency_session").ok(),
             lowest_latency_ms: row.get("lowest_latency_ms").unwrap_or(0.0),
-            last_updated: last_updated.map(|t| {
-                DateTime::from_timestamp(t as i64, 0).unwrap_or_else(Utc::now)
-            }),
+            last_updated: last_updated
+                .map(|t| DateTime::from_timestamp(t as i64, 0).unwrap_or_else(Utc::now)),
         })
     }
 
@@ -549,9 +564,7 @@ impl MetricsDatabase {
     pub fn get_recent_sessions(&self, limit: usize) -> Result<Vec<SessionMetrics>> {
         let conn = self.conn.lock().unwrap();
 
-        let mut stmt = conn.prepare(
-            "SELECT * FROM sessions ORDER BY start_time DESC LIMIT ?1"
-        )?;
+        let mut stmt = conn.prepare("SELECT * FROM sessions ORDER BY start_time DESC LIMIT ?1")?;
 
         let rows = stmt.query_map(params![limit], |row| {
             let start_time: Option<f64> = row.get("start_time")?;
@@ -559,12 +572,10 @@ impl MetricsDatabase {
 
             Ok(SessionMetrics {
                 session_id: row.get("id")?,
-                session_start: start_time.map(|t| {
-                    DateTime::from_timestamp(t as i64, 0).unwrap_or_else(Utc::now)
-                }),
-                session_end: end_time.map(|t| {
-                    DateTime::from_timestamp(t as i64, 0).unwrap_or_else(Utc::now)
-                }),
+                session_start: start_time
+                    .map(|t| DateTime::from_timestamp(t as i64, 0).unwrap_or_else(Utc::now)),
+                session_end: end_time
+                    .map(|t| DateTime::from_timestamp(t as i64, 0).unwrap_or_else(Utc::now)),
                 total_duration_s: row.get("duration_s").unwrap_or(0.0),
                 active_dictation_time_s: row.get("active_time_s").unwrap_or(0.0),
                 pause_time_s: row.get("pause_time_s").unwrap_or(0.0),
@@ -600,9 +611,8 @@ impl MetricsDatabase {
     pub fn get_session_segments(&self, session_id: i64) -> Result<Vec<SegmentMetrics>> {
         let conn = self.conn.lock().unwrap();
 
-        let mut stmt = conn.prepare(
-            "SELECT * FROM segments WHERE session_id = ?1 ORDER BY timestamp ASC"
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT * FROM segments WHERE session_id = ?1 ORDER BY timestamp ASC")?;
 
         let rows = stmt.query_map(params![session_id], |row| {
             let timestamp: Option<f64> = row.get("timestamp")?;
@@ -610,9 +620,8 @@ impl MetricsDatabase {
             Ok(SegmentMetrics {
                 segment_id: row.get("id").ok(),
                 session_id: Some(session_id),
-                timestamp: timestamp.map(|t| {
-                    DateTime::from_timestamp(t as i64, 0).unwrap_or_else(Utc::now)
-                }),
+                timestamp: timestamp
+                    .map(|t| DateTime::from_timestamp(t as i64, 0).unwrap_or_else(Utc::now)),
                 duration_s: row.get("duration_s").unwrap_or(0.0),
                 words: row.get("words").unwrap_or(0),
                 characters: row.get("characters").unwrap_or(0),
@@ -648,7 +657,7 @@ impl MetricsDatabase {
             "SELECT * FROM segments
              WHERE text LIKE ?1
              ORDER BY timestamp DESC
-             LIMIT ?2"
+             LIMIT ?2",
         )?;
 
         let rows = stmt.query_map(params![search_pattern, limit], |row| {
@@ -658,9 +667,8 @@ impl MetricsDatabase {
             Ok(SegmentMetrics {
                 segment_id: row.get("id").ok(),
                 session_id: Some(session_id),
-                timestamp: timestamp.map(|t| {
-                    DateTime::from_timestamp(t as i64, 0).unwrap_or_else(Utc::now)
-                }),
+                timestamp: timestamp
+                    .map(|t| DateTime::from_timestamp(t as i64, 0).unwrap_or_else(Utc::now)),
                 duration_s: row.get("duration_s").unwrap_or(0.0),
                 words: row.get("words").unwrap_or(0),
                 characters: row.get("characters").unwrap_or(0),
@@ -695,9 +703,8 @@ impl MetricsDatabase {
 
         let cutoff_time = Utc::now().timestamp() as f64 - (days as f64 * 24.0 * 60.0 * 60.0);
 
-        let mut stmt = conn.prepare(
-            "SELECT * FROM sessions WHERE start_time >= ?1 ORDER BY start_time ASC"
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT * FROM sessions WHERE start_time >= ?1 ORDER BY start_time ASC")?;
 
         let rows = stmt.query_map(params![cutoff_time], |row| {
             let start_time: Option<f64> = row.get("start_time")?;
@@ -705,12 +712,10 @@ impl MetricsDatabase {
 
             Ok(SessionMetrics {
                 session_id: row.get("id")?,
-                session_start: start_time.map(|t| {
-                    DateTime::from_timestamp(t as i64, 0).unwrap_or_else(Utc::now)
-                }),
-                session_end: end_time.map(|t| {
-                    DateTime::from_timestamp(t as i64, 0).unwrap_or_else(Utc::now)
-                }),
+                session_start: start_time
+                    .map(|t| DateTime::from_timestamp(t as i64, 0).unwrap_or_else(Utc::now)),
+                session_end: end_time
+                    .map(|t| DateTime::from_timestamp(t as i64, 0).unwrap_or_else(Utc::now)),
                 total_duration_s: row.get("duration_s").unwrap_or(0.0),
                 active_dictation_time_s: row.get("active_time_s").unwrap_or(0.0),
                 pause_time_s: row.get("pause_time_s").unwrap_or(0.0),

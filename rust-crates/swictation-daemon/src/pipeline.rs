@@ -1,21 +1,21 @@
 //! Audio → VAD → STT → Midstream → Corrections → Text Injection pipeline integration
 
 use anyhow::{Context, Result};
+use chrono::Utc;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
-use chrono::Utc;
 
-use swictation_audio::AudioCapture;
-use swictation_vad::{VadConfig, VadDetector, VadResult};
-use swictation_stt::{SttEngine, OrtRecognizer};
 use midstreamer_text_transform::transform;
-use swictation_metrics::{MetricsCollector, SegmentMetrics};
+use swictation_audio::AudioCapture;
 use swictation_broadcaster::MetricsBroadcaster;
+use swictation_metrics::{MetricsCollector, SegmentMetrics};
+use swictation_stt::{OrtRecognizer, SttEngine};
+use swictation_vad::{VadConfig, VadDetector, VadResult};
 
-use crate::config::DaemonConfig;
 use crate::capitalization::{apply_capitalization, process_capital_commands};
+use crate::config::DaemonConfig;
 use crate::corrections::CorrectionEngine;
 use crate::gpu::get_gpu_memory_mb;
 
@@ -52,7 +52,10 @@ pub struct Pipeline {
 impl Pipeline {
     /// Create new pipeline with GPU acceleration
     /// Returns (Pipeline, transcription_receiver)
-    pub async fn new(config: DaemonConfig, gpu_provider: Option<String>) -> Result<(Self, mpsc::Receiver<Result<String>>)> {
+    pub async fn new(
+        config: DaemonConfig,
+        gpu_provider: Option<String>,
+    ) -> Result<(Self, mpsc::Receiver<Result<String>>)> {
         info!("Initializing Audio capture...");
         let audio_config = swictation_audio::AudioConfig {
             sample_rate: 16000,
@@ -63,11 +66,13 @@ impl Pipeline {
             streaming_mode: true,
             chunk_duration: 0.5,
         };
-        let audio = AudioCapture::new(audio_config)
-            .context("Failed to initialize audio capture")?;
+        let audio =
+            AudioCapture::new(audio_config).context("Failed to initialize audio capture")?;
 
-        info!("Initializing VAD with {} provider...",
-              gpu_provider.as_deref().unwrap_or("CPU"));
+        info!(
+            "Initializing VAD with {} provider...",
+            gpu_provider.as_deref().unwrap_or("CPU")
+        );
         let vad_config = VadConfig::with_model(config.vad_model_path.display().to_string())
             .min_silence(config.vad_min_silence)
             .min_speech(config.vad_min_speech)
@@ -75,10 +80,9 @@ impl Pipeline {
             .threshold(config.vad_threshold)
             .provider(gpu_provider.clone())
             .num_threads(config.num_threads)
-            .debug();  // Enable VAD debug output for troubleshooting
+            .debug(); // Enable VAD debug output for troubleshooting
 
-        let vad = VadDetector::new(vad_config)
-            .context("Failed to initialize VAD")?;
+        let vad = VadDetector::new(vad_config).context("Failed to initialize VAD")?;
 
         // ADAPTIVE MODEL SELECTION based on GPU VRAM availability
         // Decision tree:
@@ -100,30 +104,42 @@ impl Pipeline {
                 "1.1b-gpu" => {
                     info!("  Loading Parakeet-TDT-1.1B-INT8 via ONNX Runtime (forced)...");
                     let ort_recognizer = OrtRecognizer::new(&config.stt_1_1b_model_path, true)
-                        .map_err(|e| anyhow::anyhow!(
-                            "Failed to load 1.1B INT8 model from {}. \
-                            \nError: {}", config.stt_1_1b_model_path.display(), e
-                        ))?;
+                        .map_err(|e| {
+                            anyhow::anyhow!(
+                                "Failed to load 1.1B INT8 model from {}. \
+                            \nError: {}",
+                                config.stt_1_1b_model_path.display(),
+                                e
+                            )
+                        })?;
                     info!("✓ Parakeet-TDT-1.1B-INT8 loaded successfully (GPU, forced)");
                     SttEngine::Parakeet1_1B(ort_recognizer)
                 }
                 "0.6b-gpu" => {
                     info!("  Loading Parakeet-TDT-0.6B via ONNX Runtime (GPU, forced)...");
                     let ort_recognizer = OrtRecognizer::new(&config.stt_0_6b_model_path, true)
-                        .map_err(|e| anyhow::anyhow!(
-                            "Failed to load 0.6B GPU model from {}. \
-                            \nError: {}", config.stt_0_6b_model_path.display(), e
-                        ))?;
+                        .map_err(|e| {
+                            anyhow::anyhow!(
+                                "Failed to load 0.6B GPU model from {}. \
+                            \nError: {}",
+                                config.stt_0_6b_model_path.display(),
+                                e
+                            )
+                        })?;
                     info!("✓ Parakeet-TDT-0.6B loaded successfully (GPU, forced)");
                     SttEngine::Parakeet0_6B(ort_recognizer)
                 }
                 "0.6b-cpu" => {
                     info!("  Loading Parakeet-TDT-0.6B via ONNX Runtime (CPU, forced)...");
                     let ort_recognizer = OrtRecognizer::new(&config.stt_0_6b_model_path, false)
-                        .map_err(|e| anyhow::anyhow!(
-                            "Failed to load 0.6B CPU model from {}. \
-                            \nError: {}", config.stt_0_6b_model_path.display(), e
-                        ))?;
+                        .map_err(|e| {
+                            anyhow::anyhow!(
+                                "Failed to load 0.6B CPU model from {}. \
+                            \nError: {}",
+                                config.stt_0_6b_model_path.display(),
+                                e
+                            )
+                        })?;
                     info!("✓ Parakeet-TDT-0.6B loaded successfully (CPU, forced)");
                     SttEngine::Parakeet0_6B(ort_recognizer)
                 }
@@ -142,7 +158,7 @@ impl Pipeline {
             let vram_mb = get_gpu_memory_mb().map(|(total, _free)| total);
 
             if let Some(vram) = vram_mb {
-            info!("Detected GPU with {}MB VRAM", vram);
+                info!("Detected GPU with {}MB VRAM", vram);
 
                 if vram >= 6000 {
                     // High VRAM: Use 1.1B INT8 model for best quality (5.77% WER)
@@ -162,7 +178,6 @@ impl Pipeline {
 
                     info!("✓ Parakeet-TDT-1.1B-INT8 loaded successfully (GPU)");
                     SttEngine::Parakeet1_1B(ort_recognizer)
-
                 } else if vram >= 3500 {
                     // Moderate VRAM: Use 0.6B GPU for good quality (7-8% WER)
                     info!("✓ Sufficient VRAM for 0.6B GPU model (requires ≥3.5GB)");
@@ -181,7 +196,6 @@ impl Pipeline {
 
                     info!("✓ Parakeet-TDT-0.6B loaded successfully (GPU)");
                     SttEngine::Parakeet0_6B(ort_recognizer)
-
                 } else {
                     // Low VRAM: Fall back to CPU
                     warn!("⚠️  Only {}MB VRAM available (need ≥3.5GB for GPU)", vram);
@@ -189,14 +203,18 @@ impl Pipeline {
                     info!("  Loading Parakeet-TDT-0.6B via ONNX Runtime (CPU)...");
 
                     let ort_recognizer = OrtRecognizer::new(&config.stt_0_6b_model_path, false)
-                        .map_err(|e| anyhow::anyhow!(
-                            "Failed to load 0.6B CPU model. \
+                        .map_err(|e| {
+                            anyhow::anyhow!(
+                                "Failed to load 0.6B CPU model. \
                             \nTroubleshooting:\
                             \n  1. Verify model files: ls {}\
                             \n  2. Check available RAM (need ~1GB free)\
                             \n  3. Ensure ONNX Runtime CPU EP is available\
-                            \nError: {}", config.stt_0_6b_model_path.display(), e
-                        ))?;
+                            \nError: {}",
+                                config.stt_0_6b_model_path.display(),
+                                e
+                            )
+                        })?;
 
                     info!("✓ Parakeet-TDT-0.6B loaded successfully (CPU)");
                     SttEngine::Parakeet0_6B(ort_recognizer)
@@ -208,14 +226,18 @@ impl Pipeline {
                 info!("  Loading Parakeet-TDT-0.6B via ONNX Runtime (CPU)...");
 
                 let ort_recognizer = OrtRecognizer::new(&config.stt_0_6b_model_path, false)
-                    .map_err(|e| anyhow::anyhow!(
-                        "Failed to load 0.6B CPU model. \
+                    .map_err(|e| {
+                        anyhow::anyhow!(
+                            "Failed to load 0.6B CPU model. \
                         \nTroubleshooting:\
                         \n  1. Verify model files: ls {}\
                         \n  2. Check available RAM (need ~1GB free)\
                         \n  3. Ensure ONNX Runtime CPU EP is available\
-                        \nError: {}", config.stt_0_6b_model_path.display(), e
-                    ))?;
+                        \nError: {}",
+                            config.stt_0_6b_model_path.display(),
+                            e
+                        )
+                    })?;
 
                 info!("✓ Parakeet-TDT-0.6B loaded successfully (CPU)");
                 SttEngine::Parakeet0_6B(ort_recognizer)
@@ -223,10 +245,12 @@ impl Pipeline {
         };
 
         // Log final configuration
-        info!("📊 STT Engine: {} ({}, {})",
-              stt.model_name(),
-              stt.model_size(),
-              stt.backend());
+        info!(
+            "📊 STT Engine: {} ({}, {})",
+            stt.model_name(),
+            stt.model_size(),
+            stt.backend()
+        );
 
         if stt.vram_required_mb() > 0 {
             info!("   Minimum VRAM: {}MB", stt.vram_required_mb());
@@ -242,18 +266,18 @@ impl Pipeline {
 
         // Ensure directory exists
         if let Some(parent) = metrics_db_path.parent() {
-            std::fs::create_dir_all(parent)
-                .context("Failed to create metrics directory")?;
+            std::fs::create_dir_all(parent).context("Failed to create metrics directory")?;
         }
 
         let metrics = MetricsCollector::new(
             metrics_db_path.to_str().unwrap(),
-            40.0,  // typing_baseline_wpm
-            false, // store_transcription_text - keep transcriptions ephemeral
-            true,  // warnings_enabled
+            40.0,   // typing_baseline_wpm
+            false,  // store_transcription_text - keep transcriptions ephemeral
+            true,   // warnings_enabled
             1000.0, // high_latency_threshold_ms
             80.0,   // gpu_memory_threshold_percent
-        ).context("Failed to initialize metrics collector")?;
+        )
+        .context("Failed to initialize metrics collector")?;
 
         // Enable GPU monitoring if provider is available
         if let Some(ref provider) = gpu_provider {
@@ -271,12 +295,14 @@ impl Pipeline {
             .join("swictation");
 
         // Ensure config directory exists
-        std::fs::create_dir_all(&corrections_dir)
-            .context("Failed to create config directory")?;
+        std::fs::create_dir_all(&corrections_dir).context("Failed to create config directory")?;
 
         let mut corrections = CorrectionEngine::new(corrections_dir, config.phonetic_threshold);
         if let Err(e) = corrections.start_watching() {
-            warn!("Failed to start corrections file watcher: {}. Hot-reload disabled.", e);
+            warn!(
+                "Failed to start corrections file watcher: {}. Hot-reload disabled.",
+                e
+            );
         }
         let corrections = Arc::new(corrections);
         info!("✓ Corrections engine initialized");
@@ -329,8 +355,10 @@ impl Pipeline {
                         // Channel full - backpressure activated
                         // Drop this chunk to prevent blocking audio thread
                         dropped_chunks_clone.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        eprintln!("WARNING: Audio chunk dropped (processing too slow). Total dropped: {}",
-                                  dropped_chunks_clone.load(std::sync::atomic::Ordering::Relaxed));
+                        eprintln!(
+                            "WARNING: Audio chunk dropped (processing too slow). Total dropped: {}",
+                            dropped_chunks_clone.load(std::sync::atomic::Ordering::Relaxed)
+                        );
                     }
                     Err(mpsc::error::TrySendError::Closed(_)) => {
                         // Channel closed - recording stopped
@@ -381,17 +409,23 @@ impl Pipeline {
             while let Some(chunk) = audio_rx.recv().await {
                 chunk_count += 1;
                 if chunk_count % 10 == 0 {
-                    eprintln!("DEBUG: Received {} chunks, chunk size: {}", chunk_count, chunk.len());
+                    eprintln!(
+                        "DEBUG: Received {} chunks, chunk size: {}",
+                        chunk_count,
+                        chunk.len()
+                    );
                 }
                 buffer.extend_from_slice(&chunk);
 
                 // Process in 0.5 second chunks for VAD
-                while buffer.len() >= 8000 { // 0.5 second chunks at 16kHz
+                while buffer.len() >= 8000 {
+                    // 0.5 second chunks at 16kHz
                     let vad_chunk: Vec<f32> = buffer.drain(..8000).collect();
 
                     // Check audio levels
                     let max_amplitude = vad_chunk.iter().map(|x| x.abs()).fold(0.0f32, f32::max);
-                    let avg_amplitude = vad_chunk.iter().map(|x| x.abs()).sum::<f32>() / vad_chunk.len() as f32;
+                    let avg_amplitude =
+                        vad_chunk.iter().map(|x| x.abs()).sum::<f32>() / vad_chunk.len() as f32;
                     eprintln!("DEBUG: Processing VAD chunk, buffer len: {}, max_amplitude: {:.6}, avg_amplitude: {:.6}",
                               buffer.len(), max_amplitude, avg_amplitude);
 
@@ -408,8 +442,14 @@ impl Pipeline {
                     }; // vad_lock automatically dropped here
 
                     match vad_result {
-                        Ok(VadResult::Speech { samples: speech_samples, .. }) => {
-                            eprintln!("DEBUG: VAD detected speech! {} samples", speech_samples.len());
+                        Ok(VadResult::Speech {
+                            samples: speech_samples,
+                            ..
+                        }) => {
+                            eprintln!(
+                                "DEBUG: VAD detected speech! {} samples",
+                                speech_samples.len()
+                            );
 
                             // Send speech segment to STT task (non-blocking with backpressure)
                             if let Err(e) = vad_tx.send(speech_samples).await {
@@ -493,13 +533,11 @@ impl Pipeline {
                     let char_count = capitalized.len() as i32;
 
                     // Get current session ID (scoped to ensure lock is dropped)
-                    let current_session_id = {
-                        *session_id.lock().unwrap()
-                    };
+                    let current_session_id = { *session_id.lock().unwrap() };
 
                     if let Some(sid) = current_session_id {
                         let duration_s = (speech_samples.len() as f64) / 16000.0; // samples / sample_rate
-                        // Note: VAD latency not tracked in parallel mode (VAD runs independently)
+                                                                                  // Note: VAD latency not tracked in parallel mode (VAD runs independently)
                         let total_latency_ms = stt_latency + (transform_latency / 1000.0);
 
                         let segment = SegmentMetrics {
@@ -510,7 +548,7 @@ impl Pipeline {
                             words: word_count,
                             characters: char_count,
                             text: capitalized.clone(), // Will be ignored since store_text=false
-                            vad_latency_ms: 0.0, // Not tracked in parallel mode
+                            vad_latency_ms: 0.0,       // Not tracked in parallel mode
                             audio_save_latency_ms: 0.0,
                             stt_latency_ms: stt_latency,
                             transform_latency_us: transform_latency,
@@ -528,21 +566,22 @@ impl Pipeline {
                         }
 
                         // Broadcast transcription to UI clients (scoped to ensure lock is dropped)
-                        let broadcaster_clone = {
-                            broadcaster.lock().unwrap().as_ref().map(|b| b.clone())
-                        };
+                        let broadcaster_clone =
+                            { broadcaster.lock().unwrap().as_ref().map(|b| b.clone()) };
 
                         if let Some(broadcaster_ref) = broadcaster_clone {
                             let wpm = (word_count as f64 / (duration_s / 60.0)).min(300.0); // Cap at 300 WPM
                             tokio::spawn({
                                 let text_clone = capitalized.clone();
                                 async move {
-                                    broadcaster_ref.add_transcription(
-                                        text_clone,
-                                        wpm,
-                                        total_latency_ms,
-                                        word_count,
-                                    ).await;
+                                    broadcaster_ref
+                                        .add_transcription(
+                                            text_clone,
+                                            wpm,
+                                            total_latency_ms,
+                                            word_count,
+                                        )
+                                        .await;
                                 }
                             });
                         }
@@ -577,12 +616,21 @@ impl Pipeline {
 
         // Flush remaining audio through VAD and process any final speech
         if let Some(vad_result) = self.vad.lock().unwrap().flush() {
-            if let swictation_vad::VadResult::Speech { samples: speech_samples, .. } = vad_result {
-                info!("Processing flushed speech segment: {} samples", speech_samples.len());
+            if let swictation_vad::VadResult::Speech {
+                samples: speech_samples,
+                ..
+            } = vad_result
+            {
+                info!(
+                    "Processing flushed speech segment: {} samples",
+                    speech_samples.len()
+                );
 
                 // DEBUG: Save flushed audio to file for analysis
                 match save_audio_debug(&speech_samples, "/tmp/swictation_flushed_audio.wav") {
-                    Ok(()) => eprintln!("DEBUG: Saved flushed audio to /tmp/swictation_flushed_audio.wav"),
+                    Ok(()) => {
+                        eprintln!("DEBUG: Saved flushed audio to /tmp/swictation_flushed_audio.wav")
+                    }
                     Err(e) => eprintln!("DEBUG: Failed to save audio: {}", e),
                 }
 
@@ -648,7 +696,8 @@ impl Pipeline {
 
                     if let Some(sid) = current_session_id {
                         let duration_s = (speech_samples.len() as f64) / 16000.0;
-                        let total_latency_ms = vad_latency + stt_latency + (transform_latency / 1000.0);
+                        let total_latency_ms =
+                            vad_latency + stt_latency + (transform_latency / 1000.0);
 
                         let segment = SegmentMetrics {
                             segment_id: None,
@@ -679,12 +728,14 @@ impl Pipeline {
                                 let broadcaster = broadcaster_ref.clone();
                                 let text_clone = capitalized.clone();
                                 async move {
-                                    broadcaster.add_transcription(
-                                        text_clone,
-                                        wpm,
-                                        total_latency_ms,
-                                        word_count,
-                                    ).await;
+                                    broadcaster
+                                        .add_transcription(
+                                            text_clone,
+                                            wpm,
+                                            total_latency_ms,
+                                            word_count,
+                                        )
+                                        .await;
                                 }
                             });
                         }
@@ -760,12 +811,13 @@ fn save_audio_debug(samples: &[f32], path: &str) -> Result<()> {
 
     for &sample in samples {
         let sample_i16 = (sample * 32767.0).clamp(-32768.0, 32767.0) as i16;
-        writer.write_sample(sample_i16)
+        writer
+            .write_sample(sample_i16)
             .map_err(|e| anyhow::anyhow!("Failed to write sample: {}", e))?;
     }
 
-    writer.finalize()
+    writer
+        .finalize()
         .map_err(|e| anyhow::anyhow!("Failed to finalize WAV: {}", e))?;
     Ok(())
 }
-

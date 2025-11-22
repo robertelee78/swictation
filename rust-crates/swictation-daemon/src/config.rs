@@ -55,8 +55,8 @@ pub struct HotkeyConfig {
 impl Default for HotkeyConfig {
     fn default() -> Self {
         Self {
-            toggle: "Super+Shift+D".to_string(),  // Windows/Super key + Shift + D (Dictation)
-            push_to_talk: "Super+Space".to_string(),  // Windows/Super key + Space
+            toggle: "Super+Shift+D".to_string(), // Windows/Super key + Shift + D (Dictation)
+            push_to_talk: "Super+Space".to_string(), // Windows/Super key + Space
         }
     }
 }
@@ -147,19 +147,18 @@ impl DaemonConfig {
 
         if config_path.exists() {
             // Load existing config
-            let contents = std::fs::read_to_string(&config_path)
-                .context("Failed to read config file")?;
+            let contents =
+                std::fs::read_to_string(&config_path).context("Failed to read config file")?;
 
-            let mut config: DaemonConfig = toml::from_str(&contents)
-                .context("Failed to parse config file")?;
+            let mut config: DaemonConfig =
+                toml::from_str(&contents).context("Failed to parse config file")?;
 
             config.config_path = config_path;
             Ok(config)
         } else {
             // Create default config
             let config = Self::default();
-            config.save()
-                .context("Failed to save default config")?;
+            config.save().context("Failed to save default config")?;
             Ok(config)
         }
     }
@@ -168,15 +167,12 @@ impl DaemonConfig {
     pub fn save(&self) -> Result<()> {
         // Ensure config directory exists
         if let Some(parent) = self.config_path.parent() {
-            std::fs::create_dir_all(parent)
-                .context("Failed to create config directory")?;
+            std::fs::create_dir_all(parent).context("Failed to create config directory")?;
         }
 
-        let contents = toml::to_string_pretty(self)
-            .context("Failed to serialize config")?;
+        let contents = toml::to_string_pretty(self).context("Failed to serialize config")?;
 
-        std::fs::write(&self.config_path, contents)
-            .context("Failed to write config file")?;
+        std::fs::write(&self.config_path, contents).context("Failed to write config file")?;
 
         Ok(())
     }

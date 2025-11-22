@@ -1,9 +1,8 @@
+use std::path::PathBuf;
 /// Direct STT test for Maxwell GPU debugging
 /// Bypasses all audio capture - feeds WAV file directly to model
 /// Uses OrtRecognizer (same as daemon) with detailed logging
-
 use swictation_stt::OrtRecognizer;
-use std::path::PathBuf;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🧪 Maxwell GPU STT Direct Inference Test");
@@ -85,7 +84,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🔍 Additional Diagnostics:");
     println!("   ORT_DYLIB_PATH: {:?}", std::env::var("ORT_DYLIB_PATH"));
     println!("   LD_LIBRARY_PATH: {:?}", std::env::var("LD_LIBRARY_PATH"));
-    println!("   CUDA_VISIBLE_DEVICES: {:?}", std::env::var("CUDA_VISIBLE_DEVICES"));
+    println!(
+        "   CUDA_VISIBLE_DEVICES: {:?}",
+        std::env::var("CUDA_VISIBLE_DEVICES")
+    );
 
     Ok(())
 }

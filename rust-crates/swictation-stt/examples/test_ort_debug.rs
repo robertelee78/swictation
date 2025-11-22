@@ -3,8 +3,8 @@
 //!
 //! Run with: RUST_LOG=debug cargo run --release --example test_ort_debug
 
-use swictation_stt::recognizer_ort::OrtRecognizer;
 use std::env;
+use swictation_stt::recognizer_ort::OrtRecognizer;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
@@ -16,7 +16,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Model and audio paths
     let model_dir = "/opt/swictation/models/parakeet-tdt-1.1b";
-    let audio_file = env::args().nth(1)
+    let audio_file = env::args()
+        .nth(1)
         .unwrap_or_else(|| "/opt/swictation/examples/en-short.mp3".to_string());
 
     println!("\n📦 Model: {}", model_dir);

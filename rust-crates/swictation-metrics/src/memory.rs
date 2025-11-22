@@ -3,9 +3,9 @@
 //! Provides comprehensive memory monitoring for both RAM and VRAM
 //! with platform-specific GPU APIs (NVML, Metal, DirectML)
 
-use sysinfo::{System, Pid};
+use serde::{Deserialize, Serialize};
+use sysinfo::{Pid, System};
 use thiserror::Error;
-use serde::{Serialize, Deserialize};
 
 #[derive(Debug, Error)]
 pub enum MemoryError {
@@ -129,7 +129,10 @@ impl MemoryMonitor {
                 provider
             }
             Err(e) => {
-                tracing::warn!("GPU memory monitoring unavailable: {} - continuing with RAM-only monitoring", e);
+                tracing::warn!(
+                    "GPU memory monitoring unavailable: {} - continuing with RAM-only monitoring",
+                    e
+                );
                 Box::new(CpuProvider::new())
             }
         };
@@ -167,13 +170,16 @@ impl MemoryMonitor {
     /// Get RAM statistics
     fn get_ram_stats(&mut self) -> RamStats {
         self.system.refresh_memory();
-        self.system.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[self.current_pid]), false);
+        self.system
+            .refresh_processes(sysinfo::ProcessesToUpdate::Some(&[self.current_pid]), false);
 
         let total_mb = self.system.total_memory() / 1_048_576;
         let used_mb = self.system.used_memory() / 1_048_576;
         let available_mb = self.system.available_memory() / 1_048_576;
 
-        let process_mb = self.system.process(self.current_pid)
+        let process_mb = self
+            .system
+            .process(self.current_pid)
             .map(|p| p.memory() / 1_048_576)
             .unwrap_or(0);
 
@@ -249,9 +255,9 @@ mod nvidia {
     use super::*;
 
     #[cfg(feature = "gpu-monitoring")]
-    use nvml_wrapper::Nvml;
-    #[cfg(feature = "gpu-monitoring")]
     use nvml_wrapper::Device;
+    #[cfg(feature = "gpu-monitoring")]
+    use nvml_wrapper::Nvml;
 
     pub struct NvidiaProvider {
         #[cfg(feature = "gpu-monitoring")]
@@ -270,16 +276,17 @@ mod nvidia {
                 let nvml = Nvml::init()
                     .map_err(|e| MemoryError::GpuInit(format!("NVML init failed: {}", e)))?;
 
-                let device = nvml.device_by_index(0)
-                    .map_err(|e| MemoryError::GpuInit(format!("Failed to get GPU device: {}", e)))?;
+                let device = nvml.device_by_index(0).map_err(|e| {
+                    MemoryError::GpuInit(format!("Failed to get GPU device: {}", e))
+                })?;
 
-                let device_name = device.name()
-                    .unwrap_or_else(|_| "NVIDIA GPU".to_string());
+                let device_name = device.name().unwrap_or_else(|_| "NVIDIA GPU".to_string());
 
                 // Leak nvml to get 'static lifetime for device
                 let nvml_static = Box::leak(Box::new(nvml));
-                let device_static = nvml_static.device_by_index(0)
-                    .map_err(|e| MemoryError::GpuInit(format!("Failed to get GPU device: {}", e)))?;
+                let device_static = nvml_static.device_by_index(0).map_err(|e| {
+                    MemoryError::GpuInit(format!("Failed to get GPU device: {}", e))
+                })?;
 
                 Ok(Self {
                     nvml: unsafe { std::ptr::read(nvml_static) },
@@ -290,7 +297,9 @@ mod nvidia {
             }
 
             #[cfg(not(feature = "gpu-monitoring"))]
-            Err(MemoryError::GpuInit("NVML support not compiled".to_string()))
+            Err(MemoryError::GpuInit(
+                "NVML support not compiled".to_string(),
+            ))
         }
     }
 
@@ -298,7 +307,9 @@ mod nvidia {
         fn get_stats(&mut self) -> Result<VramStats, MemoryError> {
             #[cfg(feature = "gpu-monitoring")]
             {
-                let memory_info = self.device.memory_info()
+                let memory_info = self
+                    .device
+                    .memory_info()
                     .map_err(|e| MemoryError::GpuQuery(format!("NVML query failed: {}", e)))?;
 
                 let total_mb = memory_info.total / 1_048_576;
@@ -330,7 +341,9 @@ mod nvidia {
             }
 
             #[cfg(not(feature = "gpu-monitoring"))]
-            Err(MemoryError::GpuQuery("NVML support not compiled".to_string()))
+            Err(MemoryError::GpuQuery(
+                "NVML support not compiled".to_string(),
+            ))
         }
 
         fn device_name(&self) -> &str {
@@ -372,7 +385,9 @@ mod metal_gpu {
             }
 
             #[cfg(not(feature = "gpu-monitoring"))]
-            Err(MemoryError::GpuInit("Metal support not compiled".to_string()))
+            Err(MemoryError::GpuInit(
+                "Metal support not compiled".to_string(),
+            ))
         }
     }
 
@@ -413,7 +428,9 @@ mod metal_gpu {
             }
 
             #[cfg(not(feature = "gpu-monitoring"))]
-            Err(MemoryError::GpuQuery("Metal support not compiled".to_string()))
+            Err(MemoryError::GpuQuery(
+                "Metal support not compiled".to_string(),
+            ))
         }
 
         fn device_name(&self) -> &str {
@@ -450,7 +467,13 @@ mod tests {
         let (ram_pressure, vram_pressure) = monitor.check_pressure();
 
         // Should return valid pressure levels
-        assert!(matches!(ram_pressure, MemoryPressure::Normal | MemoryPressure::Warning | MemoryPressure::Critical));
-        assert!(matches!(vram_pressure, MemoryPressure::Normal | MemoryPressure::Warning | MemoryPressure::Critical));
+        assert!(matches!(
+            ram_pressure,
+            MemoryPressure::Normal | MemoryPressure::Warning | MemoryPressure::Critical
+        ));
+        assert!(matches!(
+            vram_pressure,
+            MemoryPressure::Normal | MemoryPressure::Warning | MemoryPressure::Critical
+        ));
     }
 }

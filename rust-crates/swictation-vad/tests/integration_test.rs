@@ -1,7 +1,7 @@
 //! Integration tests for VAD with real audio
 
-use swictation_vad::{VadConfig, VadDetector, VadResult};
 use hound;
+use swictation_vad::{VadConfig, VadDetector, VadResult};
 
 #[test]
 #[ignore = "Requires ONNX Runtime libraries and test audio files"]
@@ -12,8 +12,8 @@ fn test_vad_with_real_audio() {
     // Configure VAD with more lenient settings and debug enabled
     let config = VadConfig::with_model("/opt/swictation/models/silero-vad/silero_vad.onnx")
         .min_silence(0.3)
-        .min_speech(0.1)  // Lower minimum speech duration
-        .threshold(0.3)    // Lower threshold to catch more speech
+        .min_speech(0.1) // Lower minimum speech duration
+        .threshold(0.3) // Lower threshold to catch more speech
         .debug();
 
     let mut vad = VadDetector::new(config).expect("Failed to create VAD");
@@ -30,7 +30,11 @@ fn test_vad_with_real_audio() {
         .map(|s| s.expect("Failed to read sample") as f32 / 32768.0)
         .collect();
 
-    println!("Loaded {} samples ({:.2}s of audio)", samples.len(), samples.len() as f32 / 16000.0);
+    println!(
+        "Loaded {} samples ({:.2}s of audio)",
+        samples.len(),
+        samples.len() as f32 / 16000.0
+    );
 
     // Process audio in 0.5s chunks
     let chunk_size = 8000;
@@ -42,34 +46,58 @@ fn test_vad_with_real_audio() {
         let chunk = &samples[chunk_start..chunk_end];
 
         match vad.process_audio(chunk).expect("VAD processing failed") {
-            VadResult::Speech { start_sample, samples: seg_samples } => {
+            VadResult::Speech {
+                start_sample,
+                samples: seg_samples,
+            } => {
                 speech_detected = true;
                 total_speech_samples += seg_samples.len();
-                println!("Speech segment: {} samples at position {}", seg_samples.len(), start_sample);
+                println!(
+                    "Speech segment: {} samples at position {}",
+                    seg_samples.len(),
+                    start_sample
+                );
             }
             VadResult::Silence => {}
         }
     }
 
     // Flush any remaining audio
-    if let Some(VadResult::Speech { start_sample, samples: seg_samples }) = vad.flush() {
+    if let Some(VadResult::Speech {
+        start_sample,
+        samples: seg_samples,
+    }) = vad.flush()
+    {
         speech_detected = true;
         total_speech_samples += seg_samples.len();
-        println!("Flushed speech segment: {} samples at position {}", seg_samples.len(), start_sample);
+        println!(
+            "Flushed speech segment: {} samples at position {}",
+            seg_samples.len(),
+            start_sample
+        );
     }
 
-    println!("Total speech detected: {:.2}s", total_speech_samples as f32 / 16000.0);
+    println!(
+        "Total speech detected: {:.2}s",
+        total_speech_samples as f32 / 16000.0
+    );
 
     // The test file should contain speech
-    assert!(speech_detected, "VAD should detect speech in the test audio file");
-    assert!(total_speech_samples > 0, "Should have detected some speech samples");
+    assert!(
+        speech_detected,
+        "VAD should detect speech in the test audio file"
+    );
+    assert!(
+        total_speech_samples > 0,
+        "Should have detected some speech samples"
+    );
 }
 
 #[test]
 #[ignore = "Requires ONNX Runtime libraries and VAD model files"]
 fn test_vad_with_silence() {
-    let config = VadConfig::with_model("/opt/swictation/models/silero-vad/silero_vad.onnx")
-        .threshold(0.5);
+    let config =
+        VadConfig::with_model("/opt/swictation/models/silero-vad/silero_vad.onnx").threshold(0.5);
 
     let mut vad = VadDetector::new(config).expect("Failed to create VAD");
 
@@ -89,5 +117,8 @@ fn test_vad_with_silence() {
     }
 
     // Flush should also return no speech
-    assert!(vad.flush().is_none(), "Flush should return None for silence");
+    assert!(
+        vad.flush().is_none(),
+        "Flush should return None for silence"
+    );
 }

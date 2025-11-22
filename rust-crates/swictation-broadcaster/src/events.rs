@@ -6,23 +6,17 @@ use serde::{Deserialize, Serialize};
 pub enum BroadcastEvent {
     /// Session started - clears transcription buffer
     #[serde(rename = "session_start")]
-    SessionStart {
-        session_id: i64,
-        timestamp: f64
-    },
+    SessionStart { session_id: i64, timestamp: f64 },
 
     /// Session ended - buffer stays visible
     #[serde(rename = "session_end")]
-    SessionEnd {
-        session_id: i64,
-        timestamp: f64
-    },
+    SessionEnd { session_id: i64, timestamp: f64 },
 
     /// New transcription segment
     #[serde(rename = "transcription")]
     Transcription {
         text: String,
-        timestamp: String,  // HH:MM:SS format
+        timestamp: String, // HH:MM:SS format
         wpm: f64,
         latency_ms: f64,
         words: i32,
@@ -45,10 +39,7 @@ pub enum BroadcastEvent {
 
     /// Daemon state changed
     #[serde(rename = "state_change")]
-    StateChange {
-        state: String,
-        timestamp: f64
-    },
+    StateChange { state: String, timestamp: f64 },
 }
 
 /// Transcription segment stored in RAM buffer

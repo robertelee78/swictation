@@ -11,13 +11,13 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tokio::time::sleep;
 use swictation_stt::recognizer_ort::OrtRecognizer;
+use tokio::time::sleep;
 
 /// Test configuration - TESTING 1.1B MODEL with preprocessing fixes (AHA #19)!
 const MODEL_PATH: &str = "/opt/swictation/models/parakeet-tdt-1.1b-exported";
-const EXPECTED_SHORT: &str = "Hello world";  // First part of expected text
-const EXPECTED_LONG: &str = "open source AI community";  // First part of expected text (no hyphen)
+const EXPECTED_SHORT: &str = "Hello world"; // First part of expected text
+const EXPECTED_LONG: &str = "open source AI community"; // First part of expected text (no hyphen)
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -37,8 +37,8 @@ async fn main() -> Result<()> {
     let start = Instant::now();
 
     let stt = Arc::new(Mutex::new(
-        OrtRecognizer::new(MODEL_PATH, true)  // true = GPU enabled!
-            .map_err(|e| anyhow::anyhow!("Failed to load model: {}", e))?
+        OrtRecognizer::new(MODEL_PATH, true) // true = GPU enabled!
+            .map_err(|e| anyhow::anyhow!("Failed to load model: {}", e))?,
     ));
     println!("✓ Model loaded in {:.2}s\n", start.elapsed().as_secs_f64());
     println!("{}\n", stt.lock().unwrap().model_info());
@@ -56,10 +56,14 @@ async fn main() -> Result<()> {
         // Check if WAV exists
         if !Path::new(wav_path).exists() {
             println!("⚠ {} not found, converting from MP3...", wav_path);
-            let mp3_path = wav_path.replace(".wav", ".mp3").replace("/tmp/", "/opt/swictation/examples/");
+            let mp3_path = wav_path
+                .replace(".wav", ".mp3")
+                .replace("/tmp/", "/opt/swictation/examples/");
 
             let output = Command::new("ffmpeg")
-                .args(&["-y", "-i", &mp3_path, "-ar", "16000", "-ac", "1", "-f", "wav", wav_path])
+                .args(&[
+                    "-y", "-i", &mp3_path, "-ar", "16000", "-ac", "1", "-f", "wav", wav_path,
+                ])
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .status()
@@ -76,7 +80,9 @@ async fn main() -> Result<()> {
         // Transcribe with ORT
         println!("  Transcribing {}...", wav_path);
         let start = Instant::now();
-        let result_text = stt.lock().unwrap()
+        let result_text = stt
+            .lock()
+            .unwrap()
             .recognize_file(wav_path)
             .map_err(|e| anyhow::anyhow!("Transcription failed: {}", e))?;
         let duration = start.elapsed();
@@ -91,7 +97,10 @@ async fn main() -> Result<()> {
         if lowercase_result.contains(&lowercase_expected) {
             println!("✓ {} PASSED - Contains expected text\n", name);
         } else {
-            println!("✗ {} FAILED - Expected '{}' but got '{}'", name, expected, result_text);
+            println!(
+                "✗ {} FAILED - Expected '{}' but got '{}'",
+                name, expected, result_text
+            );
             println!("  Note: Full result: {}\n", result_text);
             all_passed = false;
         }

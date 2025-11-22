@@ -4,24 +4,24 @@
 //! Communicates via Unix socket (/tmp/swictation.sock) for toggle commands.
 //! Sway hotkey → socket toggle → start/stop recording (zero latency)
 
-mod corrections;
-mod pipeline;
-mod gpu;
-mod config;
-mod ipc;
-mod hotkey;
-mod text_injection;
-mod display_server;
 mod capitalization;
+mod config;
+mod corrections;
+mod display_server;
+mod gpu;
+mod hotkey;
+mod ipc;
+mod pipeline;
 mod socket_utils;
+mod text_injection;
 mod version;
 
 use anyhow::{Context, Result};
-use tracing::{info, error, warn};
+use clap::Parser;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::{RwLock, mpsc};
-use clap::Parser;
+use tokio::sync::{mpsc, RwLock};
+use tracing::{error, info, warn};
 
 use crate::config::DaemonConfig;
 
@@ -44,15 +44,15 @@ struct CliArgs {
     #[arg(long)]
     version_info: bool,
 }
-use crate::pipeline::Pipeline;
 use crate::gpu::detect_gpu_provider;
-use crate::ipc::{IpcServer, handle_connection as handle_ipc_connection};
-use crate::hotkey::{HotkeyManager, HotkeyEvent};
+use crate::hotkey::{HotkeyEvent, HotkeyManager};
+use crate::ipc::{handle_connection as handle_ipc_connection, IpcServer};
+use crate::pipeline::Pipeline;
 use swictation_broadcaster::MetricsBroadcaster;
-use swictation_metrics::{MemoryMonitor, MemoryPressure};
 use swictation_context_learning::{
     load_or_train_model, ContextModel, LearningConfig, RetrainingConfig,
 };
+use swictation_metrics::{MemoryMonitor, MemoryPressure};
 
 #[derive(Debug, Clone, PartialEq)]
 enum DaemonState {
@@ -68,16 +68,19 @@ struct Daemon {
 }
 
 impl Daemon {
-    async fn new(config: DaemonConfig, gpu_provider: Option<String>) -> Result<(Self, mpsc::Receiver<Result<String>>)> {
+    async fn new(
+        config: DaemonConfig,
+        gpu_provider: Option<String>,
+    ) -> Result<(Self, mpsc::Receiver<Result<String>>)> {
         let (pipeline, transcription_rx) = Pipeline::new(config, gpu_provider).await?;
 
         // Initialize metrics broadcaster with secure socket path
-        let metrics_socket = socket_utils::get_metrics_socket_path()
-            .context("Failed to get metrics socket path")?;
+        let metrics_socket =
+            socket_utils::get_metrics_socket_path().context("Failed to get metrics socket path")?;
         let broadcaster = Arc::new(
             MetricsBroadcaster::new(&metrics_socket)
                 .await
-                .context("Failed to create metrics broadcaster")?
+                .context("Failed to create metrics broadcaster")?,
         );
 
         // Set broadcaster in pipeline for real-time updates
@@ -91,7 +94,10 @@ impl Daemon {
         };
 
         // Start broadcaster Unix socket server
-        daemon.broadcaster.start().await
+        daemon
+            .broadcaster
+            .start()
+            .await
             .context("Failed to start metrics broadcaster")?;
 
         Ok((daemon, transcription_rx))
@@ -122,7 +128,9 @@ impl Daemon {
                 self.broadcaster.start_session(sid).await;
 
                 // Broadcast state change to Recording
-                self.broadcaster.broadcast_state_change(swictation_metrics::DaemonState::Recording).await;
+                self.broadcaster
+                    .broadcast_state_change(swictation_metrics::DaemonState::Recording)
+                    .await;
 
                 Ok(format!("Recording started (Session #{})", sid))
             }
@@ -145,11 +153,14 @@ impl Daemon {
                 *session_id = None;
 
                 // Broadcast state change to Idle
-                self.broadcaster.broadcast_state_change(swictation_metrics::DaemonState::Idle).await;
+                self.broadcaster
+                    .broadcast_state_change(swictation_metrics::DaemonState::Idle)
+                    .await;
 
-                Ok(format!("Recording stopped ({} words, {:.1} WPM)",
-                          session_metrics.words_dictated,
-                          session_metrics.words_per_minute))
+                Ok(format!(
+                    "Recording stopped ({} words, {:.1} WPM)",
+                    session_metrics.words_dictated, session_metrics.words_per_minute
+                ))
             }
         }
     }
@@ -205,13 +216,18 @@ async fn main() -> Result<()> {
         .with_level(true)
         .init();
 
-    info!("🎙️ Starting Swictation Daemon v{}", env!("CARGO_PKG_VERSION"));
+    info!(
+        "🎙️ Starting Swictation Daemon v{}",
+        env!("CARGO_PKG_VERSION")
+    );
 
     // Load configuration
-    let mut config = DaemonConfig::load()
-        .context("Failed to load configuration")?;
+    let mut config = DaemonConfig::load().context("Failed to load configuration")?;
 
-    info!("📋 Configuration loaded from {}", config.config_path.display());
+    info!(
+        "📋 Configuration loaded from {}",
+        config.config_path.display()
+    );
 
     // Apply CLI overrides
     if let Some(ref model) = cli.test_model {
@@ -271,52 +287,60 @@ async fn main() -> Result<()> {
 
     // Initialize daemon with models loaded
     info!("🔧 Initializing pipeline (this may take a moment)...");
-    let (daemon, mut transcription_rx) = match Daemon::new(config.clone(), gpu_provider.clone()).await {
-        Ok(result) => result,
-        Err(e) => {
-            let err_msg = format!("{:#}", e);
+    let (daemon, mut transcription_rx) =
+        match Daemon::new(config.clone(), gpu_provider.clone()).await {
+            Ok(result) => result,
+            Err(e) => {
+                let err_msg = format!("{:#}", e);
 
-            // Check if error is about missing model files
-            if err_msg.contains("No such file or directory") ||
-               err_msg.contains("model") && err_msg.contains("not found") ||
-               err_msg.contains("Failed to load") {
+                // Check if error is about missing model files
+                if err_msg.contains("No such file or directory")
+                    || err_msg.contains("model") && err_msg.contains("not found")
+                    || err_msg.contains("Failed to load")
+                {
+                    error!("❌ Failed to load AI model");
+                    error!("");
+                    error!("The required AI model files were not found.");
+                    error!("Please download the recommended model for your system:");
+                    error!("");
+                    error!("  swictation download-model 0.6b-gpu    # For 4GB+ VRAM GPUs");
+                    error!("  swictation download-model 1.1b-gpu    # For 6GB+ VRAM GPUs");
+                    error!("  swictation download-model 0.6b        # For CPU-only systems");
+                    error!("");
+                    error!("Or download all models:");
+                    error!("  swictation download-models");
+                    error!("");
 
-                error!("❌ Failed to load AI model");
-                error!("");
-                error!("The required AI model files were not found.");
-                error!("Please download the recommended model for your system:");
-                error!("");
-                error!("  swictation download-model 0.6b-gpu    # For 4GB+ VRAM GPUs");
-                error!("  swictation download-model 1.1b-gpu    # For 6GB+ VRAM GPUs");
-                error!("  swictation download-model 0.6b        # For CPU-only systems");
-                error!("");
-                error!("Or download all models:");
-                error!("  swictation download-models");
-                error!("");
+                    return Err(
+                        e.context("AI models not found - run 'swictation download-model' first")
+                    );
+                }
 
-                return Err(e.context("AI models not found - run 'swictation download-model' first"));
+                // For other errors, just pass through
+                return Err(e.context("Failed to initialize daemon"));
             }
-
-            // For other errors, just pass through
-            return Err(e.context("Failed to initialize daemon"));
-        }
-    };
+        };
 
     info!("✓ Pipeline initialized successfully");
     info!("  - Audio: 16000 Hz, 1 channel");
     info!("  - VAD: Silero VAD v6 (ort/ONNX)");
     // STT info is logged by pipeline.rs during initialization
     info!("📊 Memory usage: {} MB", get_memory_usage_mb());
-    info!("📡 Metrics broadcaster ready on {}",
-          socket_utils::get_metrics_socket_path()
-              .unwrap_or_else(|_| PathBuf::from("unknown"))
-              .display());
+    info!(
+        "📡 Metrics broadcaster ready on {}",
+        socket_utils::get_metrics_socket_path()
+            .unwrap_or_else(|_| PathBuf::from("unknown"))
+            .display()
+    );
 
     // Initialize context-aware learning model
     let context_model = load_context_model(&config).await;
     if let Some(ref model) = context_model {
-        info!("🧠 Context model loaded: {} topics, {} homonym rules",
-              model.topics.len(), model.homonym_rules.len());
+        info!(
+            "🧠 Context model loaded: {} topics, {} homonym rules",
+            model.topics.len(),
+            model.homonym_rules.len()
+        );
     } else {
         info!("⚠️  Context model not available (insufficient training data)");
     }
@@ -332,10 +356,9 @@ async fn main() -> Result<()> {
     }
 
     // Start IPC server for CLI/scripts (optional) with secure socket path
-    let socket_path = socket_utils::get_ipc_socket_path()
-        .context("Failed to get IPC socket path")?;
-    let socket_path_str = socket_path.to_str()
-        .context("Invalid socket path")?;
+    let socket_path =
+        socket_utils::get_ipc_socket_path().context("Failed to get IPC socket path")?;
+    let socket_path_str = socket_path.to_str().context("Invalid socket path")?;
     info!("🔌 Starting IPC server on {}", socket_path_str);
 
     let daemon_clone = Arc::new(daemon);
@@ -400,8 +423,10 @@ async fn main() -> Result<()> {
                 match ram_pressure {
                     MemoryPressure::Warning => {
                         let stats = memory_monitor.get_stats();
-                        warn!("⚠️  RAM usage high: {:.1}% ({} MB used / {} MB total)",
-                             stats.ram.percent_used, stats.ram.used_mb, stats.ram.total_mb);
+                        warn!(
+                            "⚠️  RAM usage high: {:.1}% ({} MB used / {} MB total)",
+                            stats.ram.percent_used, stats.ram.used_mb, stats.ram.total_mb
+                        );
                     }
                     MemoryPressure::Critical => {
                         let stats = memory_monitor.get_stats();
@@ -416,15 +441,19 @@ async fn main() -> Result<()> {
                     MemoryPressure::Warning => {
                         let stats = memory_monitor.get_stats();
                         if let Some(vram) = stats.vram {
-                            warn!("⚠️  VRAM usage high: {:.1}% ({} MB used / {} MB total) on {}",
-                                 vram.percent_used, vram.used_mb, vram.total_mb, vram.device_name);
+                            warn!(
+                                "⚠️  VRAM usage high: {:.1}% ({} MB used / {} MB total) on {}",
+                                vram.percent_used, vram.used_mb, vram.total_mb, vram.device_name
+                            );
                         }
                     }
                     MemoryPressure::Critical => {
                         let stats = memory_monitor.get_stats();
                         if let Some(vram) = stats.vram {
-                            error!("🚨 VRAM critical: {:.1}% ({} MB used / {} MB total) on {}",
-                                  vram.percent_used, vram.used_mb, vram.total_mb, vram.device_name);
+                            error!(
+                                "🚨 VRAM critical: {:.1}% ({} MB used / {} MB total) on {}",
+                                vram.percent_used, vram.used_mb, vram.total_mb, vram.device_name
+                            );
                             // Note: Could pause recording here if needed
                         }
                     }
@@ -447,7 +476,10 @@ async fn main() -> Result<()> {
         // Initialize text injector with display server detection
         let text_injector = match TextInjector::new() {
             Ok(injector) => {
-                info!("Text injector initialized for: {:?}", injector.display_server_info().server_type);
+                info!(
+                    "Text injector initialized for: {:?}",
+                    injector.display_server_info().server_type
+                );
                 injector
             }
             Err(e) => {
@@ -539,7 +571,7 @@ async fn main() -> Result<()> {
 
 /// Get current process memory usage in MB
 fn get_memory_usage_mb() -> u64 {
-    use sysinfo::{System, Pid, ProcessesToUpdate};
+    use sysinfo::{Pid, ProcessesToUpdate, System};
 
     let mut sys = System::new();
     let pid = Pid::from_u32(std::process::id());

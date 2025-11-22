@@ -4,7 +4,7 @@
 //! Uses lock-free circular buffer for zero-copy operations.
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{Device, Host, Stream, StreamConfig, SampleFormat};
+use cpal::{Device, Host, SampleFormat, Stream, StreamConfig};
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -40,7 +40,7 @@ pub struct AudioCapture {
     device: Option<Device>,
     chunk_callback: Option<ChunkCallback>,
     resampler: Arc<Mutex<Option<Resampler>>>,
-    resample_buffer: Arc<Mutex<Vec<f32>>>,  // Buffer for accumulating samples before resampling
+    resample_buffer: Arc<Mutex<Vec<f32>>>, // Buffer for accumulating samples before resampling
 }
 
 impl AudioCapture {
@@ -91,26 +91,29 @@ impl AudioCapture {
         let default_input = host.default_input_device();
         let default_output = host.default_output_device();
 
-        for (index, device) in host.input_devices()
+        for (index, device) in host
+            .input_devices()
             .map_err(|e| AudioError::device(format!("Failed to enumerate devices: {}", e)))?
             .enumerate()
         {
-            let name = device.name()
+            let name = device
+                .name()
                 .unwrap_or_else(|_| format!("Unknown Device {}", index));
 
-            let is_default_input = default_input.as_ref()
+            let is_default_input = default_input
+                .as_ref()
                 .and_then(|d| d.name().ok())
                 .map(|n| n == name)
                 .unwrap_or(false);
 
-            let is_default_output = default_output.as_ref()
+            let is_default_output = default_output
+                .as_ref()
                 .and_then(|d| d.name().ok())
                 .map(|n| n == name)
                 .unwrap_or(false);
 
             // Get supported config
-            let supported_config = device.default_input_config()
-                .ok();
+            let supported_config = device.default_input_config().ok();
 
             let (max_input_channels, default_sample_rate) = if let Some(config) = supported_config {
                 (config.channels(), config.sample_rate().0)
@@ -119,7 +122,8 @@ impl AudioCapture {
             };
 
             // Try to get output channels too
-            let max_output_channels = device.default_output_config()
+            let max_output_channels = device
+                .default_output_config()
                 .ok()
                 .map(|c| c.channels())
                 .unwrap_or(0);
@@ -144,9 +148,11 @@ impl AudioCapture {
             println!("Looking for device from env var: {}", device_name);
 
             // Find device by name (cross-platform)
-            for device in self.host.input_devices()
-                .map_err(|e| AudioError::device(format!("Failed to enumerate devices: {}", e)))? {
-
+            for device in self
+                .host
+                .input_devices()
+                .map_err(|e| AudioError::device(format!("Failed to enumerate devices: {}", e)))?
+            {
                 if let Ok(name) = device.name() {
                     if name.to_lowercase().contains(&device_name.to_lowercase()) {
                         println!("Found matching device: {}", name);
@@ -154,16 +160,21 @@ impl AudioCapture {
                     }
                 }
             }
-            println!("Device '{}' not found, continuing with auto-detection", device_name);
+            println!(
+                "Device '{}' not found, continuing with auto-detection",
+                device_name
+            );
         }
 
         // Auto-detect best device based on capabilities
         let mut best_device = None;
         let mut best_score = 0;
 
-        for device in self.host.input_devices()
-            .map_err(|e| AudioError::device(format!("Failed to enumerate devices: {}", e)))? {
-
+        for device in self
+            .host
+            .input_devices()
+            .map_err(|e| AudioError::device(format!("Failed to enumerate devices: {}", e)))?
+        {
             let name = device.name().unwrap_or_else(|_| "Unknown".to_string());
             let mut score = 0;
 
@@ -191,10 +202,11 @@ impl AudioCapture {
                 }
 
                 // Avoid certain problematic devices
-                if name.to_lowercase().contains("monitor") ||
-                   name.to_lowercase().contains("loopback") ||
-                   name.to_lowercase().contains("virtual") {
-                    score = 0;  // Skip these
+                if name.to_lowercase().contains("monitor")
+                    || name.to_lowercase().contains("loopback")
+                    || name.to_lowercase().contains("virtual")
+                {
+                    score = 0; // Skip these
                 }
 
                 if score > best_score {
@@ -208,12 +220,16 @@ impl AudioCapture {
         // Print final selection
         if let Some(ref device) = best_device {
             if let Ok(name) = device.name() {
-                println!("\n✓ Auto-selected audio device: {} (score: {})", name, best_score);
+                println!(
+                    "\n✓ Auto-selected audio device: {} (score: {})",
+                    name, best_score
+                );
             }
         }
 
         // Fall back to default if no good device found
-        best_device.or_else(|| self.host.default_input_device())
+        best_device
+            .or_else(|| self.host.default_input_device())
             .ok_or_else(|| AudioError::device("No suitable input device available".to_string()))
     }
 
@@ -235,13 +251,18 @@ impl AudioCapture {
             }
 
             let type_str = type_parts.join("/");
-            let default_marker = if device.is_default { " [DEFAULT INPUT]" } else { "" };
+            let default_marker = if device.is_default {
+                " [DEFAULT INPUT]"
+            } else {
+                ""
+            };
 
             println!("{:3}: {}", device.index, device.name);
             println!("     Type: {}{}", type_str, default_marker);
-            println!("     Channels: IN={}, OUT={}",
-                     device.max_input_channels,
-                     device.max_output_channels);
+            println!(
+                "     Channels: IN={}, OUT={}",
+                device.max_input_channels, device.max_output_channels
+            );
             println!("     Sample Rate: {} Hz\n", device.default_sample_rate);
         }
 
@@ -258,7 +279,9 @@ impl AudioCapture {
 
         // List available devices for debugging
         println!("\n=== Available Input Devices ===");
-        for (idx, dev) in self.host.input_devices()
+        for (idx, dev) in self
+            .host
+            .input_devices()
             .map_err(|e| AudioError::device(format!("Failed to enumerate devices: {}", e)))?
             .enumerate()
         {
@@ -269,9 +292,12 @@ impl AudioCapture {
         // Select device
         let device = if let Some(index) = self.config.device_index {
             println!("Selecting device index: {}", index);
-            let mut devices = self.host.input_devices()
+            let mut devices = self
+                .host
+                .input_devices()
                 .map_err(|e| AudioError::device(format!("Failed to enumerate devices: {}", e)))?;
-            devices.nth(index)
+            devices
+                .nth(index)
                 .ok_or_else(|| AudioError::device(format!("Device index {} not found", index)))?
         } else {
             println!("Auto-detecting best audio device...");
@@ -281,7 +307,8 @@ impl AudioCapture {
         let device_name = device.name().unwrap_or_else(|_| "Unknown".to_string());
 
         // Get supported config
-        let supported_config = device.default_input_config()
+        let supported_config = device
+            .default_input_config()
             .map_err(|e| AudioError::device(format!("Failed to get device config: {}", e)))?;
 
         let source_sample_rate = supported_config.sample_rate().0;
@@ -289,12 +316,18 @@ impl AudioCapture {
 
         println!("\n=== Starting Audio Capture ===");
         println!("Device: {}", device_name);
-        println!("Sample Rate: {} Hz → {} Hz", source_sample_rate, self.config.sample_rate);
+        println!(
+            "Sample Rate: {} Hz → {} Hz",
+            source_sample_rate, self.config.sample_rate
+        );
         println!("Channels: {} → {}", source_channels, self.config.channels);
         println!("Blocksize: {} samples", self.config.blocksize);
 
         if self.config.streaming_mode {
-            println!("Streaming Mode: ENABLED (chunk duration: {}s)", self.config.chunk_duration);
+            println!(
+                "Streaming Mode: ENABLED (chunk duration: {}s)",
+                self.config.chunk_duration
+            );
         }
 
         // Clear buffers
@@ -307,12 +340,12 @@ impl AudioCapture {
 
         // Initialize resampler if needed
         if source_sample_rate != self.config.sample_rate {
-            println!("Creating resampler: {} Hz → {} Hz", source_sample_rate, self.config.sample_rate);
-            let resampler = Resampler::new(
-                source_sample_rate,
-                self.config.sample_rate,
-                target_channels,
-            )?;
+            println!(
+                "Creating resampler: {} Hz → {} Hz",
+                source_sample_rate, self.config.sample_rate
+            );
+            let resampler =
+                Resampler::new(source_sample_rate, self.config.sample_rate, target_channels)?;
             *self.resampler.lock() = Some(resampler);
         } else {
             *self.resampler.lock() = None;
@@ -322,7 +355,7 @@ impl AudioCapture {
         let stream_config = StreamConfig {
             channels: source_channels,
             sample_rate: cpal::SampleRate(source_sample_rate),
-            buffer_size: cpal::BufferSize::Default,  // Let ALSA choose optimal buffer size
+            buffer_size: cpal::BufferSize::Default, // Let ALSA choose optimal buffer size
         };
 
         // Clone Arc references for the callback
@@ -336,7 +369,7 @@ impl AudioCapture {
 
         let streaming_mode = self.config.streaming_mode;
         let chunk_frames = (self.config.chunk_duration * self.config.sample_rate as f32) as usize;
-        let resample_chunk_size = (source_sample_rate as f32 * 0.1) as usize;  // 100ms chunks at source rate
+        let resample_chunk_size = (source_sample_rate as f32 * 0.1) as usize; // 100ms chunks at source rate
 
         // Determine the sample format and build appropriate stream
         let sample_format = supported_config.sample_format();
@@ -354,7 +387,8 @@ impl AudioCapture {
                         }
 
                         // Convert i16 to f32 with proper normalization
-                        let f32_data: Vec<f32> = data.iter()
+                        let f32_data: Vec<f32> = data
+                            .iter()
                             .map(|&sample| sample as f32 / i16::MAX as f32)
                             .collect();
 
@@ -378,7 +412,7 @@ impl AudioCapture {
                     },
                     None,
                 )
-            },
+            }
             SampleFormat::F32 => {
                 // Build stream for f32 format
                 device.build_input_stream(
@@ -408,16 +442,19 @@ impl AudioCapture {
                     },
                     None,
                 )
-            },
-            _ => {
-                return Err(AudioError::device(
-                    format!("Unsupported sample format: {:?}", sample_format)
-                ));
             }
-        }.map_err(|e| AudioError::stream(format!("Failed to build stream: {}", e)))?;
+            _ => {
+                return Err(AudioError::device(format!(
+                    "Unsupported sample format: {:?}",
+                    sample_format
+                )));
+            }
+        }
+        .map_err(|e| AudioError::stream(format!("Failed to build stream: {}", e)))?;
 
         // Start the stream
-        stream.play()
+        stream
+            .play()
             .map_err(|e| AudioError::stream(format!("Failed to start stream: {}", e)))?;
 
         self.stream = Some(stream);
@@ -449,9 +486,7 @@ impl AudioCapture {
         let mono_audio: Vec<f32> = if source_channels > target_channels {
             // Average all channels to preserve amplitude from any channel
             data.chunks(source_channels as usize)
-                .map(|frame| {
-                    frame.iter().sum::<f32>() / frame.len() as f32
-                })
+                .map(|frame| frame.iter().sum::<f32>() / frame.len() as f32)
                 .collect()
         } else {
             data.to_vec()
@@ -467,7 +502,8 @@ impl AudioCapture {
             // Process when we have enough samples
             if resample_buf.len() >= resample_chunk_size {
                 // Extract chunk
-                let chunk_to_resample: Vec<f32> = resample_buf.drain(..resample_chunk_size).collect();
+                let chunk_to_resample: Vec<f32> =
+                    resample_buf.drain(..resample_chunk_size).collect();
 
                 // Resample
                 if let Some(ref mut resampler_lock) = resampler.lock().as_mut() {
@@ -502,7 +538,10 @@ impl AudioCapture {
 
                 // Invoke chunk callback if set
                 if let Some(ref callback) = chunk_callback {
-                    eprintln!("AUDIO: Invoking chunk callback with {} samples", chunk.len());
+                    eprintln!(
+                        "AUDIO: Invoking chunk callback with {} samples",
+                        chunk.len()
+                    );
                     callback(chunk);
                 } else {
                     eprintln!("AUDIO: No chunk callback set!");
@@ -513,7 +552,10 @@ impl AudioCapture {
             let mut buf = buffer.lock();
             let written = buf.write(&audio);
             if written < audio.len() {
-                eprintln!("Warning: Buffer overflow, dropped {} samples", audio.len() - written);
+                eprintln!(
+                    "Warning: Buffer overflow, dropped {} samples",
+                    audio.len() - written
+                );
             }
         }
     }
@@ -608,8 +650,10 @@ mod tests {
         if !devices.is_empty() {
             println!("Found {} audio device(s):", devices.len());
             for device in &devices {
-                println!("  {}: {} ({} input channels)",
-                         device.index, device.name, device.max_input_channels);
+                println!(
+                    "  {}: {} ({} input channels)",
+                    device.index, device.name, device.max_input_channels
+                );
             }
         } else {
             println!("No audio devices found (expected in CI environments)");

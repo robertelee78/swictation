@@ -97,20 +97,45 @@ pub fn discover_topics(segments: &[Segment], num_clusters: usize) -> Result<Vec<
 fn infer_cluster_name(keywords: &[String]) -> String {
     // Technical indicators
     let technical_words = [
-        "class", "function", "method", "api", "code", "refactor",
-        "database", "query", "endpoint", "authentication", "object",
+        "class",
+        "function",
+        "method",
+        "api",
+        "code",
+        "refactor",
+        "database",
+        "query",
+        "endpoint",
+        "authentication",
+        "object",
     ];
 
     // Business indicators
     let business_words = [
-        "meeting", "budget", "team", "project", "deadline", "manager",
-        "client", "presentation", "report", "revenue",
+        "meeting",
+        "budget",
+        "team",
+        "project",
+        "deadline",
+        "manager",
+        "client",
+        "presentation",
+        "report",
+        "revenue",
     ];
 
     // Email indicators
     let email_words = [
-        "email", "regards", "attached", "please", "thank", "sincerely",
-        "cc", "bcc", "subject", "forward",
+        "email",
+        "regards",
+        "attached",
+        "please",
+        "thank",
+        "sincerely",
+        "cc",
+        "bcc",
+        "subject",
+        "forward",
     ];
 
     let tech_score = keywords
@@ -135,7 +160,10 @@ fn infer_cluster_name(keywords: &[String]) -> String {
     } else if email_score > 0 {
         "Email/Communication".to_string()
     } else {
-        format!("General (cluster {})", keywords.first().unwrap_or(&String::from("unknown")))
+        format!(
+            "General (cluster {})",
+            keywords.first().unwrap_or(&String::from("unknown"))
+        )
     }
 }
 
