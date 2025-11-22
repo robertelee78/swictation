@@ -61,7 +61,24 @@ pub fn apply_capitalization(text: &str) -> String {
                     result.push(ch);
                 }
             } else {
-                result.push(ch);
+                // Check if we're starting a title (mr., mrs., dr., ms.)
+                // Look for word boundary before this letter
+                let prev_char = result.chars().last();
+                let at_word_start = prev_char.map_or(true, |c| c.is_whitespace());
+
+                if at_word_start && (ch == 'm' || ch == 'd') {
+                    // Peek ahead to see if this is a title
+                    let remaining: String = chars.clone().collect();
+                    let next_word = format!("{}{}", ch, remaining.split_whitespace().next().unwrap_or(""));
+
+                    if next_word == "mr." || next_word == "mrs." || next_word == "ms." || next_word == "dr." {
+                        result.push(ch.to_uppercase().next().unwrap_or(ch));
+                    } else {
+                        result.push(ch);
+                    }
+                } else {
+                    result.push(ch);
+                }
             }
         }
 

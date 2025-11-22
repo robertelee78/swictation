@@ -332,9 +332,9 @@ mod tests {
 
         let test_count = test_cases.len();
         for tc in test_cases {
-            let selected = if tc.vram_mb >= 6000 {
+            let selected = if tc.vram_mb >= 4096 {
                 "1.1B GPU INT8"
-            } else if tc.vram_mb >= 3500 {
+            } else if tc.vram_mb >= 1536 {
                 "0.6B GPU"
             } else {
                 "0.6B CPU"

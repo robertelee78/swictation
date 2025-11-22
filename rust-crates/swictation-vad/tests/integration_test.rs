@@ -4,6 +4,7 @@ use swictation_vad::{VadConfig, VadDetector, VadResult};
 use hound;
 
 #[test]
+#[ignore = "Requires ONNX Runtime libraries and test audio files"]
 fn test_vad_with_real_audio() {
     // Test with actual English voice sample (6.17 seconds)
     let test_file = "/tmp/en-short-16k.wav";
@@ -65,6 +66,7 @@ fn test_vad_with_real_audio() {
 }
 
 #[test]
+#[ignore = "Requires ONNX Runtime libraries and VAD model files"]
 fn test_vad_with_silence() {
     let config = VadConfig::with_model("/opt/swictation/models/silero-vad/silero_vad.onnx")
         .threshold(0.5);
