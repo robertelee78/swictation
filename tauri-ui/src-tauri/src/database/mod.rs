@@ -59,7 +59,7 @@ impl Database {
                 s.duration_s,
                 s.words_dictated,
                 s.wpm,
-                s.average_latency_ms
+                s.avg_latency_ms
              FROM sessions s
              ORDER BY s.start_time DESC
              LIMIT ?1 OFFSET ?2"
