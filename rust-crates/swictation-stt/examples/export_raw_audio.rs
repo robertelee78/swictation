@@ -32,7 +32,7 @@ fn main() -> Result<(), SttError> {
     info!("Audio file: {}", audio_file);
     info!("Output CSV: {}", output_csv);
 
-    let mut processor = AudioProcessor::new()?;
+    let processor = AudioProcessor::new()?;
 
     // Load audio file
     info!("Loading audio...");

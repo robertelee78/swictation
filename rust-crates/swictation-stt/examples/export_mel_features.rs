@@ -18,7 +18,6 @@
 use swictation_stt::audio::AudioProcessor;
 use swictation_stt::error::SttError;
 use tracing::{info, Level};
-use tracing_subscriber;
 
 fn main() -> Result<(), SttError> {
     // Initialize logging

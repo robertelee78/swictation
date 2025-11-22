@@ -518,43 +518,6 @@ fn povey_window(window_length: usize) -> Vec<f32> {
         .collect()
 }
 
-fn hann_window(window_length: usize) -> Vec<f32> {
-    (0..window_length)
-        .map(|n| {
-            let factor = 2.0 * PI * n as f32 / (window_length - 1) as f32;
-            0.5 * (1.0 - factor.cos())
-        })
-        .collect()
-}
-
-/// Normalize audio samples to have zero mean and unit variance
-///
-/// This matches sherpa-onnx's normalize_samples=True configuration.
-/// CRITICAL: This must be applied BEFORE preemphasis to match sherpa-onnx preprocessing.
-///
-/// Formula: y[n] = (x[n] - mean) / std
-fn normalize_audio_samples(samples: &[f32]) -> Vec<f32> {
-    if samples.is_empty() {
-        return Vec::new();
-    }
-
-    // Compute mean
-    let mean: f32 = samples.iter().sum::<f32>() / samples.len() as f32;
-
-    // Compute standard deviation (population std, ddof=0)
-    let variance: f32 =
-        samples.iter().map(|&x| (x - mean).powi(2)).sum::<f32>() / samples.len() as f32;
-    let std = variance.sqrt();
-
-    // Normalize: (x - mean) / std
-    if std > 1e-8 {
-        samples.iter().map(|&x| (x - mean) / std).collect()
-    } else {
-        // If std is too small, just subtract mean
-        samples.iter().map(|&x| x - mean).collect()
-    }
-}
-
 /// Apply preemphasis filter to audio signal
 ///
 /// Preemphasis emphasizes high-frequency components which improves
@@ -629,10 +592,8 @@ fn create_mel_filterbank(
                 }
             }
             // Falling slope: center to right
-            else if freq > center && freq <= right {
-                if right != center {
-                    filterbank[[mel_idx, freq_idx]] = (right - freq) / (right - center);
-                }
+            else if freq > center && freq <= right && right != center {
+                filterbank[[mel_idx, freq_idx]] = (right - freq) / (right - center);
             }
         }
     }

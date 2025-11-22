@@ -795,8 +795,8 @@ impl OrtRecognizer {
         let mut durations_vec = Vec::new();
 
         // CRITICAL FIX: Track blank/nonblank statistics (required by function signature)
-        let mut blank_count = 0_usize;
-        let mut nonblank_count = 0_usize;
+        let _blank_count = 0_usize;
+        let _nonblank_count = 0_usize;
 
         let max_tokens_per_frame = 5; // sherpa-onnx uses 5 for TDT
 
@@ -1261,7 +1261,7 @@ impl OrtRecognizer {
             .unwrap_or(9999);
 
         // Calculate softmax probabilities for top tokens
-        let exp_max = max_logit.exp();
+        let _exp_max = max_logit.exp();
         let sum_exp: f32 = data.iter().map(|&x| (x - max_logit).exp()).sum();
         let blank_prob = (blank_logit - max_logit).exp() / sum_exp * 100.0;
 

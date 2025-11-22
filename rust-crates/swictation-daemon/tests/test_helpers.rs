@@ -37,7 +37,7 @@ pub fn test_env_var(key: &str) -> Result<String, std::env::VarError> {
     let env = TEST_ENV.lock().unwrap();
     if let Some(ref vars) = *env {
         vars.get(key)
-            .map(|s| s.clone())
+            .cloned()
             .ok_or(std::env::VarError::NotPresent)
     } else {
         std::env::var(key)
@@ -131,7 +131,7 @@ mod tests {
         let env = x11_env();
         assert_eq!(env.get("DISPLAY"), Some(&":0".to_string()));
         assert_eq!(env.get("XDG_SESSION_TYPE"), Some(&"x11".to_string()));
-        assert!(env.get("WAYLAND_DISPLAY").is_none());
+        assert!(!env.contains_key("WAYLAND_DISPLAY"));
     }
 
     #[test]

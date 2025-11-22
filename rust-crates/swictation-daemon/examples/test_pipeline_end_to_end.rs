@@ -10,9 +10,8 @@ use anyhow::{Context, Result};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use swictation_stt::recognizer_ort::OrtRecognizer;
-use tokio::time::sleep;
 
 /// Test configuration - TESTING 1.1B MODEL with preprocessing fixes (AHA #19)!
 const MODEL_PATH: &str = "/opt/swictation/models/parakeet-tdt-1.1b-exported";
@@ -61,7 +60,7 @@ async fn main() -> Result<()> {
                 .replace("/tmp/", "/opt/swictation/examples/");
 
             let output = Command::new("ffmpeg")
-                .args(&[
+                .args([
                     "-y", "-i", &mp3_path, "-ar", "16000", "-ac", "1", "-f", "wav", wav_path,
                 ])
                 .stdout(Stdio::null())

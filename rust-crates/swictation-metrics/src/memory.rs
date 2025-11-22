@@ -261,6 +261,7 @@ mod nvidia {
 
     pub struct NvidiaProvider {
         #[cfg(feature = "gpu-monitoring")]
+        #[allow(dead_code)]
         nvml: Nvml,
         #[cfg(feature = "gpu-monitoring")]
         device: Device<'static>,

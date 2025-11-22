@@ -1,9 +1,8 @@
 //! Model validation and evaluation
 
-use crate::{ContextModel, Segment, TopicCluster};
+use crate::{ContextModel, Segment};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// Validation report with quantitative metrics
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -252,7 +251,7 @@ mod tests {
                 segment_count: 10,
                 confidence: 0.9,
             }],
-            homonym_rules: HashMap::new(),
+            homonym_rules: Default::default(),
             patterns: vec![],
             meta_level_0: vec![],
             meta_level_1: vec![],

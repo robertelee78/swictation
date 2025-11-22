@@ -1,6 +1,5 @@
 //! Integration tests for VAD with real audio
 
-use hound;
 use swictation_vad::{VadConfig, VadDetector, VadResult};
 
 #[test]

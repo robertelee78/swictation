@@ -15,7 +15,7 @@
 //! 4. Validate safety constraints
 
 use anyhow::{Context, Result};
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, Utc};
 use midstreamer_strange_loop::{MetaLevel, StrangeLoop, StrangeLoopConfig};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
@@ -190,8 +190,9 @@ impl ContextLearner {
         let segments: Vec<Segment> = stmt
             .query_map(params![threshold_timestamp], |row| {
                 let timestamp_f64: f64 = row.get(2)?;
-                let naive =
-                    NaiveDateTime::from_timestamp_opt(timestamp_f64 as i64, 0).unwrap_or_default();
+                let naive = DateTime::from_timestamp(timestamp_f64 as i64, 0)
+                    .map(|dt| dt.naive_utc())
+                    .unwrap_or_default();
                 let timestamp = DateTime::from_naive_utc_and_offset(naive, Utc);
 
                 Ok(Segment {

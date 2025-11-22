@@ -10,6 +10,20 @@ use std::sync::{Arc, Mutex};
 
 use crate::models::{LifetimeMetrics, SegmentMetrics, SessionMetrics};
 
+/// Type alias for complex database session query row
+type DbSessionRow = (
+    i32,         // total_words
+    i32,         // total_characters
+    i32,         // total_sessions
+    Option<f64>, // total_time_minutes
+    Option<f64>, // avg_wpm
+    Option<f64>, // avg_latency_ms
+    Option<f64>, // best_wpm
+    Option<i64>, // best_wpm_session
+    Option<f64>, // lowest_latency
+    Option<i64>, // lowest_latency_session
+);
+
 /// Thread-safe SQLite database for metrics storage
 pub struct MetricsDatabase {
     db_path: PathBuf,
@@ -18,6 +32,7 @@ pub struct MetricsDatabase {
 
 impl MetricsDatabase {
     /// Schema version for migrations
+    #[allow(dead_code)]
     const SCHEMA_VERSION: i32 = 1;
 
     /// Create new metrics database
@@ -399,18 +414,7 @@ impl MetricsDatabase {
              WHERE end_time IS NOT NULL"
         )?;
 
-        let result: Result<(
-            i32,
-            i32,
-            i32,
-            f64,
-            f64,
-            f64,
-            Option<f64>,
-            Option<i64>,
-            Option<f64>,
-            Option<i64>,
-        )> = stmt
+        let result: Result<DbSessionRow> = stmt
             .query_row([], |row| {
                 Ok((
                     row.get(0)?,
@@ -447,10 +451,14 @@ impl MetricsDatabase {
 
         // Calculate time saved (assuming 40 WPM typing baseline)
         let typing_baseline_wpm = 40.0;
-        let time_saved_minutes = if avg_wpm > typing_baseline_wpm && total_words > 0 {
-            let dictation_time = total_words as f64 / avg_wpm;
-            let typing_time = total_words as f64 / typing_baseline_wpm;
-            typing_time - dictation_time
+        let time_saved_minutes = if let Some(wpm) = avg_wpm {
+            if wpm > typing_baseline_wpm && total_words > 0 {
+                let dictation_time = total_words as f64 / wpm;
+                let typing_time = total_words as f64 / typing_baseline_wpm;
+                typing_time - dictation_time
+            } else {
+                0.0
+            }
         } else {
             0.0
         };
@@ -778,7 +786,7 @@ mod tests {
         let tmp_dir = TempDir::new().unwrap();
         let db_path = tmp_dir.path().join("test_metrics.db");
 
-        let db = MetricsDatabase::new(&db_path).unwrap();
+        let _db = MetricsDatabase::new(&db_path).unwrap();
         assert!(db_path.exists());
     }
 
@@ -788,8 +796,10 @@ mod tests {
         let db_path = tmp_dir.path().join("test_metrics.db");
         let db = MetricsDatabase::new(&db_path).unwrap();
 
-        let mut session = SessionMetrics::default();
-        session.session_start = Some(Utc::now());
+        let mut session = SessionMetrics {
+            session_start: Some(Utc::now()),
+            ..Default::default()
+        };
 
         // Insert creates session (only sets start_time)
         let session_id = db.insert_session(&session).unwrap();
@@ -813,9 +823,11 @@ mod tests {
 
         // Insert 5 test sessions
         for i in 0..5 {
-            let mut session = SessionMetrics::default();
-            session.session_start = Some(Utc::now());
-            session.words_dictated = 10 * (i + 1);
+            let session = SessionMetrics {
+                session_start: Some(Utc::now()),
+                words_dictated: 10 * (i + 1),
+                ..Default::default()
+            };
             db.insert_session(&session).unwrap();
         }
 
@@ -834,17 +846,21 @@ mod tests {
         let db = MetricsDatabase::new(&db_path).unwrap();
 
         // Create a session
-        let mut session = SessionMetrics::default();
-        session.session_start = Some(Utc::now());
+        let session = SessionMetrics {
+            session_start: Some(Utc::now()),
+            ..Default::default()
+        };
         let session_id = db.insert_session(&session).unwrap();
 
         // Insert 3 segments
         for i in 0..3 {
-            let mut segment = SegmentMetrics::default();
-            segment.session_id = Some(session_id);
-            segment.timestamp = Some(Utc::now());
-            segment.text = format!("Test segment {}", i + 1);
-            segment.words = 5 * (i + 1);
+            let segment = SegmentMetrics {
+                session_id: Some(session_id),
+                timestamp: Some(Utc::now()),
+                text: format!("Test segment {}", i + 1),
+                words: 5 * (i + 1),
+                ..Default::default()
+            };
             db.insert_segment(&segment, true).unwrap();
         }
 
@@ -861,8 +877,10 @@ mod tests {
         let db = MetricsDatabase::new(&db_path).unwrap();
 
         // Create a session
-        let mut session = SessionMetrics::default();
-        session.session_start = Some(Utc::now());
+        let session = SessionMetrics {
+            session_start: Some(Utc::now()),
+            ..Default::default()
+        };
         let session_id = db.insert_session(&session).unwrap();
 
         // Insert segments with different text
@@ -874,10 +892,12 @@ mod tests {
         ];
 
         for text in texts {
-            let mut segment = SegmentMetrics::default();
-            segment.session_id = Some(session_id);
-            segment.timestamp = Some(Utc::now());
-            segment.text = text.to_string();
+            let segment = SegmentMetrics {
+                session_id: Some(session_id),
+                timestamp: Some(Utc::now()),
+                text: text.to_string(),
+                ..Default::default()
+            };
             db.insert_segment(&segment, true).unwrap();
         }
 
@@ -919,8 +939,10 @@ mod tests {
         let db = MetricsDatabase::new(&db_path).unwrap();
 
         // Insert sessions from different times
-        let mut session = SessionMetrics::default();
-        session.session_start = Some(Utc::now());
+        let session = SessionMetrics {
+            session_start: Some(Utc::now()),
+            ..Default::default()
+        };
         db.insert_session(&session).unwrap();
 
         // Get sessions from last 7 days
@@ -935,14 +957,18 @@ mod tests {
         let db = MetricsDatabase::new(&db_path).unwrap();
 
         // Create a session
-        let mut session = SessionMetrics::default();
-        session.session_start = Some(Utc::now());
+        let session = SessionMetrics {
+            session_start: Some(Utc::now()),
+            ..Default::default()
+        };
         let session_id = db.insert_session(&session).unwrap();
 
         // Insert a segment
-        let mut segment = SegmentMetrics::default();
-        segment.session_id = Some(session_id);
-        segment.timestamp = Some(Utc::now());
+        let segment = SegmentMetrics {
+            session_id: Some(session_id),
+            timestamp: Some(Utc::now()),
+            ..Default::default()
+        };
         db.insert_segment(&segment, false).unwrap();
 
         // Cleanup old segments (90 days - shouldn't delete recent one)

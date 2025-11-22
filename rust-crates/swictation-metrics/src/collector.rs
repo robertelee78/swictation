@@ -87,9 +87,11 @@ impl MetricsCollector {
     /// Start a new metrics session
     pub fn start_session(&self) -> Result<i64> {
         let now = Utc::now();
-        let mut session = SessionMetrics::default();
-        session.session_start = Some(now);
-        session.typing_speed_equivalent = self.typing_baseline_wpm;
+        let mut session = SessionMetrics {
+            session_start: Some(now),
+            typing_speed_equivalent: self.typing_baseline_wpm,
+            ..Default::default()
+        };
 
         // Insert into database (get ID)
         let session_id = self.db.insert_session(&session)?;
@@ -250,10 +252,8 @@ impl MetricsCollector {
         }
 
         // Check for warnings
-        if self.warnings_enabled {
-            if seg.total_latency_ms > self.high_latency_threshold_ms {
-                info!("⚠️  High latency detected: {:.1}ms", seg.total_latency_ms);
-            }
+        if self.warnings_enabled && seg.total_latency_ms > self.high_latency_threshold_ms {
+            info!("⚠️  High latency detected: {:.1}ms", seg.total_latency_ms);
         }
 
         Ok(())
@@ -387,10 +387,12 @@ mod tests {
         assert!(collector.has_active_session());
 
         // Add segment
-        let mut segment = SegmentMetrics::default();
-        segment.words = 10;
-        segment.duration_s = 2.0;
-        segment.total_latency_ms = 500.0;
+        let segment = SegmentMetrics {
+            words: 10,
+            duration_s: 2.0,
+            total_latency_ms: 500.0,
+            ..Default::default()
+        };
         collector.add_segment(segment).unwrap();
 
         // End session

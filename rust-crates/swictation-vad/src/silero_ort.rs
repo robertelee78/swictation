@@ -37,6 +37,7 @@ pub struct SileroVadOrt {
 
 impl SileroVadOrt {
     /// Create new Silero VAD with ONNX Runtime
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         model_path: &str,
         threshold: f32,
@@ -263,17 +264,12 @@ impl SileroVadOrt {
         if self.debug {
             // Print every chunk between 1-2 seconds where we expect speech (RMS=0.087746 in second 1)
             let time_s = self.current_sample as f32 / self.sample_rate as f32;
-            if time_s >= 1.0 && time_s <= 2.0 {
-                eprintln!(
-                    "VAD: t={:.2}s, prob={:.6}, threshold={:.3}",
-                    time_s, speech_prob, self.threshold
-                );
-            } else if time_s >= 3.0 && time_s <= 4.5 {
-                eprintln!(
-                    "VAD: t={:.2}s, prob={:.6}, threshold={:.3}",
-                    time_s, speech_prob, self.threshold
-                );
-            } else if self.current_sample % (self.sample_rate as usize) == 0 {
+            if (1.0..=2.0).contains(&time_s)
+                || (3.0..=4.5).contains(&time_s)
+                || self
+                    .current_sample
+                    .is_multiple_of(self.sample_rate as usize)
+            {
                 eprintln!(
                     "VAD: t={:.2}s, prob={:.6}, threshold={:.3}",
                     time_s, speech_prob, self.threshold

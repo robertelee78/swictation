@@ -17,7 +17,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ));
 
     // Test audio file from model directory
-    let audio_file = model_path.join("/tmp/test-audio-proper.wav");
+    let audio_file = PathBuf::from("/tmp/test-audio-proper.wav");
 
     println!("📁 Model directory: {}", model_path.display());
     println!("🎵 Audio file: {}", audio_file.display());

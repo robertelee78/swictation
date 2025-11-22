@@ -13,6 +13,7 @@
 //! ```
 
 use crate::database::MetricsDatabase;
+#[allow(unused_imports)]
 use crate::models::{LifetimeMetrics, SegmentMetrics, SessionMetrics};
 use wasm_bindgen::prelude::*;
 
@@ -175,6 +176,5 @@ impl MetricsDatabaseWasm {
 /// Initialize panic hook for better error messages in WASM
 #[wasm_bindgen(start)]
 pub fn init() {
-    #[cfg(feature = "console_error_panic_hook")]
-    console_error_panic_hook::set_once();
+    // Panic hook initialization (feature not currently enabled)
 }

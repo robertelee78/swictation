@@ -169,26 +169,22 @@ async fn test_broadcast_to_multiple_clients() {
         let mut line1 = String::new();
         let mut line2 = String::new();
 
-        if !found1 {
-            if let Ok(_) =
-                tokio::time::timeout(Duration::from_millis(100), reader1.read_line(&mut line1))
-                    .await
-            {
-                if line1.contains("\"type\":\"transcription\"") {
-                    found1 = true;
-                }
-            }
+        if !found1
+            && tokio::time::timeout(Duration::from_millis(100), reader1.read_line(&mut line1))
+                .await
+                .is_ok()
+            && line1.contains("\"type\":\"transcription\"")
+        {
+            found1 = true;
         }
 
-        if !found2 {
-            if let Ok(_) =
-                tokio::time::timeout(Duration::from_millis(100), reader2.read_line(&mut line2))
-                    .await
-            {
-                if line2.contains("\"type\":\"transcription\"") {
-                    found2 = true;
-                }
-            }
+        if !found2
+            && tokio::time::timeout(Duration::from_millis(100), reader2.read_line(&mut line2))
+                .await
+                .is_ok()
+            && line2.contains("\"type\":\"transcription\"")
+        {
+            found2 = true;
         }
 
         if found1 && found2 {

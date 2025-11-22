@@ -252,18 +252,15 @@ pub fn select_best_tool(
                 } else {
                     Err(anyhow::anyhow!(format_gnome_wayland_error(server_info)))
                 }
-            }
             // Other Wayland: Prefer wtype (fast), fallback to ydotool
-            else {
-                if available_tools.contains(&TextInjectionTool::Wtype) {
-                    debug!("Selected wtype for Wayland (optimal)");
-                    Ok(TextInjectionTool::Wtype)
-                } else if available_tools.contains(&TextInjectionTool::Ydotool) {
-                    warn!("wtype not found, falling back to ydotool for Wayland");
-                    Ok(TextInjectionTool::Ydotool)
-                } else {
-                    Err(anyhow::anyhow!(format_wayland_error(server_info)))
-                }
+            } else if available_tools.contains(&TextInjectionTool::Wtype) {
+                debug!("Selected wtype for Wayland (optimal)");
+                Ok(TextInjectionTool::Wtype)
+            } else if available_tools.contains(&TextInjectionTool::Ydotool) {
+                warn!("wtype not found, falling back to ydotool for Wayland");
+                Ok(TextInjectionTool::Ydotool)
+            } else {
+                Err(anyhow::anyhow!(format_wayland_error(server_info)))
             }
         }
 

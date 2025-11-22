@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.4] - 2025-11-22
+
+### Performance
+- **UI Optimizations** - Multiple performance improvements for smoother UI experience
+  - Disabled React.StrictMode in production builds to reduce unnecessary re-renders
+  - Memoized filtered corrections to prevent recomputation on every render
+  - Debounced transcription auto-scroll to reduce layout thrashing
+  - Implemented lazy mounting for tab components to improve initial load time
+  - Implemented virtualized infinite scroll for History tab with efficient rendering
+
+### Fixed
+- **Code Quality** - Applied cargo fmt and resolved all clippy linting errors for CI compliance
+- **Display Server Logic** - Simplified and cleaned up display server selection logic (rust-crates/swictation-daemon/src/display_server.rs:252-264)
+- **Metrics Calculations** - Fixed time saved calculation to handle Option<f64> properly (rust-crates/swictation-metrics/src/database.rs:454-462)
+- **Context Learning** - Improved validation error handling in context learning module
+- **Test Compatibility** - Fixed CI environment compatibility for various test suites
+
+### Changed
+- Cleaned up obsolete audio processing code in STT engine
+- Improved type safety with DbSessionRow type alias for complex database queries
+- Removed dead code and unused imports across multiple modules
+
 ## [0.6.3] - 2025-11-22
 
 ### Fixed

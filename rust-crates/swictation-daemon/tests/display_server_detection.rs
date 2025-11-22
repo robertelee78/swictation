@@ -54,7 +54,7 @@ fn test_x11_pure_detection() {
 
     assert_eq!(info.server_type, DisplayServer::X11);
     assert_eq!(info.confidence, ConfidenceLevel::High);
-    assert_eq!(info.is_gnome_wayland, false);
+    assert!(!info.is_gnome_wayland);
 }
 
 #[test]
@@ -66,7 +66,7 @@ fn test_wayland_kde_detection() {
 
     assert_eq!(info.server_type, DisplayServer::Wayland);
     assert_eq!(info.confidence, ConfidenceLevel::High);
-    assert_eq!(info.is_gnome_wayland, false);
+    assert!(!info.is_gnome_wayland);
     assert_eq!(info.desktop_environment, Some("KDE".to_string()));
 }
 
@@ -81,7 +81,7 @@ fn test_wayland_gnome_detection() {
 
     assert_eq!(info.server_type, DisplayServer::Wayland);
     assert_eq!(info.confidence, ConfidenceLevel::High);
-    assert_eq!(info.is_gnome_wayland, true); // CRITICAL TEST
+    assert!(info.is_gnome_wayland); // CRITICAL TEST
     assert_eq!(info.desktop_environment, Some("GNOME".to_string()));
 }
 
@@ -110,7 +110,7 @@ fn test_sway_detection() {
 
     assert_eq!(info.server_type, DisplayServer::Wayland);
     assert_eq!(info.confidence, ConfidenceLevel::High);
-    assert_eq!(info.is_gnome_wayland, false);
+    assert!(!info.is_gnome_wayland);
 }
 
 #[test]
@@ -122,7 +122,7 @@ fn test_headless_detection() {
 
     assert_eq!(info.server_type, DisplayServer::Unknown);
     assert_eq!(info.confidence, ConfidenceLevel::Low);
-    assert_eq!(info.is_gnome_wayland, false);
+    assert!(!info.is_gnome_wayland);
 }
 
 #[test]
@@ -180,8 +180,8 @@ fn test_gnome_variations() {
 
         let info = detect_with_env(env);
 
-        assert_eq!(
-            info.is_gnome_wayland, true,
+        assert!(
+            info.is_gnome_wayland,
             "Failed to detect GNOME for desktop environment: {}",
             desktop_var
         );
@@ -257,7 +257,7 @@ fn test_gnome_on_x11() {
     let info = detect_with_env(env);
 
     assert_eq!(info.server_type, DisplayServer::X11);
-    assert_eq!(info.is_gnome_wayland, false); // Should be false (X11, not Wayland)
+    assert!(!info.is_gnome_wayland); // Should be false (X11, not Wayland)
 }
 
 #[test]
