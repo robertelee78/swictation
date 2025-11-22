@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2] - 2025-11-22
+
+### Changed
+- **Documentation Updates** - Updated README and architecture documentation for clarity and accuracy
+  - Improved documentation for OrtRecognizer migration
+  - Enhanced corrections engine documentation
+  - Updated architecture documentation
+
+### Notes
+This is a maintenance release focusing on documentation improvements and consolidating changes since v0.6.1.
+
 ## [0.4.28] - 2025-11-20
 
 ### Fixed
