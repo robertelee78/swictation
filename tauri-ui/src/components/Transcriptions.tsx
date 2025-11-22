@@ -30,10 +30,15 @@ export function Transcriptions({ transcriptions }: Props) {
   const [toast, setToast] = useState<string | null>(null);
 
   // Auto-scroll to bottom when new transcriptions arrive
+  // Debounced to reduce layout thrashing during rapid speech
   useEffect(() => {
-    if (listRef.current) {
-      listRef.current.scrollTop = listRef.current.scrollHeight;
-    }
+    const timeoutId = setTimeout(() => {
+      if (listRef.current) {
+        listRef.current.scrollTop = listRef.current.scrollHeight;
+      }
+    }, 100);
+
+    return () => clearTimeout(timeoutId);
   }, [transcriptions]);
 
   const copyToClipboard = async (text: string, index: number) => {
