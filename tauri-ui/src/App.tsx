@@ -12,6 +12,25 @@ function App() {
   const [activeTab, setActiveTab] = useState<Tab>('live');
   const { metrics, transcriptions } = useMetrics();
 
+  // Helper function to render only the active tab component
+  // This prevents React from evaluating all 5 conditional expressions on every render
+  const renderActiveTab = () => {
+    switch (activeTab) {
+      case 'live':
+        return <LiveSession metrics={metrics} />;
+      case 'history':
+        return <History />;
+      case 'transcriptions':
+        return <Transcriptions transcriptions={transcriptions} />;
+      case 'patterns':
+        return <LearnedPatterns />;
+      case 'settings':
+        return <Settings />;
+      default:
+        return null;
+    }
+  };
+
   return (
     <div className="h-screen flex flex-col bg-background">
       {/* Connection Status */}
@@ -56,11 +75,7 @@ function App() {
 
       {/* Content Area */}
       <div className="flex-1 overflow-auto">
-        {activeTab === 'live' && <LiveSession metrics={metrics} />}
-        {activeTab === 'history' && <History />}
-        {activeTab === 'transcriptions' && <Transcriptions transcriptions={transcriptions} />}
-        {activeTab === 'patterns' && <LearnedPatterns />}
-        {activeTab === 'settings' && <Settings />}
+        {renderActiveTab()}
       </div>
     </div>
   );
