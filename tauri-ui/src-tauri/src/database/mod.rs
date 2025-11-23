@@ -49,6 +49,7 @@ impl Database {
 
     /// Get recent sessions with pagination support
     pub fn get_recent_sessions(&self, limit: usize, offset: usize) -> Result<Vec<SessionSummary>> {
+        log::info!("🔍 get_recent_sessions called: limit={}, offset={}", limit, offset);
         let conn = self.conn.lock().unwrap();
 
         let mut stmt = conn.prepare(
@@ -56,14 +57,17 @@ impl Database {
                 s.id,
                 s.start_time,
                 s.end_time,
-                s.duration_s,
+                COALESCE(s.duration_s, 0.0) as duration_s,
                 s.words_dictated,
-                s.wpm,
-                s.avg_latency_ms
+                COALESCE(s.wpm, 0.0) as wpm,
+                COALESCE(s.avg_latency_ms, 0.0) as avg_latency_ms
              FROM sessions s
              ORDER BY s.start_time DESC
              LIMIT ?1 OFFSET ?2"
-        )?;
+        ).map_err(|e| {
+            log::error!("❌ SQL prepare error: {}", e);
+            e
+        })?;
 
         let sessions = stmt.query_map(params![limit, offset], |row| {
             let start_time: f64 = row.get(1)?;
@@ -83,19 +87,29 @@ impl Database {
                 avg_latency_ms,
             })
         })?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|e| {
+            log::error!("❌ Query execution error: {}", e);
+            e
+        })?;
 
+        log::info!("✓ Returning {} sessions", sessions.len());
         Ok(sessions)
     }
 
     /// Get total count of sessions for pagination
     pub fn get_session_count(&self) -> Result<usize> {
+        log::info!("🔍 get_session_count called");
         let conn = self.conn.lock().unwrap();
         let count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM sessions",
             [],
             |row| row.get(0)
-        )?;
+        ).map_err(|e| {
+            log::error!("❌ get_session_count error: {}", e);
+            e
+        })?;
+        log::info!("✓ Session count: {}", count);
         Ok(count as usize)
     }
 
@@ -172,6 +186,7 @@ impl Database {
 
     /// Get lifetime statistics
     pub fn get_lifetime_stats(&self) -> Result<LifetimeStats> {
+        log::info!("🔍 get_lifetime_stats called");
         let conn = self.conn.lock().unwrap();
 
         let mut stmt = conn.prepare(
