@@ -27,10 +27,13 @@ export function History() {
       );
     }
 
+    // Calculate sequential session number (newest = #1, oldest = #totalCount)
+    const sessionNumber = totalCount - index;
+
     return (
       <div style={style} className="px-5 py-1.5">
         <div className="bg-card rounded border border-border p-4 flex items-center gap-5">
-          <div className="text-primary font-bold text-lg">#{session.id}</div>
+          <div className="text-primary font-bold text-lg">#{sessionNumber}</div>
 
           <div className="flex-1">
             <div className="text-foreground text-sm mb-1">

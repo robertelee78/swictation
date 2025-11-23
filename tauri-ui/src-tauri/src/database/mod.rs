@@ -47,7 +47,7 @@ impl Database {
         Ok(expanded)
     }
 
-    /// Get recent sessions with pagination support
+    /// Get recent sessions with pagination support (only completed sessions)
     pub fn get_recent_sessions(&self, limit: usize, offset: usize) -> Result<Vec<SessionSummary>> {
         log::info!("🔍 get_recent_sessions called: limit={}, offset={}", limit, offset);
         let conn = self.conn.lock().unwrap();
@@ -57,11 +57,12 @@ impl Database {
                 s.id,
                 s.start_time,
                 s.end_time,
-                COALESCE(s.duration_s, 0.0) as duration_s,
+                s.duration_s,
                 s.words_dictated,
-                COALESCE(s.wpm, 0.0) as wpm,
-                COALESCE(s.avg_latency_ms, 0.0) as avg_latency_ms
+                s.wpm,
+                s.avg_latency_ms
              FROM sessions s
+             WHERE s.duration_s IS NOT NULL
              ORDER BY s.start_time DESC
              LIMIT ?1 OFFSET ?2"
         ).map_err(|e| {
@@ -97,12 +98,12 @@ impl Database {
         Ok(sessions)
     }
 
-    /// Get total count of sessions for pagination
+    /// Get total count of sessions for pagination (only completed sessions)
     pub fn get_session_count(&self) -> Result<usize> {
         log::info!("🔍 get_session_count called");
         let conn = self.conn.lock().unwrap();
         let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM sessions",
+            "SELECT COUNT(*) FROM sessions WHERE duration_s IS NOT NULL",
             [],
             |row| row.get(0)
         ).map_err(|e| {
