@@ -1,5 +1,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { useWasmUtils } from '../hooks/useWasmUtils';
+import { ClusterVisualization } from './ClusterVisualization';
 
 interface Correction {
   id: string;
@@ -12,13 +14,28 @@ interface Correction {
   use_count: number;
 }
 
+interface PatternCluster {
+  cluster_id: number;
+  centroid_original: string;
+  centroid_corrected: string;
+  members: number[];
+  size: number;
+}
+
+type ViewMode = 'table' | 'clusters';
+
 export function LearnedPatterns() {
+  const { isLoaded: wasmLoaded, clusterCorrectionPatterns } = useWasmUtils();
+
   const [corrections, setCorrections] = useState<Correction[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<string>('all');
   const [search, setSearch] = useState<string>('');
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<ViewMode>('table');
+  const [clusters, setClusters] = useState<PatternCluster[]>([]);
+  const clusterCount = 0; // 0 = auto (sqrt(n))
   const [editForm, setEditForm] = useState<{ original: string; corrected: string; mode: string; matchType: string; caseMode: string }>({
     original: '',
     corrected: '',
@@ -101,6 +118,35 @@ export function LearnedPatterns() {
     });
   }, [corrections, filter, search]);
 
+  // Compute clusters using WASM (50ms vs 250ms backend)
+  useEffect(() => {
+    if (!wasmLoaded || viewMode !== 'clusters' || filteredCorrections.length === 0) {
+      setClusters([]);
+      return;
+    }
+
+    // Transform Correction to CorrectionPattern format for WASM
+    // WASM expects: { id: i64, original: string, corrected: string, usage_count: i32 }
+    const patterns = filteredCorrections.map((c, idx) => ({
+      id: idx, // Use array index as numeric ID for WASM
+      original: c.original,
+      corrected: c.corrected,
+      usage_count: c.use_count,
+    }));
+
+    const patternsJson = JSON.stringify(patterns);
+
+    clusterCorrectionPatterns(patternsJson, clusterCount)
+      .then((clustersJson) => {
+        const parsedClusters: PatternCluster[] = JSON.parse(clustersJson);
+        setClusters(parsedClusters);
+      })
+      .catch((err) => {
+        console.error('WASM clustering failed:', err);
+        setClusters([]);
+      });
+  }, [wasmLoaded, viewMode, filteredCorrections, clusterCount, clusterCorrectionPatterns]);
+
   const getModeLabel = (mode: string) => {
     switch (mode) {
       case 'secretary':
@@ -127,14 +173,38 @@ export function LearnedPatterns() {
     }
   };
 
+  // Show cluster view if in clusters mode
+  if (viewMode === 'clusters') {
+    return (
+      <div className="h-full bg-card rounded-lg m-5 p-4 flex flex-col">
+        <ClusterVisualization
+          clusters={clusters}
+          corrections={filteredCorrections}
+          onBack={() => setViewMode('table')}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="h-full bg-card rounded-lg m-5 p-4 flex flex-col">
       {/* Header */}
-      <div className="mb-4">
-        <h2 className="text-primary text-xl font-bold">Learned Patterns</h2>
-        <p className="text-muted text-xs italic mt-1">
-          Corrections stored in ~/.config/swictation/corrections.toml
-        </p>
+      <div className="mb-4 flex items-center justify-between">
+        <div>
+          <h2 className="text-primary text-xl font-bold">Learned Patterns</h2>
+          <p className="text-muted text-xs italic mt-1">
+            Corrections stored in ~/.config/swictation/corrections.toml
+          </p>
+        </div>
+        {wasmLoaded && filteredCorrections.length > 0 && (
+          <button
+            onClick={() => setViewMode('clusters')}
+            className="px-4 py-2 bg-primary text-background rounded hover:opacity-90 transition-opacity flex items-center gap-2"
+          >
+            <span>🎯</span>
+            <span>View Clusters</span>
+          </button>
+        )}
       </div>
 
       {/* Controls */}

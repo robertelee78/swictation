@@ -1,0 +1,12 @@
+# wasm-pack configuration for swictation-metrics
+# https://rustwasm.github.io/docs/wasm-pack/
+
+[package]
+name = "swictation-metrics-wasm"
+description = "WebAssembly bindings for swictation metrics database"
+repository = "https://github.com/robertelee78/swictation"
+license = "Apache-2.0"
+
+[profile.release]
+# Optimize for size (critical for WASM)
+wasm-opt = ["-Oz", "--enable-mutable-globals"]

@@ -3,17 +3,18 @@ import { LiveSession } from './components/LiveSession';
 import { History } from './components/History';
 import { Transcriptions } from './components/Transcriptions';
 import { LearnedPatterns } from './components/LearnedPatterns';
+import { Analytics } from './components/Analytics';
 import { Settings } from './components/Settings';
 import { useMetrics } from './hooks/useMetrics';
 
-type Tab = 'live' | 'history' | 'transcriptions' | 'patterns' | 'settings';
+type Tab = 'live' | 'history' | 'transcriptions' | 'patterns' | 'analytics' | 'settings';
 
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>('live');
   const { metrics, transcriptions } = useMetrics();
 
   // Helper function to render only the active tab component
-  // This prevents React from evaluating all 5 conditional expressions on every render
+  // This prevents React from evaluating all 6 conditional expressions on every render
   const renderActiveTab = () => {
     switch (activeTab) {
       case 'live':
@@ -24,6 +25,8 @@ function App() {
         return <Transcriptions transcriptions={transcriptions} />;
       case 'patterns':
         return <LearnedPatterns />;
+      case 'analytics':
+        return <Analytics />;
       case 'settings':
         return <Settings />;
       default:
@@ -65,6 +68,11 @@ function App() {
           label="Learned Patterns"
           active={activeTab === 'patterns'}
           onClick={() => setActiveTab('patterns')}
+        />
+        <TabButton
+          label="Analytics"
+          active={activeTab === 'analytics'}
+          onClick={() => setActiveTab('analytics')}
         />
         <TabButton
           label="Settings"

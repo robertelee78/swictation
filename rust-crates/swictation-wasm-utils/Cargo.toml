@@ -1,0 +1,43 @@
+[package]
+name = "swictation-wasm-utils"
+version = "0.1.0"
+edition = "2021"
+authors = ["Robert E. Lee <robert@agidreams.us>"]
+description = "WebAssembly utilities for swictation UI - metrics calculations and text processing"
+license = "Apache-2.0"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# WASM bindings
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+
+# Serialization (for JSON interchange)
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Date/time parsing (pure Rust, no libc dependency)
+chrono = { version = "0.4", default-features = false, features = ["wasmbind", "serde"] }
+
+# Statistics (pure Rust)
+statistical = "1.0"
+
+# Error handling
+thiserror = "2.0"
+
+# Logging for WASM
+console_error_panic_hook = "0.1"
+wasm-logger = "0.2"
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+
+[profile.release]
+opt-level = "z"      # Optimize for size
+lto = true           # Link-time optimization
+codegen-units = 1    # Better optimization
+strip = true         # Strip debug symbols
+panic = "abort"      # Smaller binary
