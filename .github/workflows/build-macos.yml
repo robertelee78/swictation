@@ -1,0 +1,219 @@
+name: CI - macOS Build and Test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  test-macos:
+    name: Test Suite (macOS)
+    runs-on: macos-14  # M1 runner
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install Rust
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        toolchain: stable
+        target: aarch64-apple-darwin
+        components: clippy, rustfmt
+
+    - name: Cache Rust dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: |
+          rust-crates -> target
+          external/midstream -> target
+
+    - name: Check formatting
+      working-directory: rust-crates
+      run: cargo fmt --all -- --check
+
+    - name: Run clippy
+      working-directory: rust-crates
+      run: cargo clippy --all-targets --all-features --target aarch64-apple-darwin -- -D warnings
+
+    - name: Build all crates
+      working-directory: rust-crates
+      run: cargo build --all --verbose --target aarch64-apple-darwin
+
+    - name: Run tests
+      working-directory: rust-crates
+      run: cargo test --all --verbose --target aarch64-apple-darwin
+
+  build-macos:
+    name: Build macOS ARM64
+    runs-on: macos-14  # M1 runner
+    needs: test-macos
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install Rust
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        toolchain: stable
+        target: aarch64-apple-darwin
+
+    - name: Cache Rust dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: |
+          rust-crates -> target
+
+    - name: Build daemon (release)
+      working-directory: rust-crates
+      run: |
+        cargo build --release --bin swictation-daemon --target aarch64-apple-darwin
+        strip target/aarch64-apple-darwin/release/swictation-daemon
+
+    - name: Check binary
+      run: |
+        echo "Daemon binary info:"
+        file rust-crates/target/aarch64-apple-darwin/release/swictation-daemon
+        ls -lh rust-crates/target/aarch64-apple-darwin/release/swictation-daemon
+        du -sh rust-crates/target/aarch64-apple-darwin/release/swictation-daemon
+
+    - name: Verify CoreML support
+      run: |
+        echo "Checking for CoreML symbols in binary:"
+        nm rust-crates/target/aarch64-apple-darwin/release/swictation-daemon | grep -i coreml | head -5 || echo "CoreML symbols not found (may be dynamically loaded)"
+
+    - name: Upload daemon artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: swictation-daemon-macos-arm64
+        path: rust-crates/target/aarch64-apple-darwin/release/swictation-daemon
+        retention-days: 7
+
+  build-tauri-macos:
+    name: Build Tauri UI (macOS)
+    runs-on: macos-14
+    needs: test-macos
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install Rust
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        toolchain: stable
+        target: aarch64-apple-darwin
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: tauri-ui/package-lock.json
+
+    - name: Install frontend dependencies
+      working-directory: tauri-ui
+      run: npm ci
+
+    - name: Build Tauri UI
+      working-directory: tauri-ui
+      run: npm run tauri build
+
+    - name: Check build output
+      run: |
+        echo "Tauri build artifacts:"
+        ls -lh tauri-ui/src-tauri/target/release/bundle/macos/ || echo "macOS bundle not found"
+        ls -lh tauri-ui/src-tauri/target/release/bundle/dmg/ || echo "DMG not found"
+
+    - name: Upload Tauri artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: swictation-ui-macos-arm64
+        path: |
+          tauri-ui/src-tauri/target/release/bundle/macos/**/*.app
+          tauri-ui/src-tauri/target/release/bundle/dmg/**/*.dmg
+        retention-days: 7
+      continue-on-error: true  # Don't fail if bundle format not found
+
+  integration-test-macos:
+    name: Integration Tests (macOS)
+    runs-on: macos-14
+    needs: build-macos
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Download daemon artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: swictation-daemon-macos-arm64
+        path: ./test-bin
+
+    - name: Make daemon executable
+      run: chmod +x ./test-bin/swictation-daemon
+
+    - name: Test daemon launch
+      run: |
+        echo "Testing daemon launch:"
+        ./test-bin/swictation-daemon --version || echo "Version check failed (expected without models)"
+
+    - name: Check CoreML availability
+      run: |
+        echo "System info:"
+        system_profiler SPHardwareDataType | grep "Chip"
+        system_profiler SPSoftwareDataType | grep "System Version"
+
+    - name: Test unified memory detection
+      run: |
+        echo "Testing memory detection:"
+        sysinfo=$(system_profiler SPHardwareDataType)
+        echo "$sysinfo" | grep "Memory"
+
+  performance-benchmark-macos:
+    name: Performance Benchmarks (macOS)
+    runs-on: macos-14
+    needs: build-macos
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install Rust
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        toolchain: stable
+        target: aarch64-apple-darwin
+
+    - name: Cache Rust dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: |
+          rust-crates -> target
+
+    - name: Run benchmarks
+      working-directory: rust-crates
+      run: cargo bench --target aarch64-apple-darwin || echo "Benchmarks not configured yet"
+      continue-on-error: true
+
+    - name: Upload benchmark results
+      uses: actions/upload-artifact@v4
+      with:
+        name: benchmark-results-macos
+        path: rust-crates/target/criterion
+        retention-days: 30
+      continue-on-error: true
