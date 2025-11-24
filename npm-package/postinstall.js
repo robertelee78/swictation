@@ -1073,6 +1073,120 @@ async function downloadMacOSDaemon() {
   }
 }
 
+/**
+ * Download macOS ARM64 UI application from GitHub releases
+ * Required for Apple Silicon Macs - the Tauri-based UI application
+ */
+async function downloadMacOSUI() {
+  log('cyan', '\n📦 Downloading Swictation UI for macOS ARM64...');
+
+  const UI_VERSION = '0.1.0';
+  const releaseUrl = `https://github.com/robertelee78/swictation/releases/download/ui-macos-arm64-v${UI_VERSION}/swictation-ui-macos-arm64.tar.gz`;
+  const tmpDir = path.join(os.tmpdir(), 'swictation-macos-ui');
+  const tarPath = path.join(tmpDir, 'swictation-ui-macos-arm64.tar.gz');
+
+  // Target directory in npm package
+  const binDir = path.join(__dirname, 'bin');
+  const targetUIPath = path.join(binDir, 'swictation-ui-macos');
+  const applicationsDir = path.join(os.homedir(), 'Applications');
+  const appBundlePath = path.join(applicationsDir, 'Swictation.app');
+
+  try {
+    // Check if already downloaded (either in bin or ~/Applications)
+    if (fs.existsSync(appBundlePath)) {
+      try {
+        const binaryPath = path.join(appBundlePath, 'Contents', 'MacOS', 'swictation-ui');
+        const fileOutput = execSync(`file "${binaryPath}"`, { encoding: 'utf8' });
+        if (fileOutput.includes('Mach-O') && fileOutput.includes('arm64')) {
+          log('green', `  ✓ Swictation.app already installed in ~/Applications`);
+          log('cyan', `    Location: ${appBundlePath}`);
+          log('cyan', `    Skipping download`);
+          return;
+        } else {
+          log('yellow', `  ⚠️  Existing app is not valid Mach-O ARM64, re-downloading...`);
+        }
+      } catch (err) {
+        log('yellow', `  ⚠️  Could not verify existing app, re-downloading...`);
+      }
+    }
+
+    // Create directories
+    if (!fs.existsSync(tmpDir)) {
+      fs.mkdirSync(tmpDir, { recursive: true });
+    }
+    if (!fs.existsSync(binDir)) {
+      fs.mkdirSync(binDir, { recursive: true });
+    }
+    if (!fs.existsSync(applicationsDir)) {
+      fs.mkdirSync(applicationsDir, { recursive: true });
+    }
+
+    // Download tarball
+    log('cyan', `  Downloading macOS ARM64 UI v${UI_VERSION}...`);
+    log('cyan', `  URL: ${releaseUrl}`);
+    await downloadFile(releaseUrl, tarPath);
+    log('green', `  ✓ Downloaded Swictation.app (~3MB)`);
+
+    // Extract tarball
+    log('cyan', '  Extracting application bundle...');
+    execSync(`tar -xzf "${tarPath}" -C "${tmpDir}"`, { stdio: 'inherit' });
+
+    // Find the extracted app bundle
+    const extractedApp = path.join(tmpDir, 'Swictation.app');
+    if (!fs.existsSync(extractedApp)) {
+      throw new Error(`Swictation.app not found in archive at ${extractedApp}`);
+    }
+
+    // Verify it contains a valid Mach-O binary
+    const binaryPath = path.join(extractedApp, 'Contents', 'MacOS', 'swictation-ui');
+    try {
+      const fileOutput = execSync(`file "${binaryPath}"`, { encoding: 'utf8' });
+      if (!fileOutput.includes('Mach-O') || !fileOutput.includes('arm64')) {
+        throw new Error(`Invalid Mach-O binary: ${fileOutput}`);
+      }
+      log('green', `  ✓ Verified Mach-O ARM64 executable`);
+    } catch (err) {
+      log('red', `  ✗ Binary verification failed: ${err.message}`);
+      throw err;
+    }
+
+    // Copy app bundle to ~/Applications
+    if (fs.existsSync(appBundlePath)) {
+      // Remove old version
+      execSync(`rm -rf "${appBundlePath}"`, { stdio: 'inherit' });
+    }
+    execSync(`cp -R "${extractedApp}" "${appBundlePath}"`, { stdio: 'inherit' });
+    log('green', `  ✓ Installed Swictation.app to ~/Applications`);
+
+    // Also copy the binary to bin directory for CLI access
+    const targetBinaryPath = path.join(binDir, 'swictation-ui-macos');
+    fs.copyFileSync(binaryPath, targetBinaryPath);
+    fs.chmodSync(targetBinaryPath, 0o755);
+    log('green', `  ✓ Installed CLI binary to ${targetBinaryPath}`);
+
+    // Cleanup temp files
+    try {
+      fs.unlinkSync(tarPath);
+      execSync(`rm -rf "${tmpDir}"`, { stdio: 'ignore' });
+    } catch (err) {
+      // Cleanup is optional
+    }
+
+    log('green', `✅ Swictation UI ready`);
+    log('cyan', `   App: ${appBundlePath}`);
+    log('cyan', `   CLI: ${targetBinaryPath}`);
+
+  } catch (err) {
+    log('red', `\n❌ Failed to download macOS UI`);
+    log('yellow', `   Error: ${err.message}`);
+    log('cyan', '\n   Manual installation:');
+    log('cyan', `   1. Download: ${releaseUrl}`);
+    log('cyan', `   2. Extract: tar -xzf swictation-ui-macos-arm64.tar.gz`);
+    log('cyan', `   3. Copy Swictation.app to ~/Applications`);
+    throw err;
+  }
+}
+
 function detectOrtLibrary() {
   log('cyan', '\n🔍 Detecting ONNX Runtime library path...');
 
@@ -2549,6 +2663,9 @@ async function main() {
 
       // Download macOS ARM64 daemon binary (always required on macOS)
       await downloadMacOSDaemon();
+
+      // Download macOS ARM64 UI application (always required on macOS)
+      await downloadMacOSUI();
 
       // macOS ONNX Runtime path
       ortLibPath = path.join(__dirname, 'lib', 'native', 'libonnxruntime.dylib');
