@@ -967,6 +967,112 @@ async function downloadONNXRuntimeCoreML() {
   }
 }
 
+/**
+ * Download macOS ARM64 daemon binary from GitHub releases
+ * Required for Apple Silicon Macs - cannot use bundled Linux ELF binaries
+ */
+async function downloadMacOSDaemon() {
+  log('cyan', '\n📦 Downloading swictation-daemon for macOS ARM64...');
+
+  const DAEMON_VERSION = '0.7.1';
+  const releaseUrl = `https://github.com/robertelee78/swictation/releases/download/daemon-macos-arm64-v${DAEMON_VERSION}/swictation-daemon-macos-arm64.tar.gz`;
+  const tmpDir = path.join(os.tmpdir(), 'swictation-macos-daemon');
+  const tarPath = path.join(tmpDir, 'swictation-daemon-macos-arm64.tar.gz');
+
+  // Target directory in npm package
+  const binDir = path.join(__dirname, 'bin');
+  const targetDaemonPath = path.join(binDir, 'swictation-daemon-macos');
+
+  try {
+    // Check if already downloaded and is valid Mach-O binary
+    if (fs.existsSync(targetDaemonPath)) {
+      try {
+        const fileOutput = execSync(`file "${targetDaemonPath}"`, { encoding: 'utf8' });
+        if (fileOutput.includes('Mach-O') && fileOutput.includes('arm64')) {
+          log('green', `  ✓ macOS daemon already present and valid`);
+          log('cyan', `    Location: ${targetDaemonPath}`);
+          log('cyan', `    Skipping download`);
+          return;
+        } else {
+          log('yellow', `  ⚠️  Existing daemon is not valid Mach-O ARM64, re-downloading...`);
+        }
+      } catch (err) {
+        log('yellow', `  ⚠️  Could not verify existing daemon, re-downloading...`);
+      }
+    }
+
+    // Create directories
+    if (!fs.existsSync(tmpDir)) {
+      fs.mkdirSync(tmpDir, { recursive: true });
+    }
+    if (!fs.existsSync(binDir)) {
+      fs.mkdirSync(binDir, { recursive: true });
+    }
+
+    // Download tarball
+    log('cyan', `  Downloading macOS ARM64 daemon v${DAEMON_VERSION}...`);
+    log('cyan', `  URL: ${releaseUrl}`);
+    await downloadFile(releaseUrl, tarPath);
+    log('green', `  ✓ Downloaded macOS daemon (~3MB)`);
+
+    // Extract tarball
+    log('cyan', '  Extracting daemon binary...');
+    execSync(`tar -xzf "${tarPath}" -C "${tmpDir}"`, { stdio: 'inherit' });
+
+    // Find and copy the daemon binary
+    const extractedDaemon = path.join(tmpDir, 'swictation-daemon');
+    if (!fs.existsSync(extractedDaemon)) {
+      throw new Error(`Daemon binary not found in archive at ${extractedDaemon}`);
+    }
+
+    // Verify it's a valid Mach-O binary
+    try {
+      const fileOutput = execSync(`file "${extractedDaemon}"`, { encoding: 'utf8' });
+      if (!fileOutput.includes('Mach-O') || !fileOutput.includes('arm64')) {
+        throw new Error(`Invalid Mach-O binary: ${fileOutput}`);
+      }
+      log('green', `  ✓ Verified Mach-O ARM64 executable`);
+    } catch (err) {
+      log('red', `  ✗ Binary verification failed: ${err.message}`);
+      throw err;
+    }
+
+    // Copy to target location
+    fs.copyFileSync(extractedDaemon, targetDaemonPath);
+    fs.chmodSync(targetDaemonPath, 0o755); // rwxr-xr-x
+    log('green', `  ✓ Installed daemon to ${targetDaemonPath}`);
+
+    // Verify version
+    try {
+      const versionOutput = execSync(`"${targetDaemonPath}" --version 2>&1`, { encoding: 'utf8' }).trim();
+      log('green', `  ✓ Daemon version: ${versionOutput}`);
+    } catch (err) {
+      log('yellow', `  ⚠️  Could not verify daemon version (may need permissions)`);
+    }
+
+    // Cleanup temp files
+    try {
+      fs.unlinkSync(tarPath);
+      fs.unlinkSync(extractedDaemon);
+      fs.rmdirSync(tmpDir, { recursive: true });
+    } catch (err) {
+      // Cleanup is optional
+    }
+
+    log('green', `✅ macOS daemon ready`);
+
+  } catch (err) {
+    log('red', `\n❌ Failed to download macOS daemon`);
+    log('yellow', `   Error: ${err.message}`);
+    log('cyan', '\n   Manual installation:');
+    log('cyan', `   1. Download: ${releaseUrl}`);
+    log('cyan', `   2. Extract: tar -xzf swictation-daemon-macos-arm64.tar.gz`);
+    log('cyan', `   3. Copy to: ${targetDaemonPath}`);
+    log('cyan', `   4. Make executable: chmod +x ${targetDaemonPath}`);
+    throw err;
+  }
+}
+
 function detectOrtLibrary() {
   log('cyan', '\n🔍 Detecting ONNX Runtime library path...');
 
@@ -2440,6 +2546,9 @@ async function main() {
       if (gpuInfo.recommendedModel !== 'cpu-only') {
         await downloadONNXRuntimeCoreML();
       }
+
+      // Download macOS ARM64 daemon binary (always required on macOS)
+      await downloadMacOSDaemon();
 
       // macOS ONNX Runtime path
       ortLibPath = path.join(__dirname, 'lib', 'native', 'libonnxruntime.dylib');
