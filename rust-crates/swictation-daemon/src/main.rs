@@ -16,6 +16,10 @@ mod socket_utils;
 mod text_injection;
 mod version;
 
+// macOS text injection module (conditional compilation)
+#[cfg(target_os = "macos")]
+mod macos_text_inject;
+
 use anyhow::{Context, Result};
 use clap::Parser;
 use std::path::PathBuf;

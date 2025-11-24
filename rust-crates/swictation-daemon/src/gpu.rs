@@ -165,10 +165,9 @@ pub fn get_gpu_memory_mb() -> Option<(u64, u64)> {
 /// Some((total_system_mb, available_for_ml_mb)) on success, None on failure
 #[cfg(target_os = "macos")]
 fn get_macos_unified_memory_mb() -> Option<(u64, u64)> {
-    use sysinfo::{System, SystemExt};
+    use sysinfo::System;
 
-    let mut system = System::new_all();
-    system.refresh_memory();
+    let system = System::new_all();
 
     // Total system memory (shared between CPU/GPU/ANE)
     let total_mb = system.total_memory() / (1024 * 1024);
