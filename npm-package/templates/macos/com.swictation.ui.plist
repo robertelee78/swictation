@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Service identification -->
+	<key>Label</key>
+	<string>com.swictation.ui</string>
+
+	<!-- Program to execute -->
+	<key>ProgramArguments</key>
+	<array>
+		<string>{{UI_PATH}}</string>
+	</array>
+
+	<!-- Working directory -->
+	<key>WorkingDirectory</key>
+	<string>{{LOG_DIR}}</string>
+
+	<!-- Start on login -->
+	<key>RunAtLoad</key>
+	<true/>
+
+	<!-- Keep alive - restart if crashed -->
+	<key>KeepAlive</key>
+	<dict>
+		<!-- Restart if process exits unexpectedly -->
+		<key>SuccessfulExit</key>
+		<false/>
+		<!-- Restart if process crashes -->
+		<key>Crashed</key>
+		<true/>
+		<!-- Only run when daemon is running (check every 10 seconds) -->
+		<key>OtherJobEnabled</key>
+		<dict>
+			<key>com.swictation.daemon</key>
+			<true/>
+		</dict>
+	</dict>
+
+	<!-- Throttle restart attempts (prevent crash loop) -->
+	<key>ThrottleInterval</key>
+	<integer>5</integer>
+
+	<!-- Environment variables -->
+	<key>EnvironmentVariables</key>
+	<dict>
+		<!-- Logging level -->
+		<key>RUST_LOG</key>
+		<string>info</string>
+
+		<!-- HOME: User home directory -->
+		<key>HOME</key>
+		<string>{{HOME}}</string>
+
+		<!-- PATH: Ensure common binary locations are available -->
+		<key>PATH</key>
+		<string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+	</dict>
+
+	<!-- Standard output (stdout) logging -->
+	<key>StandardOutPath</key>
+	<string>{{LOG_DIR}}/ui.log</string>
+
+	<!-- Standard error (stderr) logging -->
+	<key>StandardErrorPath</key>
+	<string>{{LOG_DIR}}/ui-error.log</string>
+
+	<!-- Process priority (slightly lower than daemon) -->
+	<key>Nice</key>
+	<integer>5</integer>
+
+	<!-- Resource limits (UI is lightweight) -->
+	<key>SoftResourceLimits</key>
+	<dict>
+		<!-- Memory limit: 100MB soft limit (UI should be lightweight) -->
+		<key>MemoryLimit</key>
+		<integer>104857600</integer>
+		<!-- Maximum number of open files -->
+		<key>NumberOfFiles</key>
+		<integer>256</integer>
+	</dict>
+
+	<!-- Hard resource limits -->
+	<key>HardResourceLimits</key>
+	<dict>
+		<!-- Memory limit: 200MB hard limit -->
+		<key>MemoryLimit</key>
+		<integer>209715200</integer>
+		<key>NumberOfFiles</key>
+		<integer>512</integer>
+	</dict>
+
+	<!-- Process type (Standard = standard GUI app) -->
+	<key>ProcessType</key>
+	<string>Interactive</string>
+
+	<!-- Allow execution even on battery power -->
+	<key>LowPriorityIO</key>
+	<false/>
+
+	<!-- Session type (Aqua = GUI session required) -->
+	<key>LimitLoadToSessionType</key>
+	<string>Aqua</string>
+
+	<!-- Don't run at boot - wait for user login -->
+	<key>Disabled</key>
+	<false/>
+
+</dict>
+</plist>

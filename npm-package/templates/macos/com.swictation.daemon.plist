@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Service identification -->
+	<key>Label</key>
+	<string>com.swictation.daemon</string>
+
+	<!-- Program to execute -->
+	<key>ProgramArguments</key>
+	<array>
+		<string>{{DAEMON_PATH}}</string>
+	</array>
+
+	<!-- Working directory (for relative paths, logs, etc.) -->
+	<key>WorkingDirectory</key>
+	<string>{{LOG_DIR}}</string>
+
+	<!-- Start on login -->
+	<key>RunAtLoad</key>
+	<true/>
+
+	<!-- Keep alive - restart if crashed -->
+	<key>KeepAlive</key>
+	<dict>
+		<!-- Restart if process exits unexpectedly -->
+		<key>SuccessfulExit</key>
+		<false/>
+		<!-- Don't restart if process exits with code 0 (clean shutdown) -->
+		<key>Crashed</key>
+		<true/>
+	</dict>
+
+	<!-- Throttle restart attempts (prevent crash loop) -->
+	<key>ThrottleInterval</key>
+	<integer>5</integer>
+
+	<!-- Environment variables (CRITICAL for GPU acceleration and model operation) -->
+	<key>EnvironmentVariables</key>
+	<dict>
+		<!-- Logging level -->
+		<key>RUST_LOG</key>
+		<string>info</string>
+
+		<!-- ORT_DYLIB_PATH: Points to ONNX Runtime library (CRITICAL - without this, model produces blank output)
+		     Note: postinstall.js will replace {{ORT_DYLIB_PATH}} with the bundled CoreML-enabled library path -->
+		<key>ORT_DYLIB_PATH</key>
+		<string>{{ORT_DYLIB_PATH}}</string>
+
+		<!-- DYLD_LIBRARY_PATH: CoreML runtime + ONNX Runtime CoreML providers (for GPU acceleration)
+		     macOS equivalent of LD_LIBRARY_PATH on Linux
+		     Without this: Performance regression and potential runtime errors
+		     postinstall.js dynamically sets this to the bundled library directory -->
+		<key>DYLD_LIBRARY_PATH</key>
+		<string>{{DYLD_LIBRARY_PATH}}</string>
+
+		<!-- DYLD_FALLBACK_LIBRARY_PATH: Fallback search path for dylibs
+		     Ensures system libraries are found if not in DYLD_LIBRARY_PATH -->
+		<key>DYLD_FALLBACK_LIBRARY_PATH</key>
+		<string>/usr/local/lib:/usr/lib</string>
+
+		<!-- HOME: User home directory (launchd doesn't always set this) -->
+		<key>HOME</key>
+		<string>{{HOME}}</string>
+
+		<!-- PATH: Ensure common binary locations are available -->
+		<key>PATH</key>
+		<string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+	</dict>
+
+	<!-- Standard output (stdout) logging -->
+	<key>StandardOutPath</key>
+	<string>{{LOG_DIR}}/daemon.log</string>
+
+	<!-- Standard error (stderr) logging -->
+	<key>StandardErrorPath</key>
+	<string>{{LOG_DIR}}/daemon-error.log</string>
+
+	<!-- Process priority -->
+	<key>Nice</key>
+	<integer>0</integer>
+
+	<!-- Resource limits -->
+	<key>SoftResourceLimits</key>
+	<dict>
+		<!-- Maximum number of open files -->
+		<key>NumberOfFiles</key>
+		<integer>4096</integer>
+	</dict>
+
+	<!-- Hard resource limits -->
+	<key>HardResourceLimits</key>
+	<dict>
+		<key>NumberOfFiles</key>
+		<integer>8192</integer>
+	</dict>
+
+	<!-- Process type (Adaptive = can run in background and foreground) -->
+	<key>ProcessType</key>
+	<string>Adaptive</string>
+
+	<!-- Allow execution even on battery power -->
+	<key>LowPriorityIO</key>
+	<false/>
+
+	<!-- Don't abandon process on logout (keep running) -->
+	<key>AbandonProcessGroup</key>
+	<false/>
+
+	<!-- Session type (Aqua = GUI session, even though this is a daemon) -->
+	<!-- This ensures proper access to CoreML, Metal, and audio devices -->
+	<key>LimitLoadToSessionType</key>
+	<string>Aqua</string>
+
+	<!-- User agent (runs as user, not system) -->
+	<!-- Note: This plist goes in ~/Library/LaunchAgents/ (user-level) -->
+
+</dict>
+</plist>

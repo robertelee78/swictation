@@ -27,39 +27,78 @@ function log(color, message) {
 }
 
 function checkPlatform() {
-  if (process.platform !== 'linux') {
-    log('yellow', 'Note: Swictation currently only supports Linux x64');
-    log('yellow', 'Skipping postinstall for non-Linux platform');
-    process.exit(0);
-  }
+  const platform = process.platform;
+  const arch = process.arch;
 
-  if (process.arch !== 'x64') {
-    log('yellow', 'Note: Swictation currently only supports x64 architecture');
-    process.exit(0);
-  }
-
-  // Check GLIBC version
-  try {
-    const glibcVersion = execSync('ldd --version 2>&1 | head -1', { encoding: 'utf8' });
-    const versionMatch = glibcVersion.match(/(\d+)\.(\d+)/);
-    if (versionMatch) {
-      const major = parseInt(versionMatch[1]);
-      const minor = parseInt(versionMatch[2]);
-
-      if (major < 2 || (major === 2 && minor < 39)) {
-        log('red', '\n⚠ INCOMPATIBLE GLIBC VERSION');
-        log('yellow', `Detected GLIBC ${major}.${minor} (need 2.39+)`);
-        log('yellow', 'Swictation requires Ubuntu 24.04 LTS or newer');
-        log('yellow', 'Ubuntu 22.04 is NOT supported due to GLIBC 2.35');
-        log('yellow', '\nSupported distributions:');
-        log('cyan', '  - Ubuntu 24.04 LTS (Noble Numbat) or newer');
-        log('cyan', '  - Debian 13+ (Trixie)');
-        log('cyan', '  - Fedora 39+');
-        log('yellow', '\nInstallation will continue but binaries may not work.');
-      }
+  // Support both Linux and macOS
+  if (platform === 'linux') {
+    // Linux-specific checks
+    if (arch !== 'x64') {
+      log('yellow', 'Note: Swictation on Linux currently only supports x64 architecture');
+      process.exit(0);
     }
-  } catch (err) {
-    log('yellow', 'Warning: Could not check GLIBC version');
+
+    // Check GLIBC version
+    try {
+      const glibcVersion = execSync('ldd --version 2>&1 | head -1', { encoding: 'utf8' });
+      const versionMatch = glibcVersion.match(/(\d+)\.(\d+)/);
+      if (versionMatch) {
+        const major = parseInt(versionMatch[1]);
+        const minor = parseInt(versionMatch[2]);
+
+        if (major < 2 || (major === 2 && minor < 39)) {
+          log('red', '\n⚠ INCOMPATIBLE GLIBC VERSION');
+          log('yellow', `Detected GLIBC ${major}.${minor} (need 2.39+)`);
+          log('yellow', 'Swictation requires Ubuntu 24.04 LTS or newer');
+          log('yellow', 'Ubuntu 22.04 is NOT supported due to GLIBC 2.35');
+          log('yellow', '\nSupported distributions:');
+          log('cyan', '  - Ubuntu 24.04 LTS (Noble Numbat) or newer');
+          log('cyan', '  - Debian 13+ (Trixie)');
+          log('cyan', '  - Fedora 39+');
+          log('yellow', '\nInstallation will continue but binaries may not work.');
+        }
+      }
+    } catch (err) {
+      log('yellow', 'Warning: Could not check GLIBC version');
+    }
+  } else if (platform === 'darwin') {
+    // macOS-specific checks
+    if (arch !== 'arm64') {
+      log('red', '\n⚠ UNSUPPORTED ARCHITECTURE');
+      log('yellow', `Detected architecture: ${arch}`);
+      log('yellow', 'Swictation on macOS requires Apple Silicon (M1/M2/M3/M4)');
+      log('yellow', 'Intel Macs are not supported');
+      process.exit(1);
+    }
+
+    // Check macOS version (require Sonoma 14.0+ or Sequoia 15.0+)
+    try {
+      const osVersion = execSync('sw_vers -productVersion', { encoding: 'utf8' }).trim();
+      const versionMatch = osVersion.match(/(\d+)\.(\d+)/);
+      if (versionMatch) {
+        const major = parseInt(versionMatch[1]);
+        const minor = parseInt(versionMatch[2]);
+
+        if (major < 14) {
+          log('red', '\n⚠ UNSUPPORTED MACOS VERSION');
+          log('yellow', `Detected macOS ${osVersion}`);
+          log('yellow', 'Swictation requires macOS 14.0 (Sonoma) or newer');
+          log('yellow', '\nSupported versions:');
+          log('cyan', '  - macOS 14.x (Sonoma)');
+          log('cyan', '  - macOS 15.x (Sequoia)');
+          log('yellow', '\nInstallation will continue but may not work correctly.');
+        } else {
+          log('green', `✓ macOS ${osVersion} (Apple Silicon)`);
+        }
+      }
+    } catch (err) {
+      log('yellow', 'Warning: Could not check macOS version');
+    }
+  } else {
+    log('yellow', `Note: Swictation currently only supports Linux and macOS`);
+    log('yellow', `Detected platform: ${platform}`);
+    log('yellow', 'Skipping postinstall for unsupported platform');
+    process.exit(0);
   }
 }
 
@@ -843,6 +882,91 @@ async function downloadGPULibraries() {
   }
 }
 
+/**
+ * Download ONNX Runtime CoreML dylib for macOS
+ * CoreML is Apple's GPU acceleration framework for neural networks
+ */
+async function downloadONNXRuntimeCoreML() {
+  log('cyan', '\n📦 Downloading ONNX Runtime CoreML library for macOS...');
+
+  // Version info - must match build-macos-release.sh expectations
+  const ORT_VERSION = '1.23.2'; // ONNX Runtime version with CoreML support
+  const releaseUrl = `https://github.com/robertelee78/swictation/releases/download/onnx-runtime-macos-v${ORT_VERSION}/libonnxruntime.dylib`;
+  const tmpDir = path.join(os.tmpdir(), 'swictation-macos-install');
+  const dylibPath = path.join(tmpDir, 'libonnxruntime.dylib');
+
+  // Target directory in npm package
+  const nativeDir = path.join(__dirname, 'lib', 'native');
+  const targetDylibPath = path.join(nativeDir, 'libonnxruntime.dylib');
+
+  try {
+    // Check if already downloaded
+    if (fs.existsSync(targetDylibPath)) {
+      log('green', `  ✓ ONNX Runtime CoreML dylib already present`);
+      log('cyan', `    Location: ${targetDylibPath}`);
+      log('cyan', `    Skipping download`);
+      return;
+    }
+
+    // Create directories
+    if (!fs.existsSync(tmpDir)) {
+      fs.mkdirSync(tmpDir, { recursive: true });
+    }
+    if (!fs.existsSync(nativeDir)) {
+      fs.mkdirSync(nativeDir, { recursive: true });
+    }
+
+    // Download dylib
+    log('cyan', `  Downloading CoreML-enabled ONNX Runtime...`);
+    log('cyan', `  URL: ${releaseUrl}`);
+    await downloadFile(releaseUrl, dylibPath);
+    log('green', `  ✓ Downloaded CoreML dylib (~80MB)`);
+
+    // Verify it's a valid Mach-O library
+    try {
+      const fileOutput = execSync(`file "${dylibPath}"`, { encoding: 'utf8' });
+      if (!fileOutput.includes('Mach-O') || !fileOutput.includes('arm64')) {
+        throw new Error(`Invalid Mach-O library: ${fileOutput}`);
+      }
+      log('green', `  ✓ Verified Mach-O ARM64 library`);
+    } catch (err) {
+      log('red', `  ✗ Library verification failed: ${err.message}`);
+      throw err;
+    }
+
+    // Copy to npm package native directory
+    fs.copyFileSync(dylibPath, targetDylibPath);
+    log('green', `  ✓ Installed to ${targetDylibPath}`);
+
+    // Check for CoreML support
+    try {
+      const symbols = execSync(`nm -g "${targetDylibPath}" | grep -i coreml | head -5`, { encoding: 'utf8' });
+      if (symbols) {
+        log('green', `  ✓ CoreML symbols detected in library`);
+      }
+    } catch (err) {
+      log('yellow', `  ⚠️  Could not verify CoreML symbols (may be normal)`);
+    }
+
+    // Cleanup temp file
+    try {
+      fs.unlinkSync(dylibPath);
+    } catch (err) {
+      // Cleanup is optional
+    }
+
+    log('green', `✅ CoreML-enabled ONNX Runtime ready for GPU acceleration`);
+
+  } catch (err) {
+    log('red', `\n❌ Failed to download ONNX Runtime CoreML library`);
+    log('yellow', `   Error: ${err.message}`);
+    log('cyan', '\n   Manual installation:');
+    log('cyan', `   1. Download: ${releaseUrl}`);
+    log('cyan', `   2. Copy to: ${targetDylibPath}`);
+    throw err;
+  }
+}
+
 function detectOrtLibrary() {
   log('cyan', '\n🔍 Detecting ONNX Runtime library path...');
 
@@ -1109,6 +1233,120 @@ function generateSystemdService(ortLibPath) {
 }
 
 /**
+ * Generate LaunchAgent plist files for macOS
+ * LaunchAgents are macOS equivalent of systemd user services
+ */
+function generateLaunchdServices(ortLibPath) {
+  log('cyan', '\n⚙️  Generating launchd service files...');
+
+  try {
+    const launchAgentsDir = path.join(os.homedir(), 'Library', 'LaunchAgents');
+    const logDir = path.join(os.homedir(), 'Library', 'Logs', 'swictation');
+
+    // Create directories
+    if (!fs.existsSync(launchAgentsDir)) {
+      fs.mkdirSync(launchAgentsDir, { recursive: true });
+      log('green', `✓ Created ${launchAgentsDir}`);
+    }
+    if (!fs.existsSync(logDir)) {
+      fs.mkdirSync(logDir, { recursive: true });
+      log('green', `✓ Created ${logDir}`);
+    }
+
+    // 1. Generate daemon plist from template
+    const daemonTemplatePath = path.join(__dirname, 'templates', 'macos', 'com.swictation.daemon.plist');
+    if (!fs.existsSync(daemonTemplatePath)) {
+      log('yellow', `⚠️  Warning: Template not found at ${daemonTemplatePath}`);
+      log('yellow', '   Skipping daemon service generation');
+    } else {
+      let daemonTemplate = fs.readFileSync(daemonTemplatePath, 'utf8');
+
+      // Replace template variables
+      const installDir = __dirname;
+      const daemonPath = path.join(installDir, 'bin', 'swictation-daemon-macos');
+      const homeDir = os.homedir();
+
+      // DYLD_LIBRARY_PATH: CoreML runtime + ONNX Runtime providers
+      const dylibPath = path.join(installDir, 'lib', 'native');
+
+      daemonTemplate = daemonTemplate.replace(/\{\{DAEMON_PATH\}\}/g, daemonPath);
+      daemonTemplate = daemonTemplate.replace(/\{\{LOG_DIR\}\}/g, logDir);
+      daemonTemplate = daemonTemplate.replace(/\{\{HOME\}\}/g, homeDir);
+
+      // ORT_DYLIB_PATH: Points to CoreML-enabled ONNX Runtime
+      const ortDylibPath = path.join(dylibPath, 'libonnxruntime.dylib');
+      daemonTemplate = daemonTemplate.replace(/\{\{ORT_DYLIB_PATH\}\}/g, ortDylibPath);
+      daemonTemplate = daemonTemplate.replace(/\{\{DYLD_LIBRARY_PATH\}\}/g, dylibPath);
+
+      log('cyan', `  Daemon binary: ${daemonPath}`);
+      log('cyan', `  ORT_DYLIB_PATH: ${ortDylibPath}`);
+      log('cyan', `  DYLD_LIBRARY_PATH: ${dylibPath}`);
+
+      // Write daemon plist
+      const daemonPlistPath = path.join(launchAgentsDir, 'com.swictation.daemon.plist');
+      fs.writeFileSync(daemonPlistPath, daemonTemplate);
+      fs.chmodSync(daemonPlistPath, 0o644); // rw-r--r--
+      log('green', `✓ Generated daemon plist: ${daemonPlistPath}`);
+
+      // Validate plist (optional, requires plutil)
+      try {
+        execSync(`plutil -lint "${daemonPlistPath}"`, { stdio: 'ignore' });
+        log('green', `  ✓ Daemon plist validated successfully`);
+      } catch (err) {
+        log('yellow', `  ⚠️  Could not validate plist (plutil not available)`);
+      }
+    }
+
+    // 2. Generate UI plist from template (if UI binary exists)
+    const uiPath = path.join(__dirname, 'bin', 'swictation-ui-macos');
+    if (fs.existsSync(uiPath)) {
+      const uiTemplatePath = path.join(__dirname, 'templates', 'macos', 'com.swictation.ui.plist');
+      if (!fs.existsSync(uiTemplatePath)) {
+        log('yellow', `⚠️  Warning: UI template not found at ${uiTemplatePath}`);
+      } else {
+        let uiTemplate = fs.readFileSync(uiTemplatePath, 'utf8');
+
+        // Replace template variables
+        const homeDir = os.homedir();
+        uiTemplate = uiTemplate.replace(/\{\{UI_PATH\}\}/g, uiPath);
+        uiTemplate = uiTemplate.replace(/\{\{LOG_DIR\}\}/g, logDir);
+        uiTemplate = uiTemplate.replace(/\{\{HOME\}\}/g, homeDir);
+
+        log('cyan', `  UI binary: ${uiPath}`);
+
+        // Write UI plist
+        const uiPlistPath = path.join(launchAgentsDir, 'com.swictation.ui.plist');
+        fs.writeFileSync(uiPlistPath, uiTemplate);
+        fs.chmodSync(uiPlistPath, 0o644); // rw-r--r--
+        log('green', `✓ Generated UI plist: ${uiPlistPath}`);
+
+        // Validate plist
+        try {
+          execSync(`plutil -lint "${uiPlistPath}"`, { stdio: 'ignore' });
+          log('green', `  ✓ UI plist validated successfully`);
+        } catch (err) {
+          log('yellow', `  ⚠️  Could not validate plist (plutil not available)`);
+        }
+      }
+    } else {
+      log('cyan', `  ℹ UI binary not found - skipping UI service`);
+    }
+
+    log('green', '\n✅ LaunchAgent services ready');
+    log('cyan', '\nTo enable auto-start on login:');
+    log('cyan', '  launchctl load ~/Library/LaunchAgents/com.swictation.daemon.plist');
+    log('cyan', '  launchctl load ~/Library/LaunchAgents/com.swictation.ui.plist');
+    log('cyan', '\nTo start services now:');
+    log('cyan', '  launchctl start com.swictation.daemon');
+    log('cyan', '  launchctl start com.swictation.ui');
+
+  } catch (err) {
+    log('yellow', `⚠️  Failed to generate launchd services: ${err.message}`);
+    log('cyan', '  You can manually create them later');
+  }
+}
+
+/**
  * Phase 2: Interactive config migration with pacman/apt-style prompts
  * Handles conflicts between old and new config files
  */
@@ -1275,6 +1513,109 @@ function detectGPUVRAM() {
   } catch (err) {
     log('yellow', `⚠️  Error detecting GPU details: ${err.message}`);
     log('cyan', '   GPU detected but could not read specifications');
+  }
+
+  return gpuInfo;
+}
+
+/**
+ * Detect unified memory on macOS (Apple Silicon)
+ * macOS uses unified memory architecture - no separate VRAM
+ * We apply 65/35 split: 65% for system, 35% for GPU
+ */
+function detectUnifiedMemoryMacOS() {
+  log('cyan', '\n🍎 Detecting macOS unified memory...');
+
+  const gpuInfo = {
+    hasGPU: true, // Apple Silicon always has GPU (Metal)
+    gpuName: 'Apple Silicon GPU',
+    totalMemoryMB: 0,
+    totalMemoryGB: 0,
+    gpuMemoryMB: 0,
+    gpuMemoryGB: 0,
+    metalVersion: null,
+    recommendedModel: null
+  };
+
+  try {
+    // Get total system memory in bytes
+    const totalMemBytes = os.totalmem();
+    gpuInfo.totalMemoryMB = Math.round(totalMemBytes / (1024 * 1024));
+    gpuInfo.totalMemoryGB = Math.round(gpuInfo.totalMemoryMB / 1024);
+
+    // Apply 65/35 split (matches gpu.rs implementation)
+    gpuInfo.gpuMemoryMB = Math.round(gpuInfo.totalMemoryMB * 0.35);
+    gpuInfo.gpuMemoryGB = Math.round(gpuInfo.gpuMemoryMB / 1024);
+
+    // Detect GPU model name
+    try {
+      const gpuName = execSync('system_profiler SPDisplaysDataType | grep "Chipset Model" | head -1 | cut -d: -f2',
+        { encoding: 'utf8' }).trim();
+      if (gpuName) {
+        gpuInfo.gpuName = gpuName;
+      }
+    } catch (err) {
+      // GPU name detection optional
+    }
+
+    // Detect Metal version
+    try {
+      const metalVersion = execSync('system_profiler SPDisplaysDataType | grep "Metal Support" | head -1 | cut -d: -f2',
+        { encoding: 'utf8' }).trim();
+      if (metalVersion) {
+        gpuInfo.metalVersion = metalVersion;
+      }
+    } catch (err) {
+      // Metal version detection optional
+    }
+
+    log('green', `✓ GPU: ${gpuInfo.gpuName}`);
+    log('cyan', `  Total Memory: ${gpuInfo.totalMemoryGB}GB (${gpuInfo.totalMemoryMB}MB)`);
+    log('cyan', `  GPU Share (35%): ${gpuInfo.gpuMemoryGB}GB (${gpuInfo.gpuMemoryMB}MB)`);
+    if (gpuInfo.metalVersion) {
+      log('cyan', `  Metal: ${gpuInfo.metalVersion}`);
+    }
+
+    // Intelligent model recommendation based on GPU memory share
+    // Same logic as Linux, but using unified memory split
+    // 0.6B model: ~3.5GB memory
+    // 1.1B model: ~6GB memory
+    if (gpuInfo.gpuMemoryMB >= 6000) {
+      // 6GB+ GPU share: Can safely run 1.1B model
+      gpuInfo.recommendedModel = '1.1b-gpu';
+      log('green', `  ✓ Sufficient memory for 1.1B model (best quality)`);
+    } else if (gpuInfo.gpuMemoryMB >= 3500) {
+      // 3.5-6GB GPU share: Run 0.6B model
+      gpuInfo.recommendedModel = '0.6b-gpu';
+      if (gpuInfo.gpuMemoryMB >= 4000) {
+        log('green', `  ✓ Memory sufficient for 0.6B GPU model`);
+      } else {
+        log('yellow', `  ⚠️  Limited GPU memory - Recommending 0.6B model`);
+      }
+      log('cyan', `     (1.1B model requires ~6GB GPU memory)`);
+    } else {
+      // <3.5GB GPU share: Too little for GPU acceleration
+      gpuInfo.recommendedModel = 'cpu-only';
+      log('yellow', `  ⚠️  Insufficient GPU memory for GPU models`);
+      log('cyan', `     GPU models require minimum 3.5GB (10GB+ total system memory)`);
+      log('cyan', `     Falling back to CPU-only mode`);
+    }
+
+    // Save GPU info for later use by daemon
+    const configDir = path.join(os.homedir(), '.config', 'swictation');
+    const gpuInfoPath = path.join(configDir, 'gpu-info.json');
+
+    try {
+      fs.writeFileSync(gpuInfoPath, JSON.stringify(gpuInfo, null, 2));
+      log('green', `  ✓ Saved GPU info to ${gpuInfoPath}`);
+    } catch (err) {
+      log('yellow', `  ⚠️  Could not save GPU info: ${err.message}`);
+    }
+
+  } catch (err) {
+    log('yellow', `⚠️  Error detecting unified memory: ${err.message}`);
+    log('cyan', '   Falling back to CPU-only mode');
+    gpuInfo.recommendedModel = 'cpu-only';
   }
 
   return gpuInfo;
@@ -2072,25 +2413,44 @@ async function main() {
     log('cyan', '\n═══ Phase 2: Configuration ═══');
     await interactiveConfigMigration();
 
-    // Phase 3: Detect GPU capabilities
+    // Phase 3: Detect GPU capabilities (platform-specific)
     log('cyan', '\n═══ Phase 3: GPU Detection ═══');
-    let gpuInfo = detectGPUVRAM();
+    let gpuInfo;
+    let ortLibPath;
 
-    // Download GPU libraries if needed
-    if (gpuInfo.hasGPU && gpuInfo.recommendedModel !== 'cpu-only') {
-      await downloadGPULibraries();
-    } else if (!gpuInfo.hasGPU) {
-      log('cyan', '\nℹ No NVIDIA GPU detected - skipping GPU library download');
-      log('cyan', '  CPU-only mode will be used');
+    if (process.platform === 'linux') {
+      // Linux: NVIDIA GPU with CUDA
+      gpuInfo = detectGPUVRAM();
+
+      // Download GPU libraries if needed
+      if (gpuInfo.hasGPU && gpuInfo.recommendedModel !== 'cpu-only') {
+        await downloadGPULibraries();
+      } else if (!gpuInfo.hasGPU) {
+        log('cyan', '\nℹ No NVIDIA GPU detected - skipping GPU library download');
+        log('cyan', '  CPU-only mode will be used');
+      }
+
+      // Detect ONNX Runtime library
+      ortLibPath = detectOrtLibrary();
+    } else if (process.platform === 'darwin') {
+      // macOS: Unified memory with CoreML
+      gpuInfo = detectUnifiedMemoryMacOS();
+
+      // Download CoreML-enabled ONNX Runtime
+      if (gpuInfo.recommendedModel !== 'cpu-only') {
+        await downloadONNXRuntimeCoreML();
+      }
+
+      // macOS ONNX Runtime path
+      ortLibPath = path.join(__dirname, 'lib', 'native', 'libonnxruntime.dylib');
     }
-
-    // Detect ONNX Runtime library (needed for test-loading)
-    const ortLibPath = detectOrtLibrary();
 
     // Phase 3.5: Model test-loading (actual verification)
     if (!SKIP_MODEL_TEST && gpuInfo.hasGPU && gpuInfo.recommendedModel !== 'cpu-only') {
       log('cyan', '\n═══ Phase 3.5: Model Verification ═══');
-      const daemonBin = path.join(__dirname, 'lib', 'native', 'swictation-daemon.bin');
+      const daemonBin = process.platform === 'linux'
+        ? path.join(__dirname, 'lib', 'native', 'swictation-daemon.bin')
+        : path.join(__dirname, 'bin', 'swictation-daemon-macos');
 
       const testResult = await testModelsInOrder(gpuInfo, daemonBin, ortLibPath);
 
@@ -2113,24 +2473,54 @@ async function main() {
     } else if (SKIP_MODEL_TEST) {
       log('cyan', '\n═══ Phase 3.5: Model Verification ═══');
       log('yellow', '  ⚠️  Model test-loading skipped (SKIP_MODEL_TEST=1)');
-      log('cyan', '     Using VRAM-based heuristics only');
+      log('cyan', '     Using memory-based heuristics only');
     }
 
-    // Phase 4: Generate systemd services
+    // Phase 4: Generate service files (platform-specific)
     log('cyan', '\n═══ Phase 4: Service Installation ═══');
-    generateSystemdService(ortLibPath);
+    if (process.platform === 'linux') {
+      generateSystemdService(ortLibPath);
+    } else if (process.platform === 'darwin') {
+      generateLaunchdServices(ortLibPath);
+    }
 
-    // Phase 5: Wayland-specific setup (ydotool + GNOME shortcuts)
-    log('cyan', '\n═══ Phase 5: Wayland Integration ═══');
-    const waylandResults = await setupWaylandIntegration();
+    // Phase 5: Platform-specific integration
+    if (process.platform === 'linux') {
+      // Linux: Wayland-specific setup (ydotool + GNOME shortcuts)
+      log('cyan', '\n═══ Phase 5: Wayland Integration ═══');
+      const waylandResults = await setupWaylandIntegration();
+    } else if (process.platform === 'darwin') {
+      // macOS: Accessibility permissions guidance
+      log('cyan', '\n═══ Phase 5: macOS Integration ═══');
+      log('cyan', '📋 Accessibility permissions required for text injection:');
+      log('cyan', '  1. Open System Settings → Privacy & Security → Accessibility');
+      log('cyan', '  2. Add swictation-daemon to the allowed applications');
+      log('cyan', '  3. Enable the checkbox for swictation-daemon');
+      log('cyan', '\nThis is required for voice-to-text functionality to work.');
+    }
 
-    // Phase 6: Auto-enable and start systemd service
+    // Phase 6: Auto-enable and start service (platform-specific)
     log('cyan', '\n═══ Phase 6: Service Activation ═══');
-    const serviceResults = await enableAndStartService();
+    if (process.platform === 'linux') {
+      const serviceResults = await enableAndStartService();
+    } else if (process.platform === 'darwin') {
+      log('cyan', '📋 To enable auto-start on login:');
+      log('cyan', '  launchctl load ~/Library/LaunchAgents/com.swictation.daemon.plist');
+      log('cyan', '\n📋 To start service now:');
+      log('cyan', '  launchctl start com.swictation.daemon');
+      log('cyan', '\nOr use: swictation start');
+    }
 
-    // Phase 7: Check NVIDIA hibernation configuration (laptops only)
-    log('cyan', '\n═══ Phase 7: NVIDIA Hibernation Check ═══');
-    await checkNvidiaHibernation();
+    // Phase 7: Platform-specific checks
+    if (process.platform === 'linux') {
+      // Linux: Check NVIDIA hibernation configuration (laptops only)
+      log('cyan', '\n═══ Phase 7: NVIDIA Hibernation Check ═══');
+      await checkNvidiaHibernation();
+    } else if (process.platform === 'darwin') {
+      // macOS: No additional checks needed
+      log('cyan', '\n═══ Phase 7: System Checks ═══');
+      log('green', '✓ macOS system configuration complete');
+    }
 
     // Final checks and next steps
     checkDependencies();
