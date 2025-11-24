@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2025-11-24
+
+### Added - macOS Enhancements 🚀
+- **CI/CD Workflow** - Automated macOS builds and testing
+  - GitHub Actions workflow: `.github/workflows/build-macos.yml`
+  - 5 automated jobs: test-macos, build-macos, build-tauri-macos, integration-test-macos, performance-benchmark-macos
+  - Uses macos-14 (M1 Apple Silicon) runner
+  - Target: aarch64-apple-darwin
+  - Artifact uploads: daemon binary and Tauri UI bundles
+  - CoreML symbol verification in binaries
+  - Integration tests verify system requirements and memory detection
+
+- **Testing Infrastructure** - Comprehensive test plan
+  - Created `docs/macos-testing-checklist.md` (800+ lines)
+  - 15 major test categories with 200+ individual test items
+  - Coverage: Installation, Accessibility, Text Injection, Hotkeys, GPU, Services, UI, Performance, Error Handling, Integration, Regression
+  - Hardware variations: 8GB/16GB/32GB Macs
+  - Test environments: macOS 14 Sonoma and macOS 15 Sequoia
+  - Performance benchmarks and acceptance criteria
+  - Test results summary template
+
+- **GPU Metrics** - macOS Metal framework integration
+  - Implemented `get_macos_gpu_metrics()` in `swictation-metrics/src/gpu.rs`
+  - Uses Metal framework Device APIs:
+    - `recommended_max_working_set_size()` for total GPU memory
+    - `current_allocated_size()` for used GPU memory
+    - `device.name()` for GPU device name
+  - Returns memory usage for unified memory architecture
+  - Complements existing MemoryMonitor MetalProvider
+
+- **Tauri UI Configuration** - macOS app bundle support
+  - Updated `tauri-ui/src-tauri/tauri.conf.json`:
+    - minimumSystemVersion: "14.0" (macOS 14 Sonoma)
+    - frameworks: [] (no additional frameworks needed)
+    - entitlements, providerShortName, signingIdentity: null (ready for code signing)
+  - Created `docs/tauri-macos-icons.md`: Icon generation guide
+  - Three methods documented: iconutil, png2icns, Tauri CLI
+  - Icon size requirements and build instructions
+
+### Changed
+- **Version** - Bumped to 0.7.1 for macOS enhancements release
+
+### Technical Details
+- **Build Artifacts**
+  - macOS daemon: `target/aarch64-apple-darwin/release/swictation-daemon`
+  - Tauri bundles: `.app` and `.dmg` formats
+  - 7-day artifact retention on GitHub Actions
+
+- **Metrics Collection**
+  - Cross-platform GPU monitoring (NVIDIA NVML + Metal)
+  - CPU metrics via sysinfo (already cross-platform)
+  - Platform-specific conditional compilation
+
+### Notes
+This release enhances the macOS support added in 0.7.0 with automation, testing infrastructure, and metrics improvements.
+
 ## [0.7.0] - 2025-11-24
 
 ### Added - macOS Support 🍎

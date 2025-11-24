@@ -1,7 +1,7 @@
 {
   "name": "swictation",
-  "version": "0.7.0",
-  "description": "Voice-to-text dictation with Wayland/X11 support (GNOME, Sway, i3), Secretary Mode (60+ natural language commands), Context-Aware Meta-Learning, NVIDIA GPU acceleration, and pure Rust performance (Ubuntu 24.04+ required)",
+  "version": "0.7.1",
+  "description": "Cross-platform voice-to-text dictation for Linux and macOS with GPU acceleration (NVIDIA CUDA/CoreML), Secretary Mode (60+ natural language commands), Context-Aware Meta-Learning, and pure Rust performance",
   "keywords": [
     "voice-to-text",
     "speech-recognition",
@@ -15,6 +15,9 @@
     "silero-vad",
     "wayland",
     "x11",
+    "macos",
+    "apple-silicon",
+    "coreml",
     "onnx",
     "text-transformation"
   ],
@@ -36,9 +39,13 @@
     "bin/",
     "lib/model-downloader.js",
     "lib/native/swictation-daemon.bin",
+    "lib/native/swictation-daemon-macos",
+    "lib/native/swictation-daemon-macos.bin",
     "lib/native/swictation-ui",
+    "lib/native/swictation-ui-macos",
     "lib/native/libonnxruntime.so",
     "lib/native/libonnxruntime_providers_shared.so",
+    "lib/native/libonnxruntime.dylib",
     "lib/native/package.json",
     "lib/native/.gitkeep",
     "config/",
@@ -50,6 +57,7 @@
     "postinstall.js",
     "preuninstall.js",
     "checksums.txt",
+    "build-checksums-macos.txt",
     "README.md"
   ],
   "scripts": {
@@ -57,16 +65,19 @@
     "preuninstall": "node preuninstall.js",
     "test": "node test.js",
     "build": "./scripts/build-release.sh",
+    "build-macos": "./scripts/build-macos-release.sh",
     "prepublishOnly": "./scripts/build-release.sh && ../tauri-ui/scripts/build-ui-release.sh"
   },
   "engines": {
     "node": ">=18.0.0"
   },
   "os": [
-    "linux"
+    "linux",
+    "darwin"
   ],
   "cpu": [
-    "x64"
+    "x64",
+    "arm64"
   ],
   "dependencies": {
     "chalk": "^4.1.2",
