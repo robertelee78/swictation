@@ -176,7 +176,9 @@ impl MacOSTextInjector {
         // Inject each character
         for ch in text.chars() {
             // Convert character to UTF-16 (macOS native encoding)
-            let utf16: Vec<u16> = ch.encode_utf16().collect();
+            // A single char encodes to at most 2 UTF-16 code units (surrogate pair)
+            let mut utf16_buf = [0u16; 2];
+            let utf16 = ch.encode_utf16(&mut utf16_buf);
 
             // Create key down event (Arc clone is cheap, inner clone only if needed)
             let event = CGEvent::new_keyboard_event((*self.event_source).clone(), 0, true)
