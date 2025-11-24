@@ -17,7 +17,15 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "minimumSystemVersion": "14.0",
+      "frameworks": [],
+      "exceptionDomain": "",
+      "entitlements": null,
+      "providerShortName": null,
+      "signingIdentity": null
+    }
   },
   "app": {
     "windows": [
