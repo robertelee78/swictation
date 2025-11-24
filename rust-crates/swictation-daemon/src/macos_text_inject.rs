@@ -18,6 +18,7 @@ use core_graphics::event::{
     CGKeyCode,
 };
 use std::os::raw::{c_long, c_uint, c_void};
+use std::sync::Arc;
 use tracing::{debug, warn};
 
 /// FFI declaration for CGEventKeyboardSetUnicodeString
@@ -48,8 +49,8 @@ extern "C" {
 
 /// macOS text injector using Core Graphics Accessibility API
 pub struct MacOSTextInjector {
-    /// Event source for generating keyboard events
-    event_source: CGEventSource,
+    /// Event source for generating keyboard events (Arc for efficient cloning)
+    event_source: Arc<CGEventSource>,
 }
 
 impl MacOSTextInjector {
@@ -72,11 +73,13 @@ impl MacOSTextInjector {
             );
         }
 
-        // Create event source
+        // Create event source (wrapped in Arc for efficient sharing)
         let event_source = CGEventSource::new(CGEventSourceStateID::CombinedSessionState)
             .context("Failed to create CGEventSource")?;
 
-        Ok(Self { event_source })
+        Ok(Self {
+            event_source: Arc::new(event_source),
+        })
     }
 
     /// Check if Accessibility permissions are granted
@@ -174,8 +177,8 @@ impl MacOSTextInjector {
             // Convert character to UTF-16 (macOS native encoding)
             let utf16: Vec<u16> = ch.encode_utf16().collect();
 
-            // Create key down event
-            let event = CGEvent::new_keyboard_event(self.event_source.clone(), 0, true)
+            // Create key down event (Arc clone is cheap, inner clone only if needed)
+            let event = CGEvent::new_keyboard_event((*self.event_source).clone(), 0, true)
                 .context("Failed to create key down event")?;
 
             // Set Unicode string content via FFI
@@ -191,7 +194,7 @@ impl MacOSTextInjector {
             event.post(CGEventTapLocation::HID);
 
             // Create key up event
-            let event_up = CGEvent::new_keyboard_event(self.event_source.clone(), 0, false)
+            let event_up = CGEvent::new_keyboard_event((*self.event_source).clone(), 0, false)
                 .context("Failed to create key up event")?;
 
             // Post key up event
@@ -244,7 +247,7 @@ impl MacOSTextInjector {
         let key_code = self.key_name_to_code(key)?;
 
         // Create and post key down event with modifiers
-        let event_down = CGEvent::new_keyboard_event(self.event_source.clone(), key_code, true)
+        let event_down = CGEvent::new_keyboard_event((*self.event_source).clone(), key_code, true)
             .context("Failed to create key down event")?;
         event_down.set_flags(flags);
         event_down.post(CGEventTapLocation::HID);
@@ -253,7 +256,7 @@ impl MacOSTextInjector {
         std::thread::sleep(std::time::Duration::from_millis(10));
 
         // Create and post key up event
-        let event_up = CGEvent::new_keyboard_event(self.event_source.clone(), key_code, false)
+        let event_up = CGEvent::new_keyboard_event((*self.event_source).clone(), key_code, false)
             .context("Failed to create key up event")?;
         event_up.post(CGEventTapLocation::HID);
 
