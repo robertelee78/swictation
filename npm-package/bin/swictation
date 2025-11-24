@@ -10,12 +10,21 @@ const which = require('which');
 const { configureNvidiaHibernation, checkNvidiaHibernationStatus } = require('../src/nvidia-hibernation-setup');
 const { getIpcSocketPath, getMetricsSocketPath } = require('../src/socket-paths');
 
-// Binary locations
+// Platform detection
+const isMacOS = process.platform === 'darwin';
+const isLinux = process.platform === 'linux';
+
+// Binary locations (platform-specific)
 const binDir = path.join(__dirname, '..');
-const daemonBinary = path.join(binDir, 'bin', 'swictation-daemon');
-const uiBinary = path.join(binDir, 'bin', 'swictation-ui');
+const daemonBinary = isMacOS
+  ? path.join(binDir, 'bin', 'swictation-daemon-macos')
+  : path.join(binDir, 'bin', 'swictation-daemon');
+const uiBinary = isMacOS
+  ? path.join(binDir, 'bin', 'swictation-ui-macos')
+  : path.join(binDir, 'bin', 'swictation-ui');
 const configDir = path.join(os.homedir(), '.config', 'swictation');
 const systemdUserDir = path.join(os.homedir(), '.config', 'systemd', 'user');
+const launchAgentsDir = path.join(os.homedir(), 'Library', 'LaunchAgents');
 
 // Parse command line arguments
 const args = process.argv.slice(2);
@@ -23,14 +32,22 @@ const command = args[0];
 
 // Helper functions
 function checkPlatform() {
-  if (process.platform !== 'linux') {
-    console.error(chalk.red('Error: Swictation currently only supports Linux x64'));
-    console.log(chalk.yellow('Support for macOS and Windows is coming soon!'));
-    process.exit(1);
-  }
-
-  if (process.arch !== 'x64') {
-    console.error(chalk.red('Error: Swictation currently only supports x64 architecture'));
+  if (isLinux) {
+    // Linux: x64 only
+    if (process.arch !== 'x64') {
+      console.error(chalk.red('Error: Swictation on Linux currently only supports x64 architecture'));
+      process.exit(1);
+    }
+  } else if (isMacOS) {
+    // macOS: ARM64 (Apple Silicon) only
+    if (process.arch !== 'arm64') {
+      console.error(chalk.red('Error: Swictation on macOS requires Apple Silicon (M1/M2/M3/M4)'));
+      console.log(chalk.yellow('Intel Macs are not supported'));
+      process.exit(1);
+    }
+  } else {
+    console.error(chalk.red('Error: Swictation currently only supports Linux and macOS'));
+    console.log(chalk.yellow(`Detected platform: ${process.platform}`));
     process.exit(1);
   }
 }
@@ -63,8 +80,16 @@ function checkBinaries() {
 
 function isRunning(serviceName) {
   try {
-    const output = execSync(`systemctl --user is-active ${serviceName}`, { encoding: 'utf8' }).trim();
-    return output === 'active';
+    if (isLinux) {
+      const output = execSync(`systemctl --user is-active ${serviceName}`, { encoding: 'utf8' }).trim();
+      return output === 'active';
+    } else if (isMacOS) {
+      // Convert service name to launchd label (e.g., swictation-daemon -> com.swictation.daemon)
+      const label = serviceName === 'swictation-daemon' ? 'com.swictation.daemon' : 'com.swictation.ui';
+      const output = execSync(`launchctl list | grep ${label}`, { encoding: 'utf8' }).trim();
+      return output.length > 0;
+    }
+    return false;
   } catch {
     return false;
   }
@@ -116,8 +141,19 @@ async function handleStart() {
     console.log(chalk.yellow('Daemon is already running'));
   } else {
     try {
-      execSync('systemctl --user start swictation-daemon');
-      console.log(chalk.green('✓ Daemon started'));
+      if (isLinux) {
+        execSync('systemctl --user start swictation-daemon');
+        console.log(chalk.green('✓ Daemon started'));
+      } else if (isMacOS) {
+        const plistPath = path.join(launchAgentsDir, 'com.swictation.daemon.plist');
+        if (!fs.existsSync(plistPath)) {
+          console.error(chalk.red('LaunchAgent not found. Run: swictation setup'));
+          process.exit(1);
+        }
+        execSync(`launchctl load "${plistPath}"`);
+        execSync('launchctl start com.swictation.daemon');
+        console.log(chalk.green('✓ Daemon started'));
+      }
     } catch (err) {
       console.error(chalk.red('Failed to start daemon:'), err.message);
       console.log(chalk.yellow('Try running manually:'), daemonBinary);
@@ -127,7 +163,18 @@ async function handleStart() {
   // Start UI if requested
   if (args.includes('--ui')) {
     try {
-      spawn(uiBinary, [], { detached: true, stdio: 'ignore' }).unref();
+      if (isMacOS) {
+        const uiPlistPath = path.join(launchAgentsDir, 'com.swictation.ui.plist');
+        if (fs.existsSync(uiPlistPath)) {
+          execSync(`launchctl load "${uiPlistPath}"`);
+          execSync('launchctl start com.swictation.ui');
+        } else {
+          // Fall back to direct spawn if plist doesn't exist
+          spawn(uiBinary, [], { detached: true, stdio: 'ignore' }).unref();
+        }
+      } else {
+        spawn(uiBinary, [], { detached: true, stdio: 'ignore' }).unref();
+      }
       console.log(chalk.green('✓ UI launched'));
     } catch (err) {
       console.error(chalk.red('Failed to launch UI:'), err.message);
@@ -139,8 +186,29 @@ async function handleStop() {
   console.log(chalk.cyan('Stopping Swictation services...'));
 
   try {
-    execSync('systemctl --user stop swictation-daemon');
-    console.log(chalk.green('✓ Daemon stopped'));
+    if (isLinux) {
+      execSync('systemctl --user stop swictation-daemon');
+      console.log(chalk.green('✓ Daemon stopped'));
+    } else if (isMacOS) {
+      // Stop UI first (depends on daemon)
+      try {
+        execSync('launchctl stop com.swictation.ui');
+        const uiPlistPath = path.join(launchAgentsDir, 'com.swictation.ui.plist');
+        if (fs.existsSync(uiPlistPath)) {
+          execSync(`launchctl unload "${uiPlistPath}"`);
+        }
+      } catch (err) {
+        // UI might not be running
+      }
+
+      // Then stop daemon
+      execSync('launchctl stop com.swictation.daemon');
+      const daemonPlistPath = path.join(launchAgentsDir, 'com.swictation.daemon.plist');
+      if (fs.existsSync(daemonPlistPath)) {
+        execSync(`launchctl unload "${daemonPlistPath}"`);
+      }
+      console.log(chalk.green('✓ Daemon stopped'));
+    }
   } catch (err) {
     console.error(chalk.red('Failed to stop daemon:'), err.message);
   }
@@ -168,23 +236,22 @@ async function handleStatus() {
 
   // Display system info
   console.log(chalk.gray('─'.repeat(40)));
-  const displayServer = detectDisplayServer();
-  const windowManager = detectWindowManager();
-  console.log(`Display: ${chalk.blue(displayServer)}`);
-  console.log(`Window Manager: ${chalk.blue(windowManager)}`);
+  console.log(`Platform: ${chalk.blue(isMacOS ? 'macOS (CoreML/Metal)' : 'Linux (CUDA)')}`);
+
+  if (isLinux) {
+    const displayServer = detectDisplayServer();
+    const windowManager = detectWindowManager();
+    console.log(`Display: ${chalk.blue(displayServer)}`);
+    console.log(`Window Manager: ${chalk.blue(windowManager)}`);
+  } else if (isMacOS) {
+    console.log(`Display: ${chalk.blue('Quartz (macOS native)')}`);
+    console.log(`Architecture: ${chalk.blue(process.arch)}`);
+  }
 }
 
 async function handleSetup() {
   console.log(chalk.cyan('Setting up Swictation...'));
-  console.log(chalk.gray('This will configure systemd services and hotkeys'));
-
-  // Check for systemd
-  try {
-    which.sync('systemctl');
-  } catch {
-    console.error(chalk.red('Error: systemd is required but not found'));
-    process.exit(1);
-  }
+  console.log(chalk.gray(isMacOS ? 'This will configure launchd services' : 'This will configure systemd services and hotkeys'));
 
   // Create config directory
   if (!fs.existsSync(configDir)) {
@@ -192,47 +259,86 @@ async function handleSetup() {
     console.log(chalk.green('✓ Created config directory'));
   }
 
-  // Create systemd user directory
-  if (!fs.existsSync(systemdUserDir)) {
-    fs.mkdirSync(systemdUserDir, { recursive: true });
-    console.log(chalk.green('✓ Created systemd user directory'));
-  }
-
-  // Install systemd service
-  const serviceFile = path.join(binDir, 'config', 'swictation-daemon.service');
-  const targetService = path.join(systemdUserDir, 'swictation-daemon.service');
-
-  if (fs.existsSync(serviceFile)) {
-    // Read service file and update binary path
-    let serviceContent = fs.readFileSync(serviceFile, 'utf8');
-    serviceContent = serviceContent.replace(/ExecStart=.*/, `ExecStart=${daemonBinary}`);
-
-    fs.writeFileSync(targetService, serviceContent);
-    console.log(chalk.green('✓ Installed systemd service'));
-
-    // Reload systemd
+  if (isLinux) {
+    // Linux: systemd setup
     try {
-      execSync('systemctl --user daemon-reload');
-      console.log(chalk.green('✓ Reloaded systemd'));
-    } catch (err) {
-      console.error(chalk.yellow('Warning: Could not reload systemd'), err.message);
+      which.sync('systemctl');
+    } catch {
+      console.error(chalk.red('Error: systemd is required but not found'));
+      process.exit(1);
     }
-  }
 
-  // Configure hotkeys based on window manager
-  const wm = detectWindowManager();
-  if (wm === 'sway') {
-    console.log(chalk.cyan('\nDetected Sway window manager'));
-    console.log(chalk.yellow('Add this to your ~/.config/sway/config:'));
-    console.log(chalk.gray('─'.repeat(40)));
-    console.log(chalk.white('bindsym Super+Shift+d exec swictation toggle'));
-    console.log(chalk.gray('─'.repeat(40)));
-  } else if (wm === 'i3') {
-    console.log(chalk.cyan('\nDetected i3 window manager'));
-    console.log(chalk.yellow('Add this to your ~/.config/i3/config:'));
-    console.log(chalk.gray('─'.repeat(40)));
-    console.log(chalk.white('bindsym Mod4+Shift+d exec swictation toggle'));
-    console.log(chalk.gray('─'.repeat(40)));
+    // Create systemd user directory
+    if (!fs.existsSync(systemdUserDir)) {
+      fs.mkdirSync(systemdUserDir, { recursive: true });
+      console.log(chalk.green('✓ Created systemd user directory'));
+    }
+
+    // Install systemd service
+    const serviceFile = path.join(binDir, 'config', 'swictation-daemon.service');
+    const targetService = path.join(systemdUserDir, 'swictation-daemon.service');
+
+    if (fs.existsSync(serviceFile)) {
+      let serviceContent = fs.readFileSync(serviceFile, 'utf8');
+      serviceContent = serviceContent.replace(/ExecStart=.*/, `ExecStart=${daemonBinary}`);
+
+      fs.writeFileSync(targetService, serviceContent);
+      console.log(chalk.green('✓ Installed systemd service'));
+
+      try {
+        execSync('systemctl --user daemon-reload');
+        console.log(chalk.green('✓ Reloaded systemd'));
+      } catch (err) {
+        console.error(chalk.yellow('Warning: Could not reload systemd'), err.message);
+      }
+    }
+
+    // Configure hotkeys based on window manager
+    const wm = detectWindowManager();
+    if (wm === 'sway') {
+      console.log(chalk.cyan('\nDetected Sway window manager'));
+      console.log(chalk.yellow('Add this to your ~/.config/sway/config:'));
+      console.log(chalk.gray('─'.repeat(40)));
+      console.log(chalk.white('bindsym Super+Shift+d exec swictation toggle'));
+      console.log(chalk.gray('─'.repeat(40)));
+    } else if (wm === 'i3') {
+      console.log(chalk.cyan('\nDetected i3 window manager'));
+      console.log(chalk.yellow('Add this to your ~/.config/i3/config:'));
+      console.log(chalk.gray('─'.repeat(40)));
+      console.log(chalk.white('bindsym Mod4+Shift+d exec swictation toggle'));
+      console.log(chalk.gray('─'.repeat(40)));
+    }
+
+  } else if (isMacOS) {
+    // macOS: launchd setup
+    console.log(chalk.cyan('\n📋 macOS launchd service setup:'));
+
+    // Check if plist files exist
+    const daemonPlist = path.join(launchAgentsDir, 'com.swictation.daemon.plist');
+    const uiPlist = path.join(launchAgentsDir, 'com.swictation.ui.plist');
+
+    if (!fs.existsSync(daemonPlist)) {
+      console.error(chalk.red('✗ LaunchAgent plist files not found'));
+      console.log(chalk.yellow('   They should have been created during installation'));
+      console.log(chalk.cyan('   Try reinstalling: npm install -g swictation'));
+      process.exit(1);
+    }
+
+    console.log(chalk.green('✓ LaunchAgent plist files found'));
+
+    // Accessibility permissions check
+    console.log(chalk.cyan('\n🔐 Accessibility Permissions Required:'));
+    console.log(chalk.yellow('   Swictation needs Accessibility permissions to inject text'));
+    console.log(chalk.gray('   ─'.repeat(40)));
+    console.log(chalk.white('   1. Open System Settings'));
+    console.log(chalk.white('   2. Navigate to Privacy & Security → Accessibility'));
+    console.log(chalk.white('   3. Add swictation-daemon to the allowed applications'));
+    console.log(chalk.white('   4. Enable the checkbox'));
+    console.log(chalk.gray('   ─'.repeat(40)));
+
+    // Hotkey configuration
+    console.log(chalk.cyan('\n⌨️  Default Hotkey: Cmd+Shift+D'));
+    console.log(chalk.gray('   (Hotkey is built-in to the daemon via global-hotkey crate)'));
   }
 
   // Ask if user wants to enable auto-start
@@ -247,55 +353,64 @@ async function handleSetup() {
 
   if (autostart) {
     try {
-      execSync('systemctl --user enable swictation-daemon');
-      console.log(chalk.green('✓ Auto-start enabled'));
+      if (isLinux) {
+        execSync('systemctl --user enable swictation-daemon');
+        console.log(chalk.green('✓ Auto-start enabled'));
+      } else if (isMacOS) {
+        const daemonPlist = path.join(launchAgentsDir, 'com.swictation.daemon.plist');
+        execSync(`launchctl load "${daemonPlist}"`);
+        console.log(chalk.green('✓ Auto-start enabled (plist loaded)'));
+      }
     } catch (err) {
       console.error(chalk.yellow('Warning: Could not enable auto-start'), err.message);
     }
   }
 
-  // Check for NVIDIA hibernation configuration (laptops only)
-  console.log(chalk.cyan('\n📱 Checking NVIDIA hibernation support...'));
-  const nvidiaStatus = checkNvidiaHibernationStatus();
+  // Platform-specific checks
+  if (isLinux) {
+    // Linux: Check NVIDIA hibernation (laptops only)
+    console.log(chalk.cyan('\n📱 Checking NVIDIA hibernation support...'));
+    const nvidiaStatus = checkNvidiaHibernationStatus();
 
-  if (nvidiaStatus.needsConfiguration) {
-    console.log(chalk.yellow('\n⚠️  NVIDIA hibernation support not configured'));
-    console.log(chalk.gray('   This is required to prevent GPU errors after laptop hibernation'));
+    if (nvidiaStatus.needsConfiguration) {
+      console.log(chalk.yellow('\n⚠️  NVIDIA hibernation support not configured'));
+      console.log(chalk.gray('   This is required to prevent GPU errors after laptop hibernation'));
 
-    const { configureNvidia } = await inquirer.prompt([
-      {
-        type: 'confirm',
-        name: 'configureNvidia',
-        message: 'Configure NVIDIA hibernation support now? (requires sudo)',
-        default: true
-      }
-    ]);
+      const { configureNvidia } = await inquirer.prompt([
+        {
+          type: 'confirm',
+          name: 'configureNvidia',
+          message: 'Configure NVIDIA hibernation support now? (requires sudo)',
+          default: true
+        }
+      ]);
 
-    if (configureNvidia) {
-      console.log(chalk.cyan('\n🔧 Configuring NVIDIA hibernation support...'));
-      const result = await configureNvidiaHibernation({
-        interactive: false,
-        log: (msg) => console.log(chalk.cyan(msg))
-      });
+      if (configureNvidia) {
+        console.log(chalk.cyan('\n🔧 Configuring NVIDIA hibernation support...'));
+        const result = await configureNvidiaHibernation({
+          interactive: false,
+          log: (msg) => console.log(chalk.cyan(msg))
+        });
 
-      if (result.success) {
-        console.log(chalk.green('✓ NVIDIA hibernation configured'));
-        if (result.needsReboot) {
-          console.log(chalk.yellow('⚠️  Reboot required for changes to take effect'));
+        if (result.success) {
+          console.log(chalk.green('✓ NVIDIA hibernation configured'));
+          if (result.needsReboot) {
+            console.log(chalk.yellow('⚠️  Reboot required for changes to take effect'));
+          }
+        } else {
+          console.log(chalk.red('✗ Configuration failed:'), result.message);
         }
       } else {
-        console.log(chalk.red('✗ Configuration failed:'), result.message);
+        console.log(chalk.yellow('⚠️  Skipping NVIDIA configuration'));
+        console.log(chalk.cyan('   You can configure later by running: sudo swictation setup'));
       }
-    } else {
-      console.log(chalk.yellow('⚠️  Skipping NVIDIA configuration'));
-      console.log(chalk.cyan('   You can configure later by running: sudo swictation setup'));
+    } else if (nvidiaStatus.isLaptop && nvidiaStatus.hasNvidiaGpu && nvidiaStatus.isConfigured) {
+      console.log(chalk.green('✓ NVIDIA hibernation support already configured'));
+    } else if (!nvidiaStatus.isLaptop) {
+      console.log(chalk.cyan('ℹ Not a laptop - NVIDIA hibernation check skipped'));
+    } else if (!nvidiaStatus.hasNvidiaGpu) {
+      console.log(chalk.cyan('ℹ No NVIDIA GPU detected'));
     }
-  } else if (nvidiaStatus.isLaptop && nvidiaStatus.hasNvidiaGpu && nvidiaStatus.isConfigured) {
-    console.log(chalk.green('✓ NVIDIA hibernation support already configured'));
-  } else if (!nvidiaStatus.isLaptop) {
-    console.log(chalk.cyan('ℹ Not a laptop - NVIDIA hibernation check skipped'));
-  } else if (!nvidiaStatus.hasNvidiaGpu) {
-    console.log(chalk.cyan('ℹ No NVIDIA GPU detected'));
   }
 
   console.log(chalk.green('\n✓ Setup complete!'));
