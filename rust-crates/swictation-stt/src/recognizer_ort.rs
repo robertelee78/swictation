@@ -152,34 +152,84 @@ impl OrtRecognizer {
             .map_err(|e| SttError::ModelLoadError(format!("Failed to set intra threads: {}", e)))?;
 
         if use_gpu {
-            info!("Enabling CUDA execution provider");
-            session_builder = session_builder
-                .with_execution_providers([
-                    ep::CUDAExecutionProvider::default().build(),
-                    ep::CPUExecutionProvider::default().build(),
-                ])
-                .map_err(|e| {
-                    SttError::ModelLoadError(format!("Failed to set execution providers: {}", e))
-                })?;
+            // macOS: Use CoreML execution provider (internally uses Metal/GPU)
+            #[cfg(target_os = "macos")]
+            {
+                info!("Enabling CoreML execution provider (Apple Silicon GPU acceleration)");
+                session_builder = session_builder
+                    .with_execution_providers([
+                        ep::CoreMLExecutionProvider::default()
+                            .with_mlprogram(true) // Use MLProgram format (macOS 12+)
+                            .with_compute_units(ep::CoreMLComputeUnits::All) // CPU + GPU + ANE
+                            .build(),
+                        ep::CPUExecutionProvider::default().build(),
+                    ])
+                    .map_err(|e| {
+                        SttError::ModelLoadError(format!("Failed to set CoreML execution providers: {}", e))
+                    })?;
+            }
+
+            // Linux: Use CUDA execution provider
+            #[cfg(target_os = "linux")]
+            {
+                info!("Enabling CUDA execution provider");
+                session_builder = session_builder
+                    .with_execution_providers([
+                        ep::CUDAExecutionProvider::default().build(),
+                        ep::CPUExecutionProvider::default().build(),
+                    ])
+                    .map_err(|e| {
+                        SttError::ModelLoadError(format!("Failed to set CUDA execution providers: {}", e))
+                    })?;
+            }
         } else {
             info!("Using CPU execution provider");
         }
 
         // Helper function to find model file
-        // CRITICAL: INT8 quantized models don't have CUDA kernels - use FP32 for GPU!
+        // Platform-specific model format selection:
+        // - macOS CoreML: Prefer FP16 (INT8 quantization poorly supported on CoreML)
+        // - Linux CUDA: Prefer FP32 (INT8 ops have no CUDA kernels)
+        // - CPU: Prefer INT8 (smaller and faster on CPU)
         let find_model_file = |name: &str| -> std::result::Result<PathBuf, SttError> {
-            // When using GPU, prefer FP32 models (INT8 ops have no CUDA kernels)
             if use_gpu {
-                let onnx_path = model_path.join(format!("{}.onnx", name));
-                if onnx_path.exists() {
-                    info!("Using FP32 model for GPU: {}.onnx", name);
-                    return Ok(onnx_path);
+                // macOS CoreML: Prefer FP16, fallback to FP32, avoid INT8
+                #[cfg(target_os = "macos")]
+                {
+                    // Try FP16 first (best for Apple Silicon)
+                    let fp16_path = model_path.join(format!("{}.fp16.onnx", name));
+                    if fp16_path.exists() {
+                        info!("Using FP16 model for CoreML (Apple Silicon): {}.fp16.onnx", name);
+                        return Ok(fp16_path);
+                    }
+                    // Fallback to FP32
+                    let onnx_path = model_path.join(format!("{}.onnx", name));
+                    if onnx_path.exists() {
+                        info!("Using FP32 model for CoreML: {}.onnx", name);
+                        return Ok(onnx_path);
+                    }
+                    // Avoid INT8 on CoreML (poor support, often dequantized to FP32)
+                    let int8_path = model_path.join(format!("{}.int8.onnx", name));
+                    if int8_path.exists() {
+                        warn!("⚠️  Using INT8 model on CoreML - not recommended (poor quantization support)");
+                        return Ok(int8_path);
+                    }
                 }
-                // Fallback to INT8 if FP32 not available (will be slow)
-                let int8_path = model_path.join(format!("{}.int8.onnx", name));
-                if int8_path.exists() {
-                    warn!("⚠️  Using INT8 model on GPU - will be slow (no CUDA kernels for quantized ops)");
-                    return Ok(int8_path);
+
+                // Linux CUDA: Prefer FP32 (INT8 ops have no CUDA kernels)
+                #[cfg(target_os = "linux")]
+                {
+                    let onnx_path = model_path.join(format!("{}.onnx", name));
+                    if onnx_path.exists() {
+                        info!("Using FP32 model for CUDA: {}.onnx", name);
+                        return Ok(onnx_path);
+                    }
+                    // Fallback to INT8 if FP32 not available (will be slow)
+                    let int8_path = model_path.join(format!("{}.int8.onnx", name));
+                    if int8_path.exists() {
+                        warn!("⚠️  Using INT8 model on CUDA - will be slow (no CUDA kernels for quantized ops)");
+                        return Ok(int8_path);
+                    }
                 }
             } else {
                 // For CPU, prefer INT8 (smaller and faster on CPU)
@@ -195,8 +245,8 @@ impl OrtRecognizer {
                 }
             }
             Err(SttError::ModelLoadError(format!(
-                "Could not find {}.onnx or {}.int8.onnx in {:?}",
-                name, name, model_path
+                "Could not find {}.onnx, {}.fp16.onnx, or {}.int8.onnx in {:?}",
+                name, name, name, model_path
             )))
         };
 
@@ -246,19 +296,44 @@ impl OrtRecognizer {
             })?;
 
         if use_gpu {
-            info!("Enabling CUDA for decoder");
-            decoder_builder = decoder_builder
-                .with_execution_providers([
-                    ep::CUDAExecutionProvider::default().build(),
-                    ep::CPUExecutionProvider::default().build(),
-                ])
-                .map_err(|e| {
-                    let _ = std::env::set_current_dir(&original_dir);
-                    SttError::ModelLoadError(format!(
-                        "Failed to set decoder execution providers: {}",
-                        e
-                    ))
-                })?;
+            // macOS: Use CoreML execution provider
+            #[cfg(target_os = "macos")]
+            {
+                info!("Enabling CoreML for decoder (Apple Silicon GPU acceleration)");
+                decoder_builder = decoder_builder
+                    .with_execution_providers([
+                        ep::CoreMLExecutionProvider::default()
+                            .with_mlprogram(true)
+                            .with_compute_units(ep::CoreMLComputeUnits::All)
+                            .build(),
+                        ep::CPUExecutionProvider::default().build(),
+                    ])
+                    .map_err(|e| {
+                        let _ = std::env::set_current_dir(&original_dir);
+                        SttError::ModelLoadError(format!(
+                            "Failed to set decoder CoreML execution providers: {}",
+                            e
+                        ))
+                    })?;
+            }
+
+            // Linux: Use CUDA execution provider
+            #[cfg(target_os = "linux")]
+            {
+                info!("Enabling CUDA for decoder");
+                decoder_builder = decoder_builder
+                    .with_execution_providers([
+                        ep::CUDAExecutionProvider::default().build(),
+                        ep::CPUExecutionProvider::default().build(),
+                    ])
+                    .map_err(|e| {
+                        let _ = std::env::set_current_dir(&original_dir);
+                        SttError::ModelLoadError(format!(
+                            "Failed to set decoder CUDA execution providers: {}",
+                            e
+                        ))
+                    })?;
+            }
         }
 
         let decoder = decoder_builder
@@ -283,19 +358,44 @@ impl OrtRecognizer {
             })?;
 
         if use_gpu {
-            info!("Enabling CUDA for joiner");
-            joiner_builder = joiner_builder
-                .with_execution_providers([
-                    ep::CUDAExecutionProvider::default().build(),
-                    ep::CPUExecutionProvider::default().build(),
-                ])
-                .map_err(|e| {
-                    let _ = std::env::set_current_dir(&original_dir);
-                    SttError::ModelLoadError(format!(
-                        "Failed to set joiner execution providers: {}",
-                        e
-                    ))
-                })?;
+            // macOS: Use CoreML execution provider
+            #[cfg(target_os = "macos")]
+            {
+                info!("Enabling CoreML for joiner (Apple Silicon GPU acceleration)");
+                joiner_builder = joiner_builder
+                    .with_execution_providers([
+                        ep::CoreMLExecutionProvider::default()
+                            .with_mlprogram(true)
+                            .with_compute_units(ep::CoreMLComputeUnits::All)
+                            .build(),
+                        ep::CPUExecutionProvider::default().build(),
+                    ])
+                    .map_err(|e| {
+                        let _ = std::env::set_current_dir(&original_dir);
+                        SttError::ModelLoadError(format!(
+                            "Failed to set joiner CoreML execution providers: {}",
+                            e
+                        ))
+                    })?;
+            }
+
+            // Linux: Use CUDA execution provider
+            #[cfg(target_os = "linux")]
+            {
+                info!("Enabling CUDA for joiner");
+                joiner_builder = joiner_builder
+                    .with_execution_providers([
+                        ep::CUDAExecutionProvider::default().build(),
+                        ep::CPUExecutionProvider::default().build(),
+                    ])
+                    .map_err(|e| {
+                        let _ = std::env::set_current_dir(&original_dir);
+                        SttError::ModelLoadError(format!(
+                            "Failed to set joiner CUDA execution providers: {}",
+                            e
+                        ))
+                    })?;
+            }
         }
 
         let joiner = joiner_builder.commit_from_file(&joiner_path).map_err(|e| {

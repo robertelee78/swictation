@@ -62,7 +62,7 @@ fn detect_hotkey_server() -> HotkeyDisplayServer {
         }
     }
 
-    // Use shared display server detection for X11/Wayland
+    // Use shared display server detection for X11/Wayland/macOS
     let base_info = detect_display_server_base();
     match base_info.server_type {
         BaseDisplayServer::X11 => HotkeyDisplayServer::X11,
@@ -75,6 +75,7 @@ fn detect_hotkey_server() -> HotkeyDisplayServer {
                 HotkeyDisplayServer::Wayland
             }
         }
+        BaseDisplayServer::MacOS => HotkeyDisplayServer::X11, // global-hotkey supports macOS
         BaseDisplayServer::Unknown => HotkeyDisplayServer::Headless,
     }
 }

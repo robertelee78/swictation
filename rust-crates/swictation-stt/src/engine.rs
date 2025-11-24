@@ -153,16 +153,20 @@ impl SttEngine {
         }
     }
 
-    /// Get minimum VRAM required in MB
+    /// Get minimum VRAM/memory required in MB
     ///
-    /// Returns the minimum VRAM threshold for this model configuration.
+    /// Returns the minimum memory threshold for this model configuration.
     /// This is the safe threshold that includes headroom for other GPU processes.
+    ///
+    /// **Platform Notes:**
+    /// - **Linux**: Returns dedicated VRAM requirement (separate GPU memory)
+    /// - **macOS**: Returns unified memory requirement (GPU shares system RAM - no separate VRAM)
     ///
     /// # Returns
     ///
     /// - `4096` (4GB) for 1.1B INT8 GPU model (peak 3.5GB + 500MB headroom)
     /// - `1536` (1.5GB) for 0.6B GPU model (peak 1.2GB + 300MB headroom)
-    /// - `0` for 0.6B CPU model (no VRAM required)
+    /// - `0` for 0.6B CPU model (no GPU memory required)
     ///
     /// # Example
     ///

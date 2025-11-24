@@ -1,9 +1,12 @@
-//! Cross-platform text injection for Linux (X11/Wayland) with keyboard shortcut support
+//! Cross-platform text injection for Linux (X11/Wayland) and macOS with keyboard shortcut support
 //!
-//! Supports three text injection tools:
+//! **Linux** - Supports three text injection tools:
 //! - xdotool: X11 (fast, mature)
 //! - wtype: Wayland compatible (KDE, Sway, Hyprland - NOT GNOME)
 //! - ydotool: Universal (X11, all Wayland compositors including GNOME, even TTY)
+//!
+//! **macOS** - Uses Core Graphics Accessibility API:
+//! - MacOSNative: Core Graphics framework (requires Accessibility permissions)
 //!
 //! This version properly handles <KEY:...> markers by sending actual key events
 
@@ -16,12 +19,19 @@ use crate::display_server::{
     TextInjectionTool,
 };
 
-/// Text injector that works across X11 and Wayland
+// macOS text injection module (conditional compilation)
+#[cfg(target_os = "macos")]
+use crate::macos_text_inject::MacOSTextInjector;
+
+/// Text injector that works across platforms
 pub struct TextInjector {
     /// Detected display server information
     display_server_info: DisplayServerInfo,
     /// Selected text injection tool
     selected_tool: TextInjectionTool,
+    /// macOS text injector (only on macOS)
+    #[cfg(target_os = "macos")]
+    macos_injector: MacOSTextInjector,
 }
 
 impl TextInjector {
@@ -52,24 +62,42 @@ impl TextInjector {
             info!("GNOME Wayland detected - using ydotool (wtype not compatible)");
         }
 
+        // Create macOS injector if on macOS
+        #[cfg(target_os = "macos")]
+        let macos_injector = MacOSTextInjector::new()
+            .context("Failed to create macOS text injector")?;
+
         Ok(Self {
             display_server_info,
             selected_tool,
+            #[cfg(target_os = "macos")]
+            macos_injector,
         })
     }
 
     /// Inject text into the current window, handling <KEY:...> markers
     pub fn inject_text(&self, text: &str) -> Result<()> {
-        // Check if text contains keyboard shortcut markers
-        if text.contains("<KEY:") {
-            self.inject_with_keys(text)
-        } else {
-            // Plain text injection
-            self.inject_plain_text(text)
+        // macOS: Delegate to macOS injector
+        #[cfg(target_os = "macos")]
+        {
+            return self.macos_injector.inject_text(text);
+        }
+
+        // Linux: Use command-line tools
+        #[cfg(target_os = "linux")]
+        {
+            // Check if text contains keyboard shortcut markers
+            if text.contains("<KEY:") {
+                self.inject_with_keys(text)
+            } else {
+                // Plain text injection
+                self.inject_plain_text(text)
+            }
         }
     }
 
-    /// Process text with <KEY:...> markers
+    /// Process text with <KEY:...> markers (Linux only)
+    #[cfg(target_os = "linux")]
     fn inject_with_keys(&self, text: &str) -> Result<()> {
         let mut remaining = text;
 
@@ -104,16 +132,22 @@ impl TextInjector {
         Ok(())
     }
 
-    /// Send a key combination (e.g., "super-Right", "ctrl-c")
+    /// Send a key combination (e.g., "super-Right", "ctrl-c") (Linux only)
+    #[cfg(target_os = "linux")]
     fn send_key_combination(&self, combo: &str) -> Result<()> {
         match self.selected_tool {
             TextInjectionTool::Xdotool => self.send_xdotool_keys(combo),
             TextInjectionTool::Wtype => self.send_wtype_keys(combo),
             TextInjectionTool::Ydotool => self.send_ydotool_keys(combo),
+            TextInjectionTool::MacOSNative => {
+                // This should never happen on Linux, but we need the pattern for compilation
+                anyhow::bail!("macOS text injection not available on Linux")
+            }
         }
     }
 
-    /// Send key combination using xdotool on X11
+    /// Send key combination using xdotool on X11 (Linux only)
+    #[cfg(target_os = "linux")]
     fn send_xdotool_keys(&self, combo: &str) -> Result<()> {
         // Convert to xdotool format (e.g., "super-Right" -> "super+Right")
         let xdo_combo = combo.replace('-', "+");
@@ -134,7 +168,8 @@ impl TextInjector {
         Ok(())
     }
 
-    /// Send key combination using wtype on Wayland
+    /// Send key combination using wtype on Wayland (Linux only)
+    #[cfg(target_os = "linux")]
     fn send_wtype_keys(&self, combo: &str) -> Result<()> {
         // Parse the key combination
         let parts: Vec<&str> = combo.split('-').collect();
@@ -173,7 +208,8 @@ impl TextInjector {
         Ok(())
     }
 
-    /// Send key combination using ydotool (universal)
+    /// Send key combination using ydotool (universal) (Linux only)
+    #[cfg(target_os = "linux")]
     fn send_ydotool_keys(&self, combo: &str) -> Result<()> {
         // ydotool key command uses key codes
         // For simplicity, we'll use the same format as xdotool (modifier+key)
@@ -208,7 +244,8 @@ impl TextInjector {
         Ok(())
     }
 
-    /// Inject plain text (no key markers)
+    /// Inject plain text (no key markers) (Linux only)
+    #[cfg(target_os = "linux")]
     fn inject_plain_text(&self, text: &str) -> Result<()> {
         if text.is_empty() {
             return Ok(());
@@ -218,10 +255,15 @@ impl TextInjector {
             TextInjectionTool::Xdotool => self.inject_xdotool_text(text),
             TextInjectionTool::Wtype => self.inject_wtype_text(text),
             TextInjectionTool::Ydotool => self.inject_ydotool_text(text),
+            TextInjectionTool::MacOSNative => {
+                // This should never happen on Linux, but we need the pattern for compilation
+                anyhow::bail!("macOS text injection not available on Linux")
+            }
         }
     }
 
-    /// Inject text using xdotool (X11)
+    /// Inject text using xdotool (X11) (Linux only)
+    #[cfg(target_os = "linux")]
     fn inject_xdotool_text(&self, text: &str) -> Result<()> {
         debug!("xdotool type: {} chars", text.len());
 
@@ -241,7 +283,8 @@ impl TextInjector {
         Ok(())
     }
 
-    /// Inject text using wtype (Wayland)
+    /// Inject text using wtype (Wayland) (Linux only)
+    #[cfg(target_os = "linux")]
     fn inject_wtype_text(&self, text: &str) -> Result<()> {
         debug!("wtype: {} chars", text.len());
 
@@ -259,7 +302,8 @@ impl TextInjector {
         Ok(())
     }
 
-    /// Inject text using ydotool (universal - works on X11, Wayland, TTY)
+    /// Inject text using ydotool (universal - works on X11, Wayland, TTY) (Linux only)
+    #[cfg(target_os = "linux")]
     fn inject_ydotool_text(&self, text: &str) -> Result<()> {
         debug!("ydotool type: {} chars", text.len());
 

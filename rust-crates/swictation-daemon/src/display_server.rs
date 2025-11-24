@@ -1,15 +1,22 @@
-//! Display server detection and text injection tool selection
+//! Platform detection and text injection tool selection
 //!
-//! This module provides comprehensive display server detection for X11 and Wayland,
-//! with special handling for GNOME Wayland which requires ydotool instead of wtype.
+//! This module provides platform-specific detection and text injection tool selection:
+//!
+//! **Linux:**
+//! - Comprehensive display server detection for X11 and Wayland
+//! - Special handling for GNOME Wayland which requires ydotool instead of wtype
+//!
+//! **macOS:**
+//! - Uses macOS window server (always available on macOS)
+//! - Core Graphics Accessibility API via macos_text_inject module
 //!
 //! Research findings (2024):
-//! - X11 still dominates (80-90% of Linux desktop users)
+//! - Linux X11 still dominates (80-90% of Linux desktop users)
 //! - Wayland adoption slow despite being default since 2023
 //! - GNOME is most popular DE (35-45%) but wtype doesn't work on GNOME Wayland
 //! - GNOME's Mutter compositor lacks virtual-keyboard protocol
 //!
-//! Tool compatibility:
+//! Tool compatibility (Linux):
 //! - xdotool: X11 only (fast, mature)
 //! - wtype: Wayland only (KDE, Sway, Hyprland work; GNOME does NOT)
 //! - ydotool: Universal (X11, all Wayland compositors, even TTY)
@@ -33,11 +40,13 @@ impl EnvProvider for SystemEnv {
     }
 }
 
-/// Display server type
+/// Platform/Display server type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DisplayServer {
     X11,
     Wayland,
+    /// macOS window server (Quartz Compositor)
+    MacOS,
     Unknown,
 }
 
@@ -50,6 +59,8 @@ pub enum TextInjectionTool {
     Wtype,
     /// ydotool - Universal text injection (works everywhere via kernel uinput)
     Ydotool,
+    /// macOS native - Core Graphics Accessibility API
+    MacOSNative,
 }
 
 impl TextInjectionTool {
@@ -59,6 +70,7 @@ impl TextInjectionTool {
             Self::Xdotool => "xdotool",
             Self::Wtype => "wtype",
             Self::Ydotool => "ydotool",
+            Self::MacOSNative => "macos-native",
         }
     }
 
@@ -68,6 +80,7 @@ impl TextInjectionTool {
             Self::Xdotool => "xdotool",
             Self::Wtype => "wtype",
             Self::Ydotool => "ydotool",
+            Self::MacOSNative => "macOS Core Graphics",
         }
     }
 }
@@ -109,16 +122,31 @@ pub fn detect_display_server() -> DisplayServerInfo {
 /// Internal detection function that accepts environment provider (for testing)
 /// This is public so integration tests can inject mock environments
 pub fn detect_display_server_with_env(env: &dyn EnvProvider) -> DisplayServerInfo {
-    let session_type = env.get("XDG_SESSION_TYPE");
-    let desktop = env.get("XDG_CURRENT_DESKTOP");
-    let wayland_display = env.get("WAYLAND_DISPLAY");
-    let x11_display = env.get("DISPLAY");
+    // Check for macOS first (platform-level detection)
+    #[cfg(target_os = "macos")]
+    {
+        info!("Detected macOS window server");
+        return DisplayServerInfo {
+            server_type: DisplayServer::MacOS,
+            desktop_environment: Some("macOS".to_string()),
+            is_gnome_wayland: false,
+            confidence: ConfidenceLevel::High,
+        };
+    }
 
-    debug!("Environment variables:");
-    debug!("  XDG_SESSION_TYPE: {:?}", session_type);
-    debug!("  XDG_CURRENT_DESKTOP: {:?}", desktop);
-    debug!("  WAYLAND_DISPLAY: {:?}", wayland_display);
-    debug!("  DISPLAY: {:?}", x11_display);
+    // Linux display server detection (X11/Wayland)
+    #[cfg(target_os = "linux")]
+    {
+        let session_type = env.get("XDG_SESSION_TYPE");
+        let desktop = env.get("XDG_CURRENT_DESKTOP");
+        let wayland_display = env.get("WAYLAND_DISPLAY");
+        let x11_display = env.get("DISPLAY");
+
+        debug!("Environment variables:");
+        debug!("  XDG_SESSION_TYPE: {:?}", session_type);
+        debug!("  XDG_CURRENT_DESKTOP: {:?}", desktop);
+        debug!("  WAYLAND_DISPLAY: {:?}", wayland_display);
+        debug!("  DISPLAY: {:?}", x11_display);
 
     // Evidence-based scoring
     let mut x11_score = 0;
@@ -178,40 +206,68 @@ pub fn detect_display_server_with_env(env: &dyn EnvProvider) -> DisplayServerInf
         confidence,
     };
 
-    info!(
-        "Detected display server: {:?} (confidence: {:?})",
-        info.server_type, info.confidence
-    );
-    if info.is_gnome_wayland {
-        info!("GNOME Wayland detected - ydotool required (wtype will not work)");
+        info!(
+            "Detected display server: {:?} (confidence: {:?})",
+            info.server_type, info.confidence
+        );
+        if info.is_gnome_wayland {
+            info!("GNOME Wayland detected - ydotool required (wtype will not work)");
+        }
+
+        info
     }
 
-    info
+    // Fallback for unknown OS (shouldn't happen in practice)
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        warn!("Unsupported operating system");
+        DisplayServerInfo {
+            server_type: DisplayServer::Unknown,
+            desktop_environment: None,
+            is_gnome_wayland: false,
+            confidence: ConfidenceLevel::Low,
+        }
+    }
 }
 
 /// Check if a tool is available on the system
 pub fn is_tool_available(tool: TextInjectionTool) -> bool {
-    Command::new("which")
-        .arg(tool.command())
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    match tool {
+        // macOS native is always available on macOS
+        TextInjectionTool::MacOSNative => cfg!(target_os = "macos"),
+        // Linux tools checked via which command
+        _ => Command::new("which")
+            .arg(tool.command())
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false),
+    }
 }
 
 /// Detect all available text injection tools
 pub fn detect_available_tools() -> Vec<TextInjectionTool> {
     let mut tools = Vec::new();
 
-    if is_tool_available(TextInjectionTool::Xdotool) {
-        tools.push(TextInjectionTool::Xdotool);
+    // macOS: Core Graphics always available
+    #[cfg(target_os = "macos")]
+    {
+        tools.push(TextInjectionTool::MacOSNative);
     }
 
-    if is_tool_available(TextInjectionTool::Wtype) {
-        tools.push(TextInjectionTool::Wtype);
-    }
+    // Linux: Check for xdotool, wtype, ydotool
+    #[cfg(target_os = "linux")]
+    {
+        if is_tool_available(TextInjectionTool::Xdotool) {
+            tools.push(TextInjectionTool::Xdotool);
+        }
 
-    if is_tool_available(TextInjectionTool::Ydotool) {
-        tools.push(TextInjectionTool::Ydotool);
+        if is_tool_available(TextInjectionTool::Wtype) {
+            tools.push(TextInjectionTool::Wtype);
+        }
+
+        if is_tool_available(TextInjectionTool::Ydotool) {
+            tools.push(TextInjectionTool::Ydotool);
+        }
     }
 
     debug!("Available tools: {:?}", tools);
@@ -221,6 +277,7 @@ pub fn detect_available_tools() -> Vec<TextInjectionTool> {
 /// Select the best text injection tool for the current environment
 ///
 /// Selection logic (based on research):
+/// - macOS: Use Core Graphics Accessibility API (always available)
 /// - X11: Prefer xdotool (fast), fallback to ydotool
 /// - Wayland (GNOME): Use ydotool (only option - wtype doesn't work)
 /// - Wayland (KDE/Sway/Hyprland): Prefer wtype (fast), fallback to ydotool
@@ -230,6 +287,18 @@ pub fn select_best_tool(
     available_tools: &[TextInjectionTool],
 ) -> Result<TextInjectionTool> {
     match server_info.server_type {
+        DisplayServer::MacOS => {
+            // macOS: Always use Core Graphics (should always be available)
+            if available_tools.contains(&TextInjectionTool::MacOSNative) {
+                debug!("Selected macOS Core Graphics API (native)");
+                Ok(TextInjectionTool::MacOSNative)
+            } else {
+                Err(anyhow::anyhow!(
+                    "macOS Core Graphics API not available (this should not happen)"
+                ))
+            }
+        }
+
         DisplayServer::X11 => {
             // X11: Prefer xdotool (primary), fallback to ydotool
             if available_tools.contains(&TextInjectionTool::Xdotool) {
@@ -427,6 +496,7 @@ mod tests {
         assert_eq!(TextInjectionTool::Xdotool.command(), "xdotool");
         assert_eq!(TextInjectionTool::Wtype.command(), "wtype");
         assert_eq!(TextInjectionTool::Ydotool.command(), "ydotool");
+        assert_eq!(TextInjectionTool::MacOSNative.command(), "macos-native");
     }
 
     #[test]

@@ -107,28 +107,96 @@ fn check_coreml_available() -> bool {
     false
 }
 
-/// Get GPU memory information in MB (total, free) via nvidia-smi
+/// Get GPU memory information in MB (total, available)
 ///
-/// Queries NVIDIA GPU VRAM using nvidia-smi command-line tool.
+/// **Platform-specific behavior:**
+/// - **Linux**: Queries NVIDIA GPU VRAM using nvidia-smi (dedicated GPU memory)
+/// - **macOS**: Queries unified system memory (GPU shares RAM with CPU)
+///
 /// Returns None if:
-/// - No NVIDIA GPU detected
-/// - nvidia-smi command not available
+/// - No GPU detected or available
+/// - Query command failed
 /// - Failed to parse output
 ///
 /// # Returns
-/// Some((total_mb, free_mb)) on success, None on failure
+/// Some((total_mb, available_mb)) on success, None on failure
+///
+/// Where:
+/// - **total_mb**: Total GPU memory (VRAM on Linux, system RAM on macOS)
+/// - **available_mb**: Memory available for ML workloads
+///   - Linux: Free VRAM reported by nvidia-smi
+///   - macOS: 65% of system RAM (35% reserved for OS/apps)
 ///
 /// # Example
 /// ```no_run
 /// use swictation_daemon::gpu::get_gpu_memory_mb;
 ///
-/// if let Some((total, free)) = get_gpu_memory_mb() {
-///     println!("GPU: {}MB total, {}MB free", total, free);
+/// if let Some((total, available)) = get_gpu_memory_mb() {
+///     println!("GPU: {}MB total, {}MB available", total, available);
 /// } else {
-///     println!("No NVIDIA GPU detected");
+///     println!("No GPU detected");
 /// }
 /// ```
 pub fn get_gpu_memory_mb() -> Option<(u64, u64)> {
+    // macOS: Query unified system memory (GPU shares RAM with CPU)
+    #[cfg(target_os = "macos")]
+    {
+        return get_macos_unified_memory_mb();
+    }
+
+    // Linux/Windows: Query NVIDIA GPU VRAM via nvidia-smi
+    #[cfg(not(target_os = "macos"))]
+    {
+        return get_nvidia_vram_mb();
+    }
+}
+
+/// Get macOS unified memory information (GPU shares system RAM)
+///
+/// Apple Silicon uses Unified Memory Architecture - GPU and CPU share the same physical RAM.
+/// No separate VRAM exists, so we query system memory and reserve a portion for OS/apps.
+///
+/// **Memory Allocation Strategy:**
+/// - Reserve 35% for OS, system processes, and other applications
+/// - Return 65% as available for ML workloads
+/// - This matches typical memory pressure on macOS systems
+///
+/// # Returns
+/// Some((total_system_mb, available_for_ml_mb)) on success, None on failure
+#[cfg(target_os = "macos")]
+fn get_macos_unified_memory_mb() -> Option<(u64, u64)> {
+    use sysinfo::{System, SystemExt};
+
+    let mut system = System::new_all();
+    system.refresh_memory();
+
+    // Total system memory (shared between CPU/GPU/ANE)
+    let total_mb = system.total_memory() / (1024 * 1024);
+
+    if total_mb == 0 {
+        warn!("Failed to query system memory on macOS");
+        return None;
+    }
+
+    // Reserve 35% for OS and other apps, make 65% available for ML
+    // This is conservative but prevents system slowdown during inference
+    let available_mb = ((total_mb as f64) * 0.65) as u64;
+
+    info!(
+        "Detected Apple Silicon unified memory: {}MB total, {}MB available for ML (65%)",
+        total_mb, available_mb
+    );
+    info!("Note: GPU shares system RAM - no separate VRAM on Apple Silicon");
+
+    Some((total_mb, available_mb))
+}
+
+/// Get NVIDIA GPU VRAM via nvidia-smi (Linux/Windows)
+///
+/// Queries dedicated GPU memory using NVIDIA's nvidia-smi command-line tool.
+/// This is separate VRAM, not shared with system RAM.
+#[cfg(not(target_os = "macos"))]
+fn get_nvidia_vram_mb() -> Option<(u64, u64)> {
     use std::process::Command;
 
     // Query NVIDIA GPU memory via nvidia-smi
@@ -185,6 +253,22 @@ pub fn get_gpu_memory_mb() -> Option<(u64, u64)> {
     info!("Detected NVIDIA GPU: {}MB total, {}MB free", total, free);
 
     Some((total, free))
+}
+
+/// Check if running on Apple Silicon (ARM64)
+///
+/// Returns true if the current CPU architecture is aarch64 (Apple Silicon M1/M2/M3/M4)
+#[cfg(target_os = "macos")]
+#[allow(dead_code)]
+pub fn is_apple_silicon() -> bool {
+    #[cfg(target_arch = "aarch64")]
+    {
+        true
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        false
+    }
 }
 
 #[cfg(test)]

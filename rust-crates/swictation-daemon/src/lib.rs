@@ -5,3 +5,7 @@
 pub mod corrections;
 pub mod display_server;
 pub mod socket_utils;
+
+// macOS text injection module (conditional compilation)
+#[cfg(target_os = "macos")]
+pub mod macos_text_inject;
