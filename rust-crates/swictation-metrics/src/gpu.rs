@@ -4,6 +4,9 @@
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(all(target_os = "macos", feature = "gpu-monitoring"))]
+use metal::{Device, MTLResourceOptions};
+
 /// GPU metrics snapshot
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GpuMetrics {
@@ -53,10 +56,10 @@ impl GpuMonitor {
 
     /// Update and return current GPU metrics
     ///
-    /// For now, returns basic provider info. Future enhancement:
-    /// - NVIDIA: Use nvidia-ml-sys for utilization/memory/temp
-    /// - DirectML: Use Windows APIs for memory
-    /// - CoreML: Use Metal APIs for memory
+    /// Platform-specific implementations:
+    /// - macOS: Uses Metal framework to query unified memory
+    /// - NVIDIA: Future enhancement with nvidia-ml-sys
+    /// - DirectML: Future enhancement with Windows APIs
     pub fn update(&mut self) -> GpuMetrics {
         // CPU provider has no GPU metrics
         if self.provider == "cpu" {
@@ -70,8 +73,14 @@ impl GpuMonitor {
             };
         }
 
-        // For CUDA/DirectML/CoreML, return basic info
-        // Real metrics require platform-specific APIs (nvidia-ml-sys, Windows, Metal)
+        // macOS: Use Metal APIs for unified memory metrics
+        #[cfg(all(target_os = "macos", feature = "gpu-monitoring"))]
+        if self.provider == "coreml" {
+            return self.get_macos_gpu_metrics();
+        }
+
+        // For CUDA/DirectML, return basic info for now
+        // Real metrics require platform-specific APIs (nvidia-ml-sys, Windows APIs)
         GpuMetrics {
             gpu_name: self.gpu_name.clone(),
             provider: self.provider.clone(),
@@ -79,6 +88,52 @@ impl GpuMonitor {
             memory_used_mb: None,      // Would need NVML/platform APIs
             memory_total_mb: None,     // Would need NVML/platform APIs
             temperature_c: None,       // Would need NVML
+        }
+    }
+
+    /// Get GPU metrics on macOS using Metal framework
+    ///
+    /// Queries unified memory architecture:
+    /// - recommendedMaxWorkingSetSize: Recommended memory limit for GPU
+    /// - currentAllocatedSize: Currently allocated GPU memory
+    ///
+    /// macOS unified memory: CPU and GPU share system RAM
+    /// GPU gets ~35% of total RAM (65/35 split from system memory)
+    #[cfg(all(target_os = "macos", feature = "gpu-monitoring"))]
+    fn get_macos_gpu_metrics(&self) -> GpuMetrics {
+        let device = Device::system_default();
+
+        match device {
+            Some(device) => {
+                // Get recommended working set size (effective GPU memory available)
+                let recommended_mb = device.recommended_max_working_set_size() / (1024 * 1024);
+
+                // Get current allocated size
+                let allocated_mb = device.current_allocated_size() / (1024 * 1024);
+
+                // Get device name from Metal
+                let device_name = device.name();
+
+                GpuMetrics {
+                    gpu_name: device_name.to_string(),
+                    provider: self.provider.clone(),
+                    utilization_percent: None, // Metal doesn't expose real-time utilization
+                    memory_used_mb: Some(allocated_mb),
+                    memory_total_mb: Some(recommended_mb),
+                    temperature_c: None, // Not exposed by Metal framework
+                }
+            }
+            None => {
+                // Fallback if Metal device not available
+                GpuMetrics {
+                    gpu_name: self.gpu_name.clone(),
+                    provider: self.provider.clone(),
+                    utilization_percent: None,
+                    memory_used_mb: None,
+                    memory_total_mb: None,
+                    temperature_c: None,
+                }
+            }
         }
     }
 
