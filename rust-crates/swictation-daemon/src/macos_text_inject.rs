@@ -17,18 +17,22 @@ use core_graphics::event::{
     CGEvent, CGEventFlags, CGEventSource, CGEventSourceStateID, CGEventTapLocation, CGEventType,
     CGKeyCode,
 };
-use std::os::raw::{c_uint, c_void};
+use std::os::raw::{c_long, c_uint, c_void};
 use tracing::{debug, warn};
 
 /// FFI declaration for CGEventKeyboardSetUnicodeString
 ///
 /// This function is not exposed by the core-graphics crate, so we declare it manually.
 /// It allows setting Unicode text content for keyboard events.
+///
+/// CRITICAL: stringLength is CFIndex (c_long on 64-bit) NOT c_uint.
+/// Apple's signature: void CGEventKeyboardSetUnicodeString(CGEventRef event, CFIndex stringLength, const UniChar *unicodeString);
+/// where CFIndex = signed long (64-bit on Apple Silicon)
 #[link(name = "CoreGraphics", kind = "framework")]
 extern "C" {
     fn CGEventKeyboardSetUnicodeString(
         event: *mut c_void,
-        stringLength: c_uint,
+        stringLength: c_long,
         unicodeString: *const u16,
     );
 }
@@ -178,7 +182,7 @@ impl MacOSTextInjector {
             unsafe {
                 CGEventKeyboardSetUnicodeString(
                     event.as_ptr() as *mut c_void,
-                    utf16.len() as c_uint,
+                    utf16.len() as c_long,
                     utf16.as_ptr(),
                 );
             }
