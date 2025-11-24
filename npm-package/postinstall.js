@@ -890,7 +890,10 @@ async function downloadONNXRuntimeCoreML() {
   log('cyan', '\n📦 Downloading ONNX Runtime CoreML library for macOS...');
 
   // Version info - must match build-macos-release.sh expectations
-  const ORT_VERSION = '1.23.2'; // ONNX Runtime version with CoreML support
+  // NOTE: Using 1.22.0 due to ORT 1.23.x regression with external data + CoreML
+  // See: https://github.com/microsoft/onnxruntime/issues/26261
+  // TODO: Upgrade to 1.23.x+ when fix (PR #26263) is released
+  const ORT_VERSION = '1.22.0'; // ONNX Runtime version with CoreML support
   const releaseUrl = `https://github.com/robertelee78/swictation/releases/download/onnx-runtime-macos-v${ORT_VERSION}/libonnxruntime.dylib`;
   const tmpDir = path.join(os.tmpdir(), 'swictation-macos-install');
   const dylibPath = path.join(tmpDir, 'libonnxruntime.dylib');
@@ -1462,6 +1465,30 @@ function generateLaunchdServices(ortLibPath) {
   try {
     const launchAgentsDir = path.join(os.homedir(), 'Library', 'LaunchAgents');
     const logDir = path.join(os.homedir(), 'Library', 'Logs', 'swictation');
+    const daemonPlistPath = path.join(launchAgentsDir, 'com.swictation.daemon.plist');
+    const uiPlistPath = path.join(launchAgentsDir, 'com.swictation.ui.plist');
+
+    // Step 1: Stop and unload any existing services FIRST
+    // This ensures we can safely update the plist files
+    log('cyan', '  Stopping any existing services...');
+
+    // Unload daemon service (ignore errors if not loaded)
+    try {
+      execSync('launchctl bootout gui/$(id -u) com.swictation.daemon 2>/dev/null || true', { shell: '/bin/bash' });
+    } catch (e) { /* ignore */ }
+    try {
+      execSync(`launchctl unload "${daemonPlistPath}" 2>/dev/null || true`, { shell: '/bin/bash' });
+    } catch (e) { /* ignore */ }
+
+    // Unload UI service (ignore errors if not loaded)
+    try {
+      execSync('launchctl bootout gui/$(id -u) com.swictation.ui 2>/dev/null || true', { shell: '/bin/bash' });
+    } catch (e) { /* ignore */ }
+    try {
+      execSync(`launchctl unload "${uiPlistPath}" 2>/dev/null || true`, { shell: '/bin/bash' });
+    } catch (e) { /* ignore */ }
+
+    log('green', '  ✓ Existing services stopped');
 
     // Create directories
     if (!fs.existsSync(launchAgentsDir)) {
@@ -1473,7 +1500,7 @@ function generateLaunchdServices(ortLibPath) {
       log('green', `✓ Created ${logDir}`);
     }
 
-    // 1. Generate daemon plist from template
+    // Step 2: Generate daemon plist from template
     const daemonTemplatePath = path.join(__dirname, 'templates', 'macos', 'com.swictation.daemon.plist');
     if (!fs.existsSync(daemonTemplatePath)) {
       log('yellow', `⚠️  Warning: Template not found at ${daemonTemplatePath}`);
@@ -1552,17 +1579,59 @@ function generateLaunchdServices(ortLibPath) {
       log('cyan', `  ℹ UI binary not found - skipping UI service`);
     }
 
-    log('green', '\n✅ LaunchAgent services ready');
-    log('cyan', '\nTo enable auto-start on login:');
-    log('cyan', '  launchctl load ~/Library/LaunchAgents/com.swictation.daemon.plist');
-    log('cyan', '  launchctl load ~/Library/LaunchAgents/com.swictation.ui.plist');
-    log('cyan', '\nTo start services now:');
-    log('cyan', '  launchctl start com.swictation.daemon');
-    log('cyan', '  launchctl start com.swictation.ui');
+    // Step 3: Auto-load and start services
+    log('cyan', '\n  Loading services with launchd...');
+
+    // Load daemon service (enables auto-start on login)
+    const daemonPlistFinal = path.join(launchAgentsDir, 'com.swictation.daemon.plist');
+    if (fs.existsSync(daemonPlistFinal)) {
+      try {
+        // Bootstrap is the modern way to load services
+        execSync(`launchctl bootstrap gui/$(id -u) "${daemonPlistFinal}" 2>/dev/null || launchctl load "${daemonPlistFinal}"`, { shell: '/bin/bash' });
+        log('green', '  ✓ Daemon service loaded');
+
+        // Start the daemon
+        try {
+          execSync('launchctl start com.swictation.daemon 2>/dev/null || true', { shell: '/bin/bash' });
+          log('green', '  ✓ Daemon service started');
+        } catch (startErr) {
+          log('yellow', `  ⚠️  Daemon start deferred (will start on next login)`);
+        }
+      } catch (loadErr) {
+        log('yellow', `  ⚠️  Could not auto-load daemon: ${loadErr.message}`);
+        log('cyan', '  To load manually: launchctl load ~/Library/LaunchAgents/com.swictation.daemon.plist');
+      }
+    }
+
+    // Load UI service
+    const uiPlistFinal = path.join(launchAgentsDir, 'com.swictation.ui.plist');
+    if (fs.existsSync(uiPlistFinal)) {
+      try {
+        execSync(`launchctl bootstrap gui/$(id -u) "${uiPlistFinal}" 2>/dev/null || launchctl load "${uiPlistFinal}"`, { shell: '/bin/bash' });
+        log('green', '  ✓ UI service loaded');
+
+        // Start the UI
+        try {
+          execSync('launchctl start com.swictation.ui 2>/dev/null || true', { shell: '/bin/bash' });
+          log('green', '  ✓ UI service started');
+        } catch (startErr) {
+          log('yellow', `  ⚠️  UI start deferred (will start on next login)`);
+        }
+      } catch (loadErr) {
+        log('yellow', `  ⚠️  Could not auto-load UI: ${loadErr.message}`);
+        log('cyan', '  To load manually: launchctl load ~/Library/LaunchAgents/com.swictation.ui.plist');
+      }
+    }
+
+    log('green', '\n✅ LaunchAgent services configured and started');
+    log('cyan', '\nServices will auto-start on login. Use these commands to manage:');
+    log('cyan', '  swictation status    - Check service status');
+    log('cyan', '  swictation start     - Start services');
+    log('cyan', '  swictation stop      - Stop services');
 
   } catch (err) {
     log('yellow', `⚠️  Failed to generate launchd services: ${err.message}`);
-    log('cyan', '  You can manually create them later');
+    log('cyan', '  You can manually create them later using: swictation setup');
   }
 }
 

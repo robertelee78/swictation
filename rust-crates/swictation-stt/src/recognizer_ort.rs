@@ -161,7 +161,9 @@ impl OrtRecognizer {
                 session_builder = session_builder
                     .with_execution_providers([
                         ep::CoreMLExecutionProvider::default()
-                            .with_model_format(CoreMLModelFormat::MLProgram) // Use MLProgram format (macOS 12+)
+                            // NeuralNetwork format avoids .mlpackage directory creation that conflicts
+                            // with ONNX external weights files (e.g., encoder.onnx + encoder.weights)
+                            .with_model_format(CoreMLModelFormat::NeuralNetwork)
                             .with_compute_units(CoreMLComputeUnits::All) // CPU + GPU + ANE
                             .build(),
                         ep::CPUExecutionProvider::default().build(),
@@ -305,7 +307,8 @@ impl OrtRecognizer {
                 decoder_builder = decoder_builder
                     .with_execution_providers([
                         ep::CoreMLExecutionProvider::default()
-                            .with_model_format(CoreMLModelFormat::MLProgram)
+                            // NeuralNetwork format avoids .mlpackage directory conflicts with external weights
+                            .with_model_format(CoreMLModelFormat::NeuralNetwork)
                             .with_compute_units(CoreMLComputeUnits::All)
                             .build(),
                         ep::CPUExecutionProvider::default().build(),
@@ -367,7 +370,8 @@ impl OrtRecognizer {
                 joiner_builder = joiner_builder
                     .with_execution_providers([
                         ep::CoreMLExecutionProvider::default()
-                            .with_model_format(CoreMLModelFormat::MLProgram)
+                            // NeuralNetwork format avoids .mlpackage directory conflicts with external weights
+                            .with_model_format(CoreMLModelFormat::NeuralNetwork)
                             .with_compute_units(CoreMLComputeUnits::All)
                             .build(),
                         ep::CPUExecutionProvider::default().build(),
