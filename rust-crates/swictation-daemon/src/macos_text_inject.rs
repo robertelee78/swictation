@@ -195,7 +195,7 @@ impl MacOSTextInjector {
 
             // Create key up event
             let event_up = CGEvent::new_keyboard_event((*self.event_source).clone(), 0, false)
-                .context("Failed to create key up event")?;
+                .map_err(|_| anyhow::anyhow!("Failed to create key up event"))?;
 
             // Post key up event
             event_up.post(CGEventTapLocation::HID);
@@ -248,7 +248,7 @@ impl MacOSTextInjector {
 
         // Create and post key down event with modifiers
         let event_down = CGEvent::new_keyboard_event((*self.event_source).clone(), key_code, true)
-            .context("Failed to create key down event")?;
+            .map_err(|_| anyhow::anyhow!("Failed to create key down event"))?;
         event_down.set_flags(flags);
         event_down.post(CGEventTapLocation::HID);
 
@@ -257,7 +257,7 @@ impl MacOSTextInjector {
 
         // Create and post key up event
         let event_up = CGEvent::new_keyboard_event((*self.event_source).clone(), key_code, false)
-            .context("Failed to create key up event")?;
+            .map_err(|_| anyhow::anyhow!("Failed to create key up event"))?;
         event_up.post(CGEventTapLocation::HID);
 
         Ok(())
