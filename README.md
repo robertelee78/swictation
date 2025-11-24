@@ -1,8 +1,11 @@
 # Swictation
 
-**Voice-to-text dictation for Linux with GPU acceleration**
+**Voice-to-text dictation for Linux and macOS with GPU acceleration**
 
-Pure Rust daemon with VAD-triggered auto-transcription, sub-second latency, and complete privacy (X11/Wayland).
+Pure Rust daemon with VAD-triggered auto-transcription, sub-second latency, and complete privacy.
+
+- **Linux:** X11/Wayland with NVIDIA CUDA acceleration
+- **macOS:** Apple Silicon (M1+) with CoreML/Metal acceleration
 
 [![Status](https://img.shields.io/badge/status-Production%20Ready-green)](https://github.com/robertelee78/swictation)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
@@ -14,6 +17,7 @@ Pure Rust daemon with VAD-triggered auto-transcription, sub-second latency, and 
 
 ### Prerequisites
 
+#### Linux
 - **NVIDIA GPU** with 4GB+ VRAM for 0.6B model, 5GB+ for 1.1B model (or CPU fallback)
 - **Ubuntu 24.04+** (GLIBC 2.39+ required)
 - **Node.js 18+**
@@ -21,6 +25,13 @@ Pure Rust daemon with VAD-triggered auto-transcription, sub-second latency, and 
   - X11: `sudo apt install xdotool`
   - Wayland (GNOME): `sudo apt install ydotool && sudo usermod -aG input $USER` (then logout/login)
   - Wayland (KDE/Sway): `sudo apt install wtype`
+
+#### macOS
+- **Apple Silicon** (M1/M2/M3/M4) - Intel Macs not supported
+- **macOS 14 Sonoma** or **macOS 15 Sequoia** (required for CoreML)
+- **8GB+ RAM minimum** (16GB+ recommended for 1.1B model)
+- **Node.js 18+**
+- **Accessibility permissions** (granted during setup)
 
 ### Install
 
@@ -36,8 +47,8 @@ npm install -g swictation --foreground-scripts
 # Postinstall automatically:
 # - Detects GPU and downloads optimized libraries (~1.5GB)
 # - Recommends and test-loads AI model (30-60s)
-# - Installs systemd services
-# - Shows hotkey setup instructions
+# - Installs services (systemd on Linux, launchd on macOS)
+# - Shows platform-specific setup instructions
 
 # Start
 swictation start
@@ -46,10 +57,12 @@ swictation start
 ### First Use
 
 1. Open any text editor
-2. Press `$mod+Shift+d` (Super+Shift+d)
+2. **Press hotkey to start recording:**
+   - **Linux:** `$mod+Shift+d` (Super+Shift+d)
+   - **macOS:** `Cmd+Shift+D`
 3. Speak: "Hello world." [pause]
 4. Text appears automatically after 0.8s silence
-5. Press `$mod+Shift+d` to stop
+5. **Press hotkey again to stop**
 
 ---
 
@@ -61,15 +74,15 @@ swictation start
 
 **Components:**
 - **VAD:** Silero VAD v6 (ONNX) - detects speech vs silence
-- **STT:** Parakeet-TDT-1.1B (5.77% WER) or 0.6B (auto-selected by VRAM)
+- **STT:** Parakeet-TDT-1.1B (5.77% WER) or 0.6B (auto-selected by GPU memory)
 - **Transform:** MidStream text-transform (Secretary Mode commands)
-- **Inject:** xdotool (X11) / wtype / ydotool (Wayland)
+- **Inject:**
+  - **Linux:** xdotool (X11) / wtype / ydotool (Wayland)
+  - **macOS:** Accessibility API (native text injection)
 
-**Performance (RTX A1000):**
-- VAD: 50ms
-- STT: 150-250ms
-- Transform: 5µs
-- Total: ~1s after you pause speaking
+**Performance:**
+- **Linux (RTX A1000):** VAD 50ms, STT 150-250ms, Total ~1s
+- **macOS (M1):** VAD 50ms, STT 150-300ms (CoreML GPU), Total ~1s
 
 ---
 
@@ -177,12 +190,16 @@ echo $XDG_SESSION_TYPE
 
 ## Architecture
 
-**Pure Rust** - no Python runtime required (optional Python tray for Sway/Wayland, Tauri UI for monitoring)
+**Pure Rust** - no Python runtime required
 
 ```
-Audio (cpal/PipeWire) → VAD (Silero v6) → STT (Parakeet-TDT) →
-Transform (MidStream) → Inject (xdotool/wtype/ydotool)
+Audio (cpal) → VAD (Silero v6) → STT (Parakeet-TDT) →
+Transform (MidStream) → Platform-specific text injection
 ```
+
+**Platform-specific components:**
+- **Linux:** PipeWire/ALSA audio, CUDA execution, xdotool/wtype/ydotool injection
+- **macOS:** CoreAudio, CoreML execution, Accessibility API injection
 
 **Crates:**
 - `swictation-daemon` - Main binary (tokio async)
@@ -207,6 +224,7 @@ Transform (MidStream) → Inject (xdotool/wtype/ydotool)
 
 ### GPU Support
 
+#### Linux (NVIDIA CUDA)
 Auto-detects NVIDIA architecture (Maxwell through Blackwell):
 
 | Generation | GPUs | Package |
@@ -216,6 +234,17 @@ Auto-detects NVIDIA architecture (Maxwell through Blackwell):
 | sm_89-120 | RTX 40/50 series, H100 | ~1.5GB |
 
 CPU fallback for older/unsupported GPUs.
+
+#### macOS (CoreML)
+Auto-detects Apple Silicon and unified memory:
+
+| Mac | Total RAM | GPU Share | Model |
+|-----|-----------|-----------|-------|
+| M1 (8GB) | 8GB | ~2.8GB | CPU fallback |
+| M1 (16GB) | 16GB | ~5.6GB | 0.6B GPU |
+| M1 Pro/Max | 32GB+ | ~11GB+ | 1.1B GPU |
+
+Uses CoreML execution provider with FP16 models for optimal performance.
 
 📖 **[GPU Packages Guide](docs/implementation/gpu-multi-package-guide.md)**
 
