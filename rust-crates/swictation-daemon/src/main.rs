@@ -476,7 +476,13 @@ async fn main() -> Result<()> {
     info!("   Or use 'swictation-cli toggle' for CLI control");
 
     // Handle transcription results and inject text
-    tokio::spawn(async move {
+    //
+    // On macOS, CGEventSource is not Send/Sync, so we must use a dedicated OS thread
+    // for text injection and communicate via a channel.
+    let (inject_tx, inject_rx) = std::sync::mpsc::channel::<String>();
+
+    // Spawn dedicated thread for text injection (required for macOS CGEventSource)
+    std::thread::spawn(move || {
         use crate::text_injection::TextInjector;
 
         // Initialize text injector with display server detection
@@ -491,19 +497,36 @@ async fn main() -> Result<()> {
             Err(e) => {
                 error!("Failed to initialize text injector: {}", e);
                 error!("Text injection will be disabled. Install required tools:");
-                error!("  For X11: sudo apt install xdotool");
-                error!("  For Wayland: sudo apt install wtype");
+                #[cfg(target_os = "linux")]
+                {
+                    error!("  For X11: sudo apt install xdotool");
+                    error!("  For Wayland: sudo apt install wtype");
+                }
+                #[cfg(target_os = "macos")]
+                {
+                    error!("  macOS: Grant Accessibility permissions in System Settings");
+                }
                 return;
             }
         };
 
-        // Receive transcriptions directly from channel (no locks needed)
+        // Receive text to inject from channel
+        while let Ok(text) = inject_rx.recv() {
+            info!("Injecting text: {}", text);
+            if let Err(e) = text_injector.inject_text(&text) {
+                error!("Failed to inject text: {}", e);
+            }
+        }
+    });
+
+    // Bridge async transcription results to the sync text injection thread
+    tokio::spawn(async move {
         while let Some(result) = transcription_rx.recv().await {
             match result {
                 Ok(text) => {
-                    info!("Injecting text: {}", text);
-                    if let Err(e) = text_injector.inject_text(&text) {
-                        error!("Failed to inject text: {}", e);
+                    if inject_tx.send(text).is_err() {
+                        error!("Text injection thread has exited");
+                        break;
                     }
                 }
                 Err(e) => {
