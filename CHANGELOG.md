@@ -7,6 +7,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2025-11-24
+
+### Added - macOS Support 🍎
+- **Apple Silicon Support** - Full support for M1/M2/M3/M4 Macs
+  - CoreML execution provider for GPU acceleration (Metal/ANE)
+  - Unified memory architecture support (65/35 CPU/GPU split)
+  - FP16 model optimization (2-3x faster than CPU)
+  - Auto-detection of system RAM → GPU memory share
+  - Model selection: 8GB→CPU, 16GB→0.6B GPU, 32GB+→1.1B GPU
+
+- **Platform-Specific Text Injection**
+  - macOS: Native Accessibility API text injection
+  - Linux: Existing xdotool/wtype/ydotool support maintained
+  - Cross-platform hotkey support via global-hotkey crate
+
+- **Service Management**
+  - macOS: LaunchAgent plists for auto-start on login
+  - Linux: Existing systemd services maintained
+  - CLI updated for cross-platform service control (swictation start/stop/status)
+
+- **Installation & Setup**
+  - postinstall.js: Automatic macOS platform detection
+  - CoreML-enabled ONNX Runtime download (v1.23.2)
+  - LaunchAgent plist generation and installation
+  - Unified memory detection and model recommendation
+  - Accessibility permissions guidance
+
+### Changed
+- **ONNX Runtime** - Upgraded from 2.0.0-rc.8 to 2.0.0-rc.10
+  - Added CoreML execution provider support
+  - Platform-specific model format selection
+  - Linux: FP32 (GPU), INT8 (CPU)
+  - macOS: FP16 (GPU), FP32 (CPU)
+
+- **Documentation** - Comprehensive cross-platform updates
+  - README.md: Platform-specific prerequisites and setup
+  - Created docs/macos-setup.md: Complete macOS installation guide
+  - Updated docs/architecture.md: CoreML EP and unified memory
+  - Updated GPU support section with macOS memory calculations
+
+- **Build System** - Cross-platform build scripts
+  - scripts/build-macos-release.sh: macOS-specific build process
+  - Platform-specific binary naming (-macos suffix)
+  - Checksum verification for both platforms
+
+### Fixed
+- **Platform Detection** - Proper architecture validation
+  - Linux: x64 only (GLIBC 2.39+)
+  - macOS: ARM64 only (Intel Macs not supported)
+  - Clear error messages for unsupported configurations
+
+### Technical Details
+- **Rust Crates**
+  - swictation-stt: CoreML EP integration with FP16 preference
+  - swictation-daemon: Apple Silicon GPU detection
+  - Cargo.toml: ort crate with "coreml" feature enabled
+
+- **macOS Requirements**
+  - macOS 14 Sonoma or macOS 15 Sequoia (CoreML requirements)
+  - Apple Silicon (M1/M2/M3/M4) - Intel not supported
+  - Accessibility permissions required for text injection
+
+- **Performance**
+  - macOS M1: VAD 50ms, STT 150-300ms (CoreML GPU)
+  - Linux RTX A1000: VAD 50ms, STT 150-250ms (CUDA)
+  - Both platforms: ~1s total latency after speech pause
+
+### Breaking Changes
+None. All existing Linux functionality preserved without modification.
+
+### Notes
+This is a **major feature release** adding complete Apple Silicon support.
+Linux users experience no changes - all existing functionality maintained.
+
 ## [0.6.4] - 2025-11-22
 
 ### Performance
