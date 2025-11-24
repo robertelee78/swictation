@@ -15,8 +15,8 @@ crate-type = ["rlib"]
 
 [dependencies]
 # Direct ONNX Runtime for all models (0.6B and 1.1B)
-# Using rc.8 which supports ORT 1.21.x (system has 1.21.0)
-ort = { version = "2.0.0-rc.8", features = ["ndarray", "half", "load-dynamic"] }
+# Using rc.10 which supports ORT 1.22+ with CoreML execution provider
+ort = { version = "2.0.0-rc.10", features = ["ndarray", "half", "load-dynamic", "coreml"] }
 ndarray = "0.16"  # Match ort's ndarray version
 
 # Audio processing for 1.1B model
@@ -34,6 +34,15 @@ tracing-subscriber = "0.3"
 
 [dev-dependencies]
 approx = "0.5"
+
+[features]
+default = []
+# CoreML support is built into ort crate with "coreml" feature
+# No separate Metal crate needed - CoreML EP internally uses Metal/MPS
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# CoreML execution provider for Apple Silicon GPU acceleration
+# Added to ort features above via conditional compilation in ort crate
 
 [profile.release]
 opt-level = 3
