@@ -17,6 +17,7 @@ use core_graphics::event::{
     CGEvent, CGEventFlags, CGEventTapLocation, CGEventType, CGKeyCode,
 };
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+use foreign_types_shared::ForeignType;
 use std::os::raw::{c_long, c_void};
 use std::sync::Arc;
 use tracing::{debug, warn};
