@@ -25,6 +25,8 @@ use ort::{
     session::{builder::GraphOptimizationLevel, Session},
     value::Tensor,
 };
+#[cfg(target_os = "macos")]
+use ort::execution_providers::coreml::{CoreMLComputeUnits, CoreMLModelFormat};
 use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
@@ -159,8 +161,8 @@ impl OrtRecognizer {
                 session_builder = session_builder
                     .with_execution_providers([
                         ep::CoreMLExecutionProvider::default()
-                            .with_mlprogram(true) // Use MLProgram format (macOS 12+)
-                            .with_compute_units(ep::CoreMLComputeUnits::All) // CPU + GPU + ANE
+                            .with_model_format(CoreMLModelFormat::MLProgram) // Use MLProgram format (macOS 12+)
+                            .with_compute_units(CoreMLComputeUnits::All) // CPU + GPU + ANE
                             .build(),
                         ep::CPUExecutionProvider::default().build(),
                     ])
@@ -303,8 +305,8 @@ impl OrtRecognizer {
                 decoder_builder = decoder_builder
                     .with_execution_providers([
                         ep::CoreMLExecutionProvider::default()
-                            .with_mlprogram(true)
-                            .with_compute_units(ep::CoreMLComputeUnits::All)
+                            .with_model_format(CoreMLModelFormat::MLProgram)
+                            .with_compute_units(CoreMLComputeUnits::All)
                             .build(),
                         ep::CPUExecutionProvider::default().build(),
                     ])
@@ -365,8 +367,8 @@ impl OrtRecognizer {
                 joiner_builder = joiner_builder
                     .with_execution_providers([
                         ep::CoreMLExecutionProvider::default()
-                            .with_mlprogram(true)
-                            .with_compute_units(ep::CoreMLComputeUnits::All)
+                            .with_model_format(CoreMLModelFormat::MLProgram)
+                            .with_compute_units(CoreMLComputeUnits::All)
                             .build(),
                         ep::CPUExecutionProvider::default().build(),
                     ])
