@@ -247,8 +247,9 @@ The previous `Recognizer` implementation using sherpa-rs has been deprecated. Bo
 | Type | RNN-T Transducer | RNN-T Transducer |
 | Vocabulary | 1024 tokens | 1025 tokens |
 | Mel Features | 128 bins | 80 bins |
-| Quantization | FP32 (GPU), INT8 (CPU) | FP32 (GPU), INT8 (CPU) |
-| Library | Direct ort 2.0.0-rc.8 | Direct ort 2.0.0-rc.8 |
+| Quantization | Linux: FP32 (GPU), INT8 (CPU)<br>macOS: FP16 (GPU), FP32 (CPU) | Linux: FP32 (GPU), INT8 (CPU)<br>macOS: FP16 (GPU), FP32 (CPU) |
+| Library | Direct ort 2.0.0-rc.10 | Direct ort 2.0.0-rc.10 |
+| Execution Provider | Linux: CUDA (NVIDIA)<br>macOS: CoreML (Apple Silicon) | Linux: CUDA (NVIDIA)<br>macOS: CoreML (Apple Silicon) |
 | WER | ~7-8% | 5.77% (best quality) |
 | Peak VRAM | ~800MB-1.2GB | ~3.5GB |
 | **Min VRAM Threshold** | **3500MB (3.5GB)** | **6000MB (6GB)** |
@@ -256,12 +257,21 @@ The previous `Recognizer` implementation using sherpa-rs has been deprecated. Bo
 | Latency (GPU) | 100-150ms | 150-250ms |
 | Latency (CPU) | 200-400ms | 300-500ms |
 
-**VRAM Headroom Rationale:**
+**VRAM Headroom Rationale (Linux/NVIDIA):**
 - **1.1B:** 6000MB threshold for ~3.5GB peak = 2.5GB headroom (42%) for safety margin and other GPU processes
 - **0.6B GPU:** 3500MB threshold for ~1.2GB peak = 2.3GB headroom (66%) - fits comfortably in 4GB GPUs
 - **0.6B CPU:** No VRAM required, uses ~960MB system RAM
 
-**Source of Truth:** These thresholds are defined in `npm-package/postinstall.js` lines 1136-1156 and verified through real-world testing on production hardware (RTX A1000 4GB, RTX PRO 6000 Blackwell 97GB).
+**macOS Unified Memory Architecture:**
+- Apple Silicon uses **unified memory** (CPU + GPU share system RAM)
+- GPU memory = 35% of total system RAM (65/35 split)
+- Example: M1 with 8GB RAM → ~2.8GB available for GPU
+- **Model Selection:** Based on GPU share of system memory
+  - ≥6GB GPU share → 1.1B model (16GB+ system RAM)
+  - ≥3.5GB GPU share → 0.6B model (10GB+ system RAM)
+  - <3.5GB GPU share → CPU fallback (8GB base model)
+
+**Source of Truth:** These thresholds are defined in `npm-package/postinstall.js` lines 1136-1156 (Linux) and detectUnifiedMemoryMacOS() (macOS), verified through real-world testing on production hardware (RTX A1000 4GB, RTX PRO 6000 Blackwell 97GB, Apple M1/M2/M3).
 
 **Adaptive Model Selection Decision Tree:**
 
