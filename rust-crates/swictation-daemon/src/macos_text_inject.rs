@@ -14,10 +14,10 @@
 use anyhow::{Context, Result};
 use core_foundation::base::TCFType;
 use core_graphics::event::{
-    CGEvent, CGEventFlags, CGEventSource, CGEventSourceStateID, CGEventTapLocation, CGEventType,
-    CGKeyCode,
+    CGEvent, CGEventFlags, CGEventTapLocation, CGEventType, CGKeyCode,
 };
-use std::os::raw::{c_long, c_uint, c_void};
+use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+use std::os::raw::{c_long, c_void};
 use std::sync::Arc;
 use tracing::{debug, warn};
 
@@ -75,7 +75,7 @@ impl MacOSTextInjector {
 
         // Create event source (wrapped in Arc for efficient sharing)
         let event_source = CGEventSource::new(CGEventSourceStateID::CombinedSessionState)
-            .context("Failed to create CGEventSource")?;
+            .map_err(|_| anyhow::anyhow!("Failed to create CGEventSource"))?;
 
         Ok(Self {
             event_source: Arc::new(event_source),
@@ -179,7 +179,7 @@ impl MacOSTextInjector {
 
             // Create key down event (Arc clone is cheap, inner clone only if needed)
             let event = CGEvent::new_keyboard_event((*self.event_source).clone(), 0, true)
-                .context("Failed to create key down event")?;
+                .map_err(|_| anyhow::anyhow!("Failed to create key down event"))?;
 
             // Set Unicode string content via FFI
             unsafe {
