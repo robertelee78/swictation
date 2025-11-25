@@ -66,7 +66,8 @@
     "test": "node test.js",
     "build": "./scripts/build-release.sh",
     "build-macos": "./scripts/build-macos-release.sh",
-    "prepublishOnly": "./scripts/build-release.sh && ../tauri-ui/scripts/build-ui-release.sh"
+    "prepublishOnly": "./scripts/build-release.sh",
+    "build-ui": "../tauri-ui/scripts/build-ui-release.sh"
   },
   "engines": {
     "node": ">=18.0.0"
