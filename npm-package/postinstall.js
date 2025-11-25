@@ -1519,22 +1519,50 @@ function generateLaunchdServices(ortLibPath) {
 
       // Replace template variables
       const installDir = __dirname;
-      const daemonPath = path.join(installDir, 'bin', 'swictation-daemon-macos');
+      const daemonBinaryPath = path.join(installDir, 'bin', 'swictation-daemon-macos');
       const homeDir = os.homedir();
 
       // DYLD_LIBRARY_PATH: CoreML runtime + ONNX Runtime providers
       const dylibPath = path.join(installDir, 'lib', 'native');
 
-      daemonTemplate = daemonTemplate.replace(/\{\{DAEMON_PATH\}\}/g, daemonPath);
-      daemonTemplate = daemonTemplate.replace(/\{\{LOG_DIR\}\}/g, logDir);
-      daemonTemplate = daemonTemplate.replace(/\{\{HOME\}\}/g, homeDir);
-
       // ORT_DYLIB_PATH: Points to CoreML-enabled ONNX Runtime
       const ortDylibPath = path.join(dylibPath, 'libonnxruntime.dylib');
+
+      // CRITICAL: macOS SIP (System Integrity Protection) strips DYLD_* environment
+      // variables from launchd processes. We MUST use a wrapper script that sets
+      // the environment variables before executing the daemon binary.
+      const wrapperScriptPath = path.join(installDir, 'bin', 'swictation-daemon-launcher');
+      const wrapperScript = `#!/bin/bash
+# Wrapper script for swictation-daemon on macOS
+# Required because SIP strips DYLD_* env vars from launchd processes
+#
+# This script sets the necessary environment variables for ONNX Runtime
+# CoreML acceleration before launching the daemon binary.
+
+# Set library path for ONNX Runtime dylib (required for CoreML GPU acceleration)
+export DYLD_LIBRARY_PATH="${dylibPath}:\${DYLD_LIBRARY_PATH:-}"
+
+# Set explicit ONNX Runtime dylib path (critical for model loading)
+export ORT_DYLIB_PATH="${ortDylibPath}"
+
+# Execute the actual daemon binary
+exec "${daemonBinaryPath}" "$@"
+`;
+
+      // Write the wrapper script
+      fs.writeFileSync(wrapperScriptPath, wrapperScript);
+      fs.chmodSync(wrapperScriptPath, 0o755); // rwxr-xr-x (executable)
+      log('green', `  ✓ Generated daemon launcher wrapper: ${wrapperScriptPath}`);
+
+      // Point plist to wrapper script instead of binary directly
+      daemonTemplate = daemonTemplate.replace(/\{\{DAEMON_PATH\}\}/g, wrapperScriptPath);
+      daemonTemplate = daemonTemplate.replace(/\{\{LOG_DIR\}\}/g, logDir);
+      daemonTemplate = daemonTemplate.replace(/\{\{HOME\}\}/g, homeDir);
       daemonTemplate = daemonTemplate.replace(/\{\{ORT_DYLIB_PATH\}\}/g, ortDylibPath);
       daemonTemplate = daemonTemplate.replace(/\{\{DYLD_LIBRARY_PATH\}\}/g, dylibPath);
 
-      log('cyan', `  Daemon binary: ${daemonPath}`);
+      log('cyan', `  Daemon binary: ${daemonBinaryPath}`);
+      log('cyan', `  Launcher wrapper: ${wrapperScriptPath}`);
       log('cyan', `  ORT_DYLIB_PATH: ${ortDylibPath}`);
       log('cyan', `  DYLD_LIBRARY_PATH: ${dylibPath}`);
 

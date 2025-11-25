@@ -12,7 +12,10 @@
 //! We must declare the FFI binding manually.
 
 use anyhow::{Context, Result};
-use core_foundation::base::TCFType;
+use core_foundation::base::{CFType, TCFType};
+use core_foundation::boolean::CFBoolean;
+use core_foundation::dictionary::CFDictionary;
+use core_foundation::string::CFString;
 use core_graphics::event::{
     CGEvent, CGEventFlags, CGEventTapLocation, CGEventType, CGKeyCode,
 };
@@ -20,7 +23,7 @@ use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use foreign_types_shared::ForeignType;
 use std::os::raw::{c_long, c_void};
 use std::sync::Arc;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 /// FFI declaration for CGEventKeyboardSetUnicodeString
 ///
@@ -39,14 +42,29 @@ extern "C" {
     );
 }
 
-/// FFI declaration for checking Accessibility permissions
+/// FFI declarations for Accessibility permission APIs
 ///
-/// WARNING: On macOS Ventura 13.0+, this may return incorrect values
+/// WARNING: On macOS Ventura 13.0+, these may return incorrect values
 /// if permissions are rapidly toggled in System Settings.
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
+    /// Check if process has Accessibility permissions (simple check, no prompt)
     fn AXIsProcessTrusted() -> bool;
+
+    /// Check Accessibility permissions with options
+    ///
+    /// When called with kAXTrustedCheckOptionPrompt = true in the options dict,
+    /// this will display a system dialog prompting the user to grant permissions.
+    /// The dialog has "Open System Settings" and "Deny" buttons.
+    ///
+    /// Note: Even with prompting, user must still manually enable the toggle
+    /// in System Settings > Privacy & Security > Accessibility.
+    fn AXIsProcessTrustedWithOptions(options: *const c_void) -> bool;
 }
+
+/// Key for the prompt option in AXIsProcessTrustedWithOptions
+/// When set to true, shows system dialog for granting accessibility
+static KAXTRUSTED_CHECK_OPTION_PROMPT: &str = "AXTrustedCheckOptionPrompt";
 
 /// macOS text injector using Core Graphics Accessibility API
 pub struct MacOSTextInjector {
@@ -93,6 +111,44 @@ impl MacOSTextInjector {
     /// 4. Restart the application
     pub fn check_accessibility_permissions() -> bool {
         unsafe { AXIsProcessTrusted() }
+    }
+
+    /// Request Accessibility permissions with a system dialog
+    ///
+    /// This function will:
+    /// 1. Check if permissions are already granted
+    /// 2. If not, display a system dialog prompting the user
+    /// 3. The dialog shows "Open System Settings" and "Deny" buttons
+    ///
+    /// Returns true if permissions are already granted, false otherwise.
+    /// Note: Even after the dialog is shown, the user must manually enable
+    /// the toggle in System Settings > Privacy & Security > Accessibility.
+    ///
+    /// This provides better UX than silently failing - the user sees the
+    /// permission request immediately on first run.
+    pub fn request_accessibility_permissions() -> bool {
+        info!("Checking Accessibility permissions with prompt...");
+
+        // Create options dictionary with prompt = true
+        let key = CFString::new(KAXTRUSTED_CHECK_OPTION_PROMPT);
+        let value = CFBoolean::true_value();
+
+        // Build the CFDictionary with the prompt option
+        let options = CFDictionary::from_CFType_pairs(&[(key.as_CFType(), value.as_CFType())]);
+
+        // Call the API with options - this will show the system dialog if needed
+        let is_trusted = unsafe {
+            AXIsProcessTrustedWithOptions(options.as_concrete_TypeRef() as *const c_void)
+        };
+
+        if is_trusted {
+            info!("Accessibility permissions already granted");
+        } else {
+            info!("Accessibility permissions not yet granted - system dialog shown");
+            info!("User must enable toggle in: System Settings > Privacy & Security > Accessibility");
+        }
+
+        is_trusted
     }
 
     /// Inject text into the active window, handling <KEY:...> markers

@@ -226,6 +226,28 @@ async fn main() -> Result<()> {
         env!("CARGO_PKG_VERSION")
     );
 
+    // macOS: Request permissions at startup with system dialogs
+    // This provides better UX by prompting users immediately rather than failing silently
+    #[cfg(target_os = "macos")]
+    {
+        use crate::macos_text_inject::MacOSTextInjector;
+
+        info!("🔐 Checking macOS permissions...");
+
+        // Request Accessibility permission with system dialog
+        // This will show a dialog guiding the user to System Settings if not granted
+        if !MacOSTextInjector::request_accessibility_permissions() {
+            warn!("⚠️  Accessibility permission not yet granted");
+            warn!("   Please enable in: System Settings → Privacy & Security → Accessibility");
+            warn!("   The daemon will continue, but text injection may fail until permission is granted");
+        } else {
+            info!("✅ Accessibility permission granted");
+        }
+
+        // Note: Microphone permissions are requested by the audio capture subsystem
+        // using AVCaptureDevice.requestAccess() when audio recording starts
+    }
+
     // Load configuration
     let mut config = DaemonConfig::load().context("Failed to load configuration")?;
 
