@@ -150,6 +150,127 @@ pub fn process_capital_commands(text: &str) -> String {
     result
 }
 
+/// Strip 0.6B model's built-in ITN (Inverse Text Normalization) completely.
+///
+/// The 0.6B model has built-in ITN that CANNOT be disabled at inference time.
+/// This converts punctuation words to symbols inconsistently:
+/// - "comma" → "," (word replaced with symbol)
+/// - "period" → "period." (word kept + symbol added)
+/// - "semicolon" → ",;" (spurious comma added + semicolon)
+///
+/// **Solution**: Strip ALL ITN effects to produce raw text like 1.1B model outputs.
+/// Then let Secretary Mode handle the word→symbol conversion consistently.
+///
+/// # Processing Steps
+/// 1. Lowercase everything
+/// 2. Convert ALL punctuation symbols to word equivalents
+/// 3. Remove spurious "comma" before other punctuation (common 0.6B artifact)
+/// 4. Remove consecutive duplicate punctuation words
+/// 5. Clean up whitespace
+///
+/// # Examples
+/// ```
+/// use swictation_daemon::capitalization::normalize_0_6b_punctuation;
+///
+/// // Symbol → word conversion
+/// assert_eq!(normalize_0_6b_punctuation("Hello, world"), "hello comma world");
+///
+/// // Duplicate removal (word + symbol → single word)
+/// assert_eq!(normalize_0_6b_punctuation("hello period."), "hello period");
+///
+/// // Spurious comma removal
+/// assert_eq!(normalize_0_6b_punctuation("First,; second."), "first semicolon second period");
+///
+/// // Full normalization
+/// assert_eq!(normalize_0_6b_punctuation("Hello, world period."), "hello comma world period");
+/// ```
+pub fn normalize_0_6b_punctuation(text: &str) -> String {
+    // Step 1: Lowercase everything (model adds capitalization we'll reapply later)
+    let text = text.to_lowercase();
+
+    // Use numeric markers to avoid substring collision (e.g., "period" inside "⟪period⟫")
+    // Markers: ⟪1⟫=comma, ⟪2⟫=period, ⟪3⟫=question, ⟪4⟫=exclamation, ⟪5⟫=semicolon, ⟪6⟫=colon, ⟪7⟫=dash, ⟪8⟫=ellipsis
+
+    // Step 2: Convert punctuation WORDS to unique markers (before symbol conversion)
+    // Multi-word punctuation must come first (before single-word "mark" matches "exclamation mark")
+    let text = text
+        // Multi-word punctuation
+        .replace("exclamation point", "⟪4⟫")
+        .replace("exclamation mark", "⟪4⟫")
+        .replace("question mark", "⟪3⟫")
+        .replace("full stop", "⟪2⟫")
+        .replace("semi colon", "⟪5⟫")
+        .replace("three dots", "⟪8⟫")
+        // Single-word punctuation
+        .replace("ellipsis", "⟪8⟫")
+        .replace("semicolon", "⟪5⟫")
+        .replace("period", "⟪2⟫")
+        .replace("comma", "⟪1⟫")
+        .replace("colon", "⟪6⟫")
+        .replace("dash", "⟪7⟫");
+
+    // Step 3: Convert ALL punctuation SYMBOLS to markers
+    // Order matters: longer sequences first
+    let text = text
+        .replace("...", " ⟪8⟫ ")
+        .replace("--", " ⟪7⟫ ") // Em-dash alternative
+        .replace(',', " ⟪1⟫ ")
+        .replace('.', " ⟪2⟫ ")
+        .replace('?', " ⟪3⟫ ")
+        .replace('!', " ⟪4⟫ ")
+        .replace(';', " ⟪5⟫ ")
+        .replace(':', " ⟪6⟫ ")
+        .replace('-', " ⟪7⟫ ");
+
+    // Step 4: Split into tokens and clean up
+    let tokens: Vec<&str> = text.split_whitespace().collect();
+    let mut result: Vec<&str> = Vec::with_capacity(tokens.len());
+
+    // Punctuation markers we recognize
+    let punct_markers = ["⟪1⟫", "⟪2⟫", "⟪3⟫", "⟪4⟫", "⟪5⟫", "⟪6⟫", "⟪7⟫", "⟪8⟫"];
+
+    for (i, token) in tokens.iter().enumerate() {
+        // Skip consecutive duplicate punctuation markers
+        if i > 0 && *token == tokens[i - 1] && punct_markers.contains(token) {
+            continue;
+        }
+
+        // Skip spurious comma (⟪1⟫) if followed by another punctuation marker
+        // (Common 0.6B artifact: ",;" → "⟪1⟫ ⟪5⟫" → "⟪5⟫")
+        if *token == "⟪1⟫" {
+            if let Some(&next) = tokens.get(i + 1) {
+                if punct_markers.contains(&next) && next != "⟪1⟫" {
+                    continue; // Skip this spurious comma
+                }
+            }
+        }
+
+        // Skip spurious period (⟪2⟫) if PRECEDED by exclamation (⟪4⟫) or question (⟪3⟫)
+        // (Common 0.6B artifact: "exclamation point." → "⟪4⟫ ⟪2⟫" → "⟪4⟫")
+        if *token == "⟪2⟫" {
+            if let Some(&prev) = result.last() {
+                if prev == "⟪4⟫" || prev == "⟪3⟫" {
+                    continue; // Skip this spurious period
+                }
+            }
+        }
+
+        result.push(token);
+    }
+
+    // Step 5: Convert markers back to canonical words
+    result
+        .join(" ")
+        .replace("⟪1⟫", "comma")
+        .replace("⟪2⟫", "period")
+        .replace("⟪3⟫", "question mark")
+        .replace("⟪4⟫", "exclamation point")
+        .replace("⟪5⟫", "semicolon")
+        .replace("⟪6⟫", "colon")
+        .replace("⟪7⟫", "dash")
+        .replace("⟪8⟫", "ellipsis")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -197,5 +318,170 @@ mod tests {
             "my name is Jones"
         );
         assert_eq!(process_capital_commands("all caps fbi"), "FBI");
+    }
+
+    // ========================================
+    // Tests for 0.6B model punctuation normalization
+    // ========================================
+
+    #[test]
+    fn test_normalize_0_6b_word_exists_remove_symbol() {
+        // When the word form exists, the symbol is redundant and should be removed
+        // This handles: "period" → "period." where model adds trailing period
+        assert_eq!(normalize_0_6b_punctuation("hello period."), "hello period");
+        assert_eq!(
+            normalize_0_6b_punctuation("what question mark?"),
+            "what question mark"
+        );
+        assert_eq!(
+            normalize_0_6b_punctuation("stop exclamation point!"),
+            "stop exclamation point"
+        );
+    }
+
+    #[test]
+    fn test_normalize_0_6b_word_missing_add_word() {
+        // When the word form doesn't exist, convert symbol to word
+        // This handles: "comma" → "," where model replaced word with symbol
+        assert_eq!(normalize_0_6b_punctuation("hello, world"), "hello comma world");
+        assert_eq!(normalize_0_6b_punctuation("what?"), "what question mark");
+        assert_eq!(normalize_0_6b_punctuation("stop!"), "stop exclamation point");
+        assert_eq!(normalize_0_6b_punctuation("note: important"), "note colon important");
+        assert_eq!(
+            normalize_0_6b_punctuation("first; second"),
+            "first semicolon second"
+        );
+    }
+
+    #[test]
+    fn test_normalize_0_6b_mixed_behavior() {
+        // The actual 0.6B model behavior: inconsistent handling
+        // "hello comma world period" → "Hello, world period."
+        // - "comma" was converted to "," (need to add word back)
+        // - "period" stayed as word but "." was added (need to remove symbol)
+        assert_eq!(
+            normalize_0_6b_punctuation("Hello, world period."),
+            "hello comma world period"
+        );
+    }
+
+    #[test]
+    fn test_normalize_0_6b_lowercase() {
+        // Should lowercase everything (model adds capitalization we reapply later)
+        assert_eq!(normalize_0_6b_punctuation("Hello World"), "hello world");
+        assert_eq!(normalize_0_6b_punctuation("HELLO"), "hello");
+    }
+
+    #[test]
+    fn test_normalize_0_6b_whitespace_cleanup() {
+        // Should normalize whitespace
+        assert_eq!(
+            normalize_0_6b_punctuation("hello   world"),
+            "hello world"
+        );
+        assert_eq!(
+            normalize_0_6b_punctuation("  hello  world  "),
+            "hello world"
+        );
+    }
+
+    #[test]
+    fn test_normalize_0_6b_no_punctuation() {
+        // No punctuation should pass through unchanged (except lowercase)
+        assert_eq!(normalize_0_6b_punctuation("hello world"), "hello world");
+        assert_eq!(normalize_0_6b_punctuation("Hello World"), "hello world");
+    }
+
+    #[test]
+    fn test_normalize_0_6b_full_stop_variant() {
+        // "full stop" is normalized to canonical "period"
+        // word + symbol redundancy: "full stop." → "period" (both merged)
+        assert_eq!(
+            normalize_0_6b_punctuation("hello full stop."),
+            "hello period"
+        );
+    }
+
+    #[test]
+    fn test_normalize_0_6b_exclamation_mark_variant() {
+        // "exclamation mark" is normalized to canonical "exclamation point"
+        // Also removes spurious trailing symbol
+        assert_eq!(
+            normalize_0_6b_punctuation("wow exclamation mark!"),
+            "wow exclamation point"
+        );
+    }
+
+    #[test]
+    fn test_normalize_0_6b_complex_sentence() {
+        // Test a more complex sentence with multiple punctuation
+        // Input: User says "Hello comma how are you question mark I am fine period"
+        // Model outputs: "Hello, how are you question mark? I am fine period."
+        // (comma converted to symbol, question mark word + symbol, period word + symbol)
+        assert_eq!(
+            normalize_0_6b_punctuation("Hello, how are you question mark? I am fine period."),
+            "hello comma how are you question mark i am fine period"
+        );
+    }
+
+    #[test]
+    fn test_normalize_0_6b_secretary_mode_examples() {
+        // Test examples from docs/secretary-mode.md Section A
+
+        // "Hello comma world" - model might output "Hello, world"
+        assert_eq!(
+            normalize_0_6b_punctuation("Hello, world"),
+            "hello comma world"
+        );
+
+        // "End period" - model might output "End." or "End period."
+        assert_eq!(normalize_0_6b_punctuation("End."), "end period");
+        assert_eq!(normalize_0_6b_punctuation("End period."), "end period");
+
+        // "Why question mark" - model might output "Why?" or "Why question mark?"
+        assert_eq!(normalize_0_6b_punctuation("Why?"), "why question mark");
+        assert_eq!(
+            normalize_0_6b_punctuation("Why question mark?"),
+            "why question mark"
+        );
+
+        // "Stop exclamation point" - model might output "Stop!" or "Stop exclamation point!"
+        // CRITICAL: Model may add trailing PERIOD instead of "!" - must strip it
+        assert_eq!(normalize_0_6b_punctuation("Stop!"), "stop exclamation point");
+        assert_eq!(
+            normalize_0_6b_punctuation("Stop exclamation point!"),
+            "stop exclamation point"
+        );
+        // BUG FIX: Model outputs "Stop exclamation point." with trailing period artifact
+        assert_eq!(
+            normalize_0_6b_punctuation("Stop exclamation point."),
+            "stop exclamation point"
+        );
+
+        // "Note colon" - model might output "Note:" or "Note colon:"
+        assert_eq!(normalize_0_6b_punctuation("Note:"), "note colon");
+        assert_eq!(normalize_0_6b_punctuation("Note colon:"), "note colon");
+
+        // "First semicolon second" - model might output "First; second" or "First semicolon; second"
+        assert_eq!(
+            normalize_0_6b_punctuation("First; second"),
+            "first semicolon second"
+        );
+        assert_eq!(
+            normalize_0_6b_punctuation("First semicolon; second"),
+            "first semicolon second"
+        );
+
+        // CRITICAL BUG FIX: Spurious comma before semicolon
+        // The original bug: user says "first semicolon second", model outputs "First,; second."
+        // This must become "first semicolon second" (comma removed, period preserved if spoken)
+        assert_eq!(
+            normalize_0_6b_punctuation("First,; second"),
+            "first semicolon second"
+        );
+        assert_eq!(
+            normalize_0_6b_punctuation("First,; second."),
+            "first semicolon second period"
+        );
     }
 }

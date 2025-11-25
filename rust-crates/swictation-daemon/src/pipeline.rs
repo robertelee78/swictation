@@ -14,7 +14,9 @@ use swictation_metrics::{MetricsCollector, SegmentMetrics};
 use swictation_stt::{OrtRecognizer, SttEngine};
 use swictation_vad::{VadConfig, VadDetector, VadResult};
 
-use crate::capitalization::{apply_capitalization, process_capital_commands};
+use crate::capitalization::{
+    apply_capitalization, normalize_0_6b_punctuation, process_capital_commands,
+};
 use crate::config::DaemonConfig;
 use crate::corrections::CorrectionEngine;
 use crate::gpu::get_gpu_memory_mb;
@@ -477,7 +479,7 @@ impl Pipeline {
 
                 // Process through STT (scoped to ensure lock is dropped before any async ops)
                 let stt_start = Instant::now();
-                let (text, stt_latency) = {
+                let (text, stt_latency, is_0_6b) = {
                     let mut stt_lock = match stt.lock() {
                         Ok(s) => s,
                         Err(e) => {
@@ -497,7 +499,8 @@ impl Pipeline {
                     });
                     let text = result.text;
                     let stt_latency = stt_start.elapsed().as_millis() as f64;
-                    (text, stt_latency)
+                    let is_0_6b = stt_lock.model_size() == "0.6B";
+                    (text, stt_latency, is_0_6b)
                 }; // stt_lock automatically dropped here
 
                 if !text.is_empty() {
@@ -505,7 +508,23 @@ impl Pipeline {
                     // "hello comma world" → "hello, world"
                     let transform_start = Instant::now();
 
-                    // OrtRecognizer outputs raw lowercase text without punctuation.
+                    // IMPORTANT: 0.6B model has built-in ITN (Inverse Text Normalization) that
+                    // INCONSISTENTLY handles punctuation:
+                    // - "comma" → "," (word replaced with symbol)
+                    // - "period" → "period." (word kept + symbol added at end of sentence)
+                    //
+                    // Solution: Smart normalization that avoids duplicate punctuation:
+                    // - If punctuation WORD exists → remove the symbol (it's redundant)
+                    // - If punctuation WORD doesn't exist → convert symbol to word
+                    //
+                    // This ensures Secretary Mode always sees consistent word-based input.
+                    // 1.1B model outputs raw text without ITN - no conversion needed.
+                    let text = if is_0_6b {
+                        normalize_0_6b_punctuation(&text)
+                    } else {
+                        text
+                    };
+
                     // Step 1: Process capital commands first ("capital r robert" → "Robert")
                     let with_capitals = process_capital_commands(&text);
 
@@ -660,12 +679,20 @@ impl Pipeline {
             });
             let text = result.text;
             let stt_latency = stt_start.elapsed().as_millis() as f64;
+            let is_0_6b = stt_lock.model_size() == "0.6B";
 
             if !text.is_empty() {
                 // Transform voice commands → symbols (Midstream)
                 let transform_start = Instant::now();
 
-                // OrtRecognizer outputs raw lowercase text without punctuation.
+                // IMPORTANT: 0.6B model has built-in ITN - use smart normalization
+                // to avoid duplicate punctuation. See normalize_0_6b_punctuation docs.
+                let text = if is_0_6b {
+                    normalize_0_6b_punctuation(&text)
+                } else {
+                    text
+                };
+
                 // Step 1: Process capital commands first
                 let with_capitals = process_capital_commands(&text);
 
