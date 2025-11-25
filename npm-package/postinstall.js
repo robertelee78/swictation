@@ -977,7 +977,7 @@ async function downloadONNXRuntimeCoreML() {
 async function downloadMacOSDaemon() {
   log('cyan', '\n📦 Downloading swictation-daemon for macOS ARM64...');
 
-  const DAEMON_VERSION = '0.7.3';
+  const DAEMON_VERSION = '0.7.1';
   const releaseUrl = `https://github.com/robertelee78/swictation/releases/download/daemon-macos-arm64-v${DAEMON_VERSION}/swictation-daemon-macos-arm64.tar.gz`;
   const tmpDir = path.join(os.tmpdir(), 'swictation-macos-daemon');
   const tarPath = path.join(tmpDir, 'swictation-daemon-macos-arm64.tar.gz');
