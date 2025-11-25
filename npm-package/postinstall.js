@@ -1103,6 +1103,15 @@ async function downloadMacOSUI() {
         if (fileOutput.includes('Mach-O') && fileOutput.includes('arm64')) {
           log('green', `  ✓ Swictation.app already installed in ~/Applications`);
           log('cyan', `    Location: ${appBundlePath}`);
+
+          // Still need to ensure CLI binary exists in bin directory
+          if (!fs.existsSync(targetUIPath)) {
+            log('cyan', `    Creating CLI binary symlink...`);
+            fs.copyFileSync(binaryPath, targetUIPath);
+            fs.chmodSync(targetUIPath, 0o755);
+            log('green', `  ✓ CLI binary installed to ${targetUIPath}`);
+          }
+
           log('cyan', `    Skipping download`);
           return;
         } else {
