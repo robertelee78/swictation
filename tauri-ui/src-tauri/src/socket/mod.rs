@@ -145,11 +145,15 @@ impl SocketConnection {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::socket::socket_utils;
 
     #[test]
     fn test_socket_path_validation() {
-        let socket_path = "/tmp/swictation_metrics.sock";
-        assert!(!socket_path.is_empty());
-        assert!(socket_path.starts_with("/tmp/"));
+        let socket_path = socket_utils::get_metrics_socket_path();
+        let socket_str = socket_path.to_string_lossy();
+        assert!(!socket_str.is_empty());
+        // Socket should NEVER be in /tmp - must be in platform-appropriate directory
+        assert!(!socket_str.starts_with("/tmp/"), "Socket path must not be in /tmp");
+        assert!(socket_str.ends_with("swictation_metrics.sock"));
     }
 }

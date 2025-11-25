@@ -633,6 +633,40 @@ async function downloadFile(url, dest) {
 }
 
 /**
+ * Verify SHA256 checksum of a downloaded file
+ * @param {string} filePath - Path to file to verify
+ * @param {string} expectedChecksum - Expected SHA256 hash (lowercase hex)
+ * @returns {boolean} - True if checksum matches
+ */
+function verifyChecksum(filePath, expectedChecksum) {
+  const fileBuffer = fs.readFileSync(filePath);
+  const hashSum = crypto.createHash('sha256');
+  hashSum.update(fileBuffer);
+  const actualChecksum = hashSum.digest('hex');
+  return actualChecksum === expectedChecksum.toLowerCase();
+}
+
+/**
+ * Get SHA256 checksum of a file (for debugging/generating checksums)
+ * @param {string} filePath - Path to file
+ * @returns {string} - SHA256 hash as lowercase hex
+ */
+function getFileChecksum(filePath) {
+  const fileBuffer = fs.readFileSync(filePath);
+  const hashSum = crypto.createHash('sha256');
+  hashSum.update(fileBuffer);
+  return hashSum.digest('hex');
+}
+
+// SHA256 checksums for macOS release binaries (SECURITY: verify integrity of downloads)
+const MACOS_CHECKSUMS = {
+  // Daemon v0.7.4 - ARM64 macOS binary
+  'daemon-0.7.4': 'd992f8c424448eedbc902d81377d1079b7af62798a1e29fe089895838c7ab6b7',
+  // UI v0.1.0 - ARM64 macOS Tauri app
+  'ui-0.1.0': '5ce09af9942c5b11683380621fce2937ea1e2beefa3842a8ec6a1a698ce6b319',
+};
+
+/**
  * Load expected checksums from checksums.txt
  * @returns {Map<string, string>} Map of filename -> sha512 hash
  */
@@ -1018,6 +1052,23 @@ async function downloadMacOSDaemon() {
     await downloadFile(releaseUrl, tarPath);
     log('green', `  ✓ Downloaded macOS daemon (~3MB)`);
 
+    // SECURITY: Verify SHA256 checksum before extraction
+    const expectedChecksum = MACOS_CHECKSUMS[`daemon-${DAEMON_VERSION}`];
+    if (expectedChecksum) {
+      log('cyan', '  Verifying SHA256 checksum...');
+      const actualChecksum = getFileChecksum(tarPath);
+      if (actualChecksum !== expectedChecksum) {
+        log('red', `  ✗ CHECKSUM MISMATCH - download may be corrupted or tampered!`);
+        log('red', `    Expected: ${expectedChecksum}`);
+        log('red', `    Got:      ${actualChecksum}`);
+        fs.unlinkSync(tarPath);
+        throw new Error('Checksum verification failed for macOS daemon');
+      }
+      log('green', `  ✓ Checksum verified (SHA256: ${actualChecksum.substring(0, 16)}...)`);
+    } else {
+      log('yellow', `  ⚠️  No checksum available for daemon v${DAEMON_VERSION} - skipping verification`);
+    }
+
     // Extract tarball
     log('cyan', '  Extracting daemon binary...');
     execSync(`tar -xzf "${tarPath}" -C "${tmpDir}"`, { stdio: 'inherit' });
@@ -1138,6 +1189,23 @@ async function downloadMacOSUI() {
     log('cyan', `  URL: ${releaseUrl}`);
     await downloadFile(releaseUrl, tarPath);
     log('green', `  ✓ Downloaded Swictation.app (~3MB)`);
+
+    // SECURITY: Verify SHA256 checksum before extraction
+    const expectedChecksum = MACOS_CHECKSUMS[`ui-${UI_VERSION}`];
+    if (expectedChecksum) {
+      log('cyan', '  Verifying SHA256 checksum...');
+      const actualChecksum = getFileChecksum(tarPath);
+      if (actualChecksum !== expectedChecksum) {
+        log('red', `  ✗ CHECKSUM MISMATCH - download may be corrupted or tampered!`);
+        log('red', `    Expected: ${expectedChecksum}`);
+        log('red', `    Got:      ${actualChecksum}`);
+        fs.unlinkSync(tarPath);
+        throw new Error('Checksum verification failed for macOS UI');
+      }
+      log('green', `  ✓ Checksum verified (SHA256: ${actualChecksum.substring(0, 16)}...)`);
+    } else {
+      log('yellow', `  ⚠️  No checksum available for UI v${UI_VERSION} - skipping verification`);
+    }
 
     // Extract tarball
     log('cyan', '  Extracting application bundle...');

@@ -114,9 +114,9 @@ pub struct DaemonConfig {
 
 impl Default for DaemonConfig {
     fn default() -> Self {
-        // Get socket path from XDG_RUNTIME_DIR or fallback
+        // Get socket path from platform-appropriate directory (NEVER /tmp)
         let socket_path = socket_utils::get_ipc_socket_path()
-            .unwrap_or_else(|_| std::path::PathBuf::from("/tmp/swictation.sock"))
+            .expect("Failed to determine IPC socket path - cannot proceed without valid socket directory")
             .to_string_lossy()
             .to_string();
 

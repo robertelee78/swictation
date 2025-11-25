@@ -1,31 +1,41 @@
 //! Socket path utilities matching daemon implementation
-//! Uses XDG_RUNTIME_DIR with fallback to ~/.local/share/swictation
+//!
+//! Provides socket paths using platform-appropriate locations:
+//! - Linux: XDG_RUNTIME_DIR or ~/.local/share/swictation
+//! - macOS: ~/Library/Application Support/swictation
 
 use std::env;
 use std::path::PathBuf;
 
 /// Get secure socket directory path
 ///
-/// Priority:
-/// 1. XDG_RUNTIME_DIR (user-specific, mode 0700, auto-cleaned)
-/// 2. ~/.local/share/swictation (user-specific, manual creation)
+/// Platform-specific behavior:
+/// - Linux: XDG_RUNTIME_DIR (preferred) or ~/.local/share/swictation (fallback)
+/// - macOS: ~/Library/Application Support/swictation
 pub fn get_socket_dir() -> PathBuf {
-    // Try XDG_RUNTIME_DIR first (best practice for sockets)
-    if let Ok(runtime_dir) = env::var("XDG_RUNTIME_DIR") {
-        let path = PathBuf::from(runtime_dir);
-        if path.exists() {
-            return path;
-        }
+    // macOS: Use Application Support directory
+    #[cfg(target_os = "macos")]
+    {
+        return dirs::data_local_dir()
+            .expect("Failed to get Application Support directory")
+            .join("swictation");
     }
 
-    // Fallback to ~/.local/share/swictation
-    let home = env::var("HOME")
-        .unwrap_or_else(|_| String::from("/tmp"));
+    // Linux: Try XDG_RUNTIME_DIR first (best practice for sockets)
+    #[cfg(not(target_os = "macos"))]
+    {
+        if let Ok(runtime_dir) = env::var("XDG_RUNTIME_DIR") {
+            let path = PathBuf::from(runtime_dir);
+            if path.exists() {
+                return path;
+            }
+        }
 
-    PathBuf::from(home)
-        .join(".local")
-        .join("share")
-        .join("swictation")
+        // Fallback to ~/.local/share/swictation using dirs crate
+        dirs::data_local_dir()
+            .expect("Failed to get data directory")
+            .join("swictation")
+    }
 }
 
 /// Get path for main IPC socket (toggle commands)
