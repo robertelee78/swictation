@@ -977,7 +977,7 @@ async function downloadONNXRuntimeCoreML() {
 async function downloadMacOSDaemon() {
   log('cyan', '\n📦 Downloading swictation-daemon for macOS ARM64...');
 
-  const DAEMON_VERSION = '0.7.1';
+  const DAEMON_VERSION = '0.7.3';
   const releaseUrl = `https://github.com/robertelee78/swictation/releases/download/daemon-macos-arm64-v${DAEMON_VERSION}/swictation-daemon-macos-arm64.tar.gz`;
   const tmpDir = path.join(os.tmpdir(), 'swictation-macos-daemon');
   const tarPath = path.join(tmpDir, 'swictation-daemon-macos-arm64.tar.gz');
@@ -2787,11 +2787,29 @@ async function main() {
     } else if (process.platform === 'darwin') {
       // macOS: Accessibility permissions guidance
       log('cyan', '\n═══ Phase 5: macOS Integration ═══');
-      log('cyan', '📋 Accessibility permissions required for text injection:');
-      log('cyan', '  1. Open System Settings → Privacy & Security → Accessibility');
-      log('cyan', '  2. Add swictation-daemon to the allowed applications');
-      log('cyan', '  3. Enable the checkbox for swictation-daemon');
-      log('cyan', '\nThis is required for voice-to-text functionality to work.');
+      log('yellow', '');
+      log('yellow', '╔════════════════════════════════════════════════════════════════════╗');
+      log('yellow', '║  IMPORTANT: macOS Accessibility Permission Required                ║');
+      log('yellow', '╠════════════════════════════════════════════════════════════════════╣');
+      log('yellow', '║  For Swictation to type text into applications, you must grant     ║');
+      log('yellow', '║  Accessibility permission. This is a macOS security requirement.   ║');
+      log('yellow', '╚════════════════════════════════════════════════════════════════════╝');
+      log('yellow', '');
+      log('cyan', '📋 Steps to enable Accessibility permission:');
+      log('cyan', '');
+      log('cyan', '  1. Open System Settings (or System Preferences on older macOS)');
+      log('cyan', '  2. Navigate to: Privacy & Security → Accessibility');
+      log('cyan', '  3. Click the lock icon and enter your password');
+      log('cyan', '  4. Click the + button to add an application');
+      log('cyan', '  5. Navigate to the swictation-daemon binary:');
+      log('cyan', '     ~/.npm-global/lib/node_modules/swictation/bin/swictation-daemon-macos');
+      log('cyan', '     (or wherever npm installed swictation globally)');
+      log('cyan', '  6. Enable the checkbox for swictation-daemon-macos');
+      log('cyan', '');
+      log('cyan', '  Without this permission, speech recognition works but text will');
+      log('cyan', '  NOT be typed into applications automatically.');
+      log('cyan', '');
+      log('cyan', '  Documentation: https://github.com/robertelee78/swictation/blob/main/docs/MACOS_SETUP.md');
     }
 
     // Phase 6: Auto-enable and start service (platform-specific)
