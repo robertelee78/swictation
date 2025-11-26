@@ -9,19 +9,28 @@ const inquirer = require('inquirer');
 const which = require('which');
 const { configureNvidiaHibernation, checkNvidiaHibernationStatus } = require('../src/nvidia-hibernation-setup');
 const { getIpcSocketPath, getMetricsSocketPath } = require('../src/socket-paths');
+const { resolveBinaryPaths } = require('../src/resolve-binary');
 
 // Platform detection
 const isMacOS = process.platform === 'darwin';
 const isLinux = process.platform === 'linux';
 
-// Binary locations (platform-specific)
-const binDir = path.join(__dirname, '..');
-const daemonBinary = isMacOS
-  ? path.join(binDir, 'bin', 'swictation-daemon-macos')
-  : path.join(binDir, 'bin', 'swictation-daemon');
-const uiBinary = isMacOS
-  ? path.join(binDir, 'bin', 'swictation-ui-macos')
-  : path.join(binDir, 'bin', 'swictation-ui');
+// Get binary paths from platform packages
+let binaryPaths;
+try {
+  binaryPaths = resolveBinaryPaths();
+} catch (err) {
+  // If we can't resolve binary paths yet, some commands (like --version, help) can still work
+  // We'll check this later for commands that need binaries
+  binaryPaths = null;
+}
+
+// Binary locations from platform packages
+const daemonBinary = binaryPaths ? binaryPaths.daemon : null;
+const uiBinary = binaryPaths ? binaryPaths.ui : null;
+const libDir = binaryPaths ? binaryPaths.libDir : null;
+
+// Config directories
 const configDir = path.join(os.homedir(), '.config', 'swictation');
 const systemdUserDir = path.join(os.homedir(), '.config', 'systemd', 'user');
 const launchAgentsDir = path.join(os.homedir(), 'Library', 'LaunchAgents');
@@ -53,15 +62,29 @@ function checkPlatform() {
 }
 
 function checkBinaries() {
+  // If we couldn't resolve binary paths, show helpful error
+  if (!binaryPaths) {
+    console.error(chalk.red('Error: Platform package not found'));
+    console.log(chalk.yellow('This usually means:'));
+    console.log(chalk.yellow('  1. The platform package failed to install'));
+    console.log(chalk.yellow(`  2. npm's optionalDependencies installation failed`));
+    console.log(chalk.yellow('  3. You are on an unsupported platform'));
+    console.log();
+    console.log(chalk.cyan('Try reinstalling: npm install -g swictation --force'));
+    process.exit(1);
+  }
+
   if (!fs.existsSync(daemonBinary)) {
     console.error(chalk.red(`Error: Daemon binary not found at ${daemonBinary}`));
-    console.log(chalk.yellow('Try reinstalling: npm install -g swictation'));
+    console.log(chalk.yellow('The platform package is installed but binaries are missing'));
+    console.log(chalk.yellow('Try reinstalling: npm install -g swictation --force'));
     process.exit(1);
   }
 
   if (!fs.existsSync(uiBinary)) {
     console.error(chalk.red(`Error: UI binary not found at ${uiBinary}`));
-    console.log(chalk.yellow('Try reinstalling: npm install -g swictation'));
+    console.log(chalk.yellow('The platform package is installed but binaries are missing'));
+    console.log(chalk.yellow('Try reinstalling: npm install -g swictation --force'));
     process.exit(1);
   }
 
@@ -170,10 +193,18 @@ async function handleStart() {
           execSync('launchctl start com.swictation.ui');
         } else {
           // Fall back to direct spawn if plist doesn't exist
-          spawn(uiBinary, [], { detached: true, stdio: 'ignore' }).unref();
+          spawn(uiBinary, [], {
+            detached: true,
+            stdio: 'ignore',
+            env: getEnvironmentWithLibraryPath()
+          }).unref();
         }
       } else {
-        spawn(uiBinary, [], { detached: true, stdio: 'ignore' }).unref();
+        spawn(uiBinary, [], {
+          detached: true,
+          stdio: 'ignore',
+          env: getEnvironmentWithLibraryPath()
+        }).unref();
       }
       console.log(chalk.green('✓ UI launched'));
     } catch (err) {
@@ -274,23 +305,18 @@ async function handleSetup() {
       console.log(chalk.green('✓ Created systemd user directory'));
     }
 
-    // Install systemd service
-    const serviceFile = path.join(binDir, 'config', 'swictation-daemon.service');
+    // Generate systemd service file
+    const serviceContent = generateSystemdService();
     const targetService = path.join(systemdUserDir, 'swictation-daemon.service');
 
-    if (fs.existsSync(serviceFile)) {
-      let serviceContent = fs.readFileSync(serviceFile, 'utf8');
-      serviceContent = serviceContent.replace(/ExecStart=.*/, `ExecStart=${daemonBinary}`);
+    fs.writeFileSync(targetService, serviceContent);
+    console.log(chalk.green('✓ Installed systemd service'));
 
-      fs.writeFileSync(targetService, serviceContent);
-      console.log(chalk.green('✓ Installed systemd service'));
-
-      try {
-        execSync('systemctl --user daemon-reload');
-        console.log(chalk.green('✓ Reloaded systemd'));
-      } catch (err) {
-        console.error(chalk.yellow('Warning: Could not reload systemd'), err.message);
-      }
+    try {
+      execSync('systemctl --user daemon-reload');
+      console.log(chalk.green('✓ Reloaded systemd'));
+    } catch (err) {
+      console.error(chalk.yellow('Warning: Could not reload systemd'), err.message);
     }
 
     // Configure hotkeys based on window manager
@@ -489,30 +515,86 @@ async function handleDownloadModels() {
   }
 }
 
-function showVersion() {
-  const packageJson = require('../package.json');
-  console.log(chalk.cyan('Swictation - Voice-to-Text Dictation System'));
-  console.log(chalk.gray('─'.repeat(40)));
-  console.log(`Version: ${chalk.green(packageJson.version)}`);
-  console.log();
-
-  // Try to get daemon version if available
+function loadVersionsJson() {
   try {
-    const daemonVersion = execSync(`${daemonBinary} --version 2>&1`, {
-      encoding: 'utf8',
-      timeout: 2000
-    }).trim();
-    console.log(chalk.gray('Daemon Details:'));
-    daemonVersion.split('\n').forEach(line => {
-      console.log(chalk.gray(`  ${line}`));
-    });
+    const versionsPath = path.join(__dirname, '..', 'versions.json');
+    return JSON.parse(fs.readFileSync(versionsPath, 'utf8'));
   } catch (err) {
-    console.log(chalk.gray('Daemon: Not installed or not accessible'));
+    return null;
+  }
+}
+
+function showVersion() {
+  console.log(chalk.cyan('Swictation - Voice-to-Text Dictation System'));
+  console.log(chalk.gray('─'.repeat(50)));
+
+  // Load versions from versions.json
+  const versions = loadVersionsJson();
+
+  if (versions) {
+    // Distribution version
+    console.log(`${chalk.bold('Distribution Version:')} ${chalk.green(versions.distribution)}`);
+    console.log();
+
+    // Component versions
+    console.log(chalk.bold('Components:'));
+    if (versions.components.daemon) {
+      console.log(`  Daemon: ${chalk.green(versions.components.daemon.version)}`);
+    }
+    if (versions.components.ui) {
+      console.log(`  UI: ${chalk.green(versions.components.ui.version)}`);
+    }
+    if (versions.components['context-learning']) {
+      console.log(`  Context Learning: ${chalk.green(versions.components['context-learning'].version)}`);
+    }
+    console.log();
+
+    // Platform package info
+    if (binaryPaths) {
+      console.log(chalk.bold('Platform Package:'));
+      console.log(`  Package: ${chalk.blue(binaryPaths.packageName)}`);
+      console.log(`  Location: ${chalk.gray(binaryPaths.packageDir)}`);
+      console.log();
+
+      // ONNX Runtime version
+      if (versions.libraries && versions.libraries.onnxruntime) {
+        const ortVersion = isMacOS
+          ? versions.libraries.onnxruntime['macos-coreml']
+          : versions.libraries.onnxruntime['linux-gpu'];
+        console.log(chalk.bold('ONNX Runtime:'));
+        console.log(`  Version: ${chalk.green(ortVersion)}`);
+        console.log(`  Backend: ${chalk.blue(isMacOS ? 'CoreML (Apple Neural Engine)' : 'CUDA (NVIDIA GPU)')}`);
+      }
+    } else {
+      console.log(chalk.yellow('Platform package: Not installed'));
+    }
+  } else {
+    // Fallback to package.json
+    const packageJson = require('../package.json');
+    console.log(`Version: ${chalk.green(packageJson.version)}`);
   }
 
   console.log();
   console.log(chalk.gray(`Platform: ${process.platform} ${process.arch}`));
   console.log(chalk.gray(`Node.js: ${process.version}`));
+
+  // Try to get daemon version if available
+  if (binaryPaths && daemonBinary && fs.existsSync(daemonBinary)) {
+    console.log();
+    try {
+      const daemonVersion = execSync(`${daemonBinary} --version 2>&1`, {
+        encoding: 'utf8',
+        timeout: 2000
+      }).trim();
+      console.log(chalk.gray('Daemon Details:'));
+      daemonVersion.split('\n').forEach(line => {
+        console.log(chalk.gray(`  ${line}`));
+      });
+    } catch (err) {
+      // Daemon version command failed - that's okay
+    }
+  }
+
   process.exit(0);
 }
 
@@ -546,6 +628,51 @@ function showHelp() {
   console.log('  swictation status                       # Check if running');
   console.log('  swictation --version                    # Show version info');
   process.exit(0);
+}
+
+// Helper function to get environment with library paths
+function getEnvironmentWithLibraryPath() {
+  if (!libDir) {
+    return process.env;
+  }
+
+  const env = { ...process.env };
+
+  if (isLinux) {
+    // Add platform package lib directory to LD_LIBRARY_PATH for GPU libraries
+    const currentPath = env.LD_LIBRARY_PATH || '';
+    env.LD_LIBRARY_PATH = currentPath ? `${libDir}:${currentPath}` : libDir;
+  } else if (isMacOS) {
+    // Add platform package lib directory to DYLD_LIBRARY_PATH
+    const currentPath = env.DYLD_LIBRARY_PATH || '';
+    env.DYLD_LIBRARY_PATH = currentPath ? `${libDir}:${currentPath}` : libDir;
+  }
+
+  return env;
+}
+
+// Helper function to generate systemd service file
+function generateSystemdService() {
+  const env = getEnvironmentWithLibraryPath();
+  const envVars = Object.entries(env)
+    .filter(([key]) => key.startsWith('LD_LIBRARY_PATH') || key.startsWith('DISPLAY') || key.startsWith('WAYLAND'))
+    .map(([key, value]) => `Environment="${key}=${value}"`)
+    .join('\n');
+
+  return `[Unit]
+Description=Swictation Voice-to-Text Daemon
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=${daemonBinary}
+Restart=on-failure
+RestartSec=5
+${envVars}
+
+[Install]
+WantedBy=default.target
+`;
 }
 
 // Main entry point
