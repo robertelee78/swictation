@@ -38,11 +38,6 @@ pub fn get_socket_dir() -> PathBuf {
     }
 }
 
-/// Get path for main IPC socket (toggle commands)
-pub fn get_ipc_socket_path() -> PathBuf {
-    get_socket_dir().join("swictation.sock")
-}
-
 /// Get path for metrics broadcast socket (UI clients)
 pub fn get_metrics_socket_path() -> PathBuf {
     get_socket_dir().join("swictation_metrics.sock")

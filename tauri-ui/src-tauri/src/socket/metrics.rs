@@ -1,20 +1,16 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Deserializer, Serialize};
-use std::path::Path;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
 
-use super::socket_utils::{get_metrics_socket_path, get_ipc_socket_path};
+use super::socket_utils::get_metrics_socket_path;
 
 /// Reconnection delay after socket disconnect
 const RECONNECT_DELAY_SECS: u64 = 5;
-
-/// Socket read timeout (to detect stuck connections)
-const SOCKET_TIMEOUT_SECS: u64 = 30;
 
 /// Custom deserializer for flexible number types (accepts f64 or u64)
 fn deserialize_flexible_number<'de, D>(deserializer: D) -> Result<u64, D::Error>
@@ -129,25 +125,6 @@ impl MetricsSocket {
             socket_path: socket_path.to_string_lossy().to_string(),
             connected: false,
         }
-    }
-
-    /// Connect to the metrics socket
-    pub async fn connect() -> Result<Self> {
-        let socket_path = get_metrics_socket_path();
-        let socket_path_str = socket_path.to_str()
-            .context("Invalid socket path")?;
-
-        // Check if socket exists
-        if !socket_path.exists() {
-            anyhow::bail!("Metrics socket does not exist: {}", socket_path_str);
-        }
-
-        info!("Connecting to metrics socket: {}", socket_path_str);
-
-        Ok(Self {
-            socket_path: socket_path_str.to_string(),
-            connected: false,
-        })
     }
 
     /// Listen for events and emit them to the Tauri frontend
@@ -282,50 +259,6 @@ impl MetricsSocket {
 
         Ok(())
     }
-
-    /// Send toggle command to daemon control socket
-    pub async fn send_toggle_command() -> Result<()> {
-        let command_socket = get_ipc_socket_path();
-        let command_socket_str = command_socket.to_str()
-            .context("Invalid socket path")?;
-
-        // Check if socket exists
-        if !command_socket.exists() {
-            anyhow::bail!("Command socket does not exist: {}", command_socket_str);
-        }
-
-        info!("Sending toggle command to daemon");
-
-        // Connect to command socket
-        let mut stream = UnixStream::connect(command_socket_str)
-            .await
-            .context("Failed to connect to command socket")?;
-
-        // Send toggle command (newline-delimited)
-        stream
-            .write_all(b"toggle\n")
-            .await
-            .context("Failed to write toggle command")?;
-
-        stream
-            .flush()
-            .await
-            .context("Failed to flush toggle command")?;
-
-        info!("✓ Toggle command sent successfully");
-
-        Ok(())
-    }
-
-    /// Check if socket is currently connected
-    pub fn is_connected(&self) -> bool {
-        self.connected
-    }
-
-    /// Get the socket path
-    pub fn socket_path(&self) -> &str {
-        &self.socket_path
-    }
 }
 
 impl Default for MetricsSocket {
@@ -423,14 +356,12 @@ mod tests {
     #[test]
     fn test_socket_creation() {
         let socket = MetricsSocket::new();
-        assert!(socket.socket_path().ends_with("swictation_metrics.sock"));
-        assert!(!socket.is_connected());
+        assert!(socket.socket_path.ends_with("swictation_metrics.sock"));
     }
 
     #[test]
     fn test_socket_default() {
         let socket = MetricsSocket::default();
-        assert!(socket.socket_path().ends_with("swictation_metrics.sock"));
-        assert!(!socket.is_connected());
+        assert!(socket.socket_path.ends_with("swictation_metrics.sock"));
     }
 }
