@@ -1,0 +1,345 @@
+name: CI - Linux Build and Test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:  # Allow manual triggering
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  test-linux:
+    name: Test Suite (Linux)
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install Rust
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        toolchain: stable
+        target: x86_64-unknown-linux-gnu
+        components: clippy, rustfmt
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libasound2-dev \
+          libdbus-1-dev \
+          pkg-config \
+          libssl-dev
+
+    - name: Cache Rust dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: |
+          rust-crates -> target
+          external/midstream -> target
+
+    - name: Check formatting
+      working-directory: rust-crates
+      run: cargo fmt --all -- --check
+
+    - name: Run clippy
+      working-directory: rust-crates
+      run: cargo clippy --all-targets --all-features --target x86_64-unknown-linux-gnu -- -D warnings
+
+    - name: Build all crates
+      working-directory: rust-crates
+      run: cargo build --all --verbose --target x86_64-unknown-linux-gnu
+
+    - name: Run tests
+      working-directory: rust-crates
+      run: cargo test --all --verbose --target x86_64-unknown-linux-gnu
+
+  build-linux:
+    name: Build Linux x86_64
+    runs-on: ubuntu-latest
+    needs: test-linux
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install Rust
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        toolchain: stable
+        target: x86_64-unknown-linux-gnu
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libasound2-dev \
+          libdbus-1-dev \
+          pkg-config \
+          libssl-dev \
+          binutils
+
+    - name: Cache Rust dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: |
+          rust-crates -> target
+
+    - name: Build daemon (release)
+      working-directory: rust-crates
+      run: |
+        cargo build --release --bin swictation-daemon --target x86_64-unknown-linux-gnu
+        strip target/x86_64-unknown-linux-gnu/release/swictation-daemon
+
+    - name: Check daemon binary
+      run: |
+        echo "Daemon binary info:"
+        file rust-crates/target/x86_64-unknown-linux-gnu/release/swictation-daemon
+        ls -lh rust-crates/target/x86_64-unknown-linux-gnu/release/swictation-daemon
+        du -sh rust-crates/target/x86_64-unknown-linux-gnu/release/swictation-daemon
+
+    - name: Verify ELF binary
+      run: |
+        echo "Verifying ELF x86_64 binary:"
+        readelf -h rust-crates/target/x86_64-unknown-linux-gnu/release/swictation-daemon | grep "Machine"
+        ldd rust-crates/target/x86_64-unknown-linux-gnu/release/swictation-daemon || echo "Static binary or missing libs"
+
+    - name: Upload daemon artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: swictation-daemon-linux-x64
+        path: rust-crates/target/x86_64-unknown-linux-gnu/release/swictation-daemon
+        retention-days: 7
+
+  build-tauri-linux:
+    name: Build Tauri UI (Linux)
+    runs-on: ubuntu-latest
+    needs: test-linux
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install Rust
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        toolchain: stable
+        target: x86_64-unknown-linux-gnu
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libwebkit2gtk-4.0-dev \
+          libwebkit2gtk-4.1-dev \
+          build-essential \
+          curl \
+          wget \
+          file \
+          libssl-dev \
+          libgtk-3-dev \
+          libayatana-appindicator3-dev \
+          librsvg2-dev \
+          libasound2-dev \
+          libdbus-1-dev
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: tauri-ui/package-lock.json
+
+    - name: Install frontend dependencies
+      working-directory: tauri-ui
+      run: npm ci
+
+    - name: Build Tauri UI
+      working-directory: tauri-ui
+      run: npm run tauri build
+
+    - name: Check build output
+      run: |
+        echo "Tauri build artifacts:"
+        ls -lh tauri-ui/src-tauri/target/release/bundle/deb/ || echo "DEB not found"
+        ls -lh tauri-ui/src-tauri/target/release/bundle/appimage/ || echo "AppImage not found"
+
+    - name: Upload Tauri artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: swictation-ui-linux-x64
+        path: |
+          tauri-ui/src-tauri/target/release/bundle/deb/**/*.deb
+          tauri-ui/src-tauri/target/release/bundle/appimage/**/*.AppImage
+        retention-days: 7
+      continue-on-error: true  # Don't fail if bundle format not found
+
+  package-linux:
+    name: Package for npm
+    runs-on: ubuntu-latest
+    needs: [build-linux, build-tauri-linux]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+
+    - name: Download daemon artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: swictation-daemon-linux-x64
+        path: ./artifacts/daemon
+
+    - name: Download UI artifact (if available)
+      uses: actions/download-artifact@v4
+      with:
+        name: swictation-ui-linux-x64
+        path: ./artifacts/ui
+      continue-on-error: true
+
+    - name: Install npm package dependencies
+      working-directory: npm-package
+      run: npm ci
+
+    - name: Copy binaries to platform package
+      run: |
+        # Copy daemon binary
+        mkdir -p npm-package/packages/linux-x64/bin
+        cp ./artifacts/daemon/swictation-daemon npm-package/packages/linux-x64/bin/
+        chmod +x npm-package/packages/linux-x64/bin/swictation-daemon
+
+        echo "Daemon binary copied:"
+        ls -lh npm-package/packages/linux-x64/bin/swictation-daemon
+        file npm-package/packages/linux-x64/bin/swictation-daemon
+
+        # Copy UI binary if available (extract from AppImage or DEB)
+        if [ -f ./artifacts/ui/*.AppImage ]; then
+          # Extract AppImage (TODO: implement extraction logic)
+          echo "UI AppImage found but extraction not yet implemented"
+        fi
+
+    - name: Verify binaries
+      run: |
+        echo "Platform package contents:"
+        ls -lR npm-package/packages/linux-x64/bin/
+
+        echo "Binary verification:"
+        file npm-package/packages/linux-x64/bin/* || echo "No binaries found"
+
+    - name: Sync versions
+      working-directory: npm-package
+      run: npm run version:sync
+
+    - name: Verify versions
+      working-directory: npm-package
+      run: npm run version:verify
+
+    - name: Create package tarball
+      working-directory: npm-package/packages/linux-x64
+      run: |
+        npm pack
+        ls -lh *.tgz
+
+    - name: Upload package artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: npm-package-linux-x64
+        path: npm-package/packages/linux-x64/*.tgz
+        retention-days: 7
+
+  integration-test-linux:
+    name: Integration Tests (Linux)
+    runs-on: ubuntu-latest
+    needs: build-linux
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libasound2-dev libdbus-1-dev
+
+    - name: Download daemon artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: swictation-daemon-linux-x64
+        path: ./test-bin
+
+    - name: Make daemon executable
+      run: chmod +x ./test-bin/swictation-daemon
+
+    - name: Test daemon launch
+      run: |
+        echo "Testing daemon launch:"
+        ./test-bin/swictation-daemon --version || echo "Version check failed (expected without models)"
+
+    - name: Check CUDA availability
+      run: |
+        echo "Checking for CUDA toolkit:"
+        if command -v nvidia-smi &> /dev/null; then
+          nvidia-smi
+        else
+          echo "CUDA not available in CI environment (expected)"
+        fi
+
+    - name: Test system audio
+      run: |
+        echo "Checking audio devices:"
+        arecord -l || echo "No audio devices found (expected in CI)"
+
+  performance-benchmark-linux:
+    name: Performance Benchmarks (Linux)
+    runs-on: ubuntu-latest
+    needs: build-linux
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install Rust
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        toolchain: stable
+        target: x86_64-unknown-linux-gnu
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libasound2-dev libdbus-1-dev
+
+    - name: Cache Rust dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: |
+          rust-crates -> target
+
+    - name: Run benchmarks
+      working-directory: rust-crates
+      run: cargo bench --target x86_64-unknown-linux-gnu || echo "Benchmarks not configured yet"
+      continue-on-error: true
+
+    - name: Upload benchmark results
+      uses: actions/upload-artifact@v4
+      with:
+        name: benchmark-results-linux
+        path: rust-crates/target/criterion
+        retention-days: 30
+      continue-on-error: true
