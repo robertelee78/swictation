@@ -476,8 +476,8 @@ mod tests {
     fn test_aggregate_stats() {
         let sessions = vec![SessionMetrics {
             id: 1,
-            start_time: 1735724400,            // Unix timestamp (2025-01-01 10:00:00 UTC)
-            end_time: Some(1735725000),        // Unix timestamp (2025-01-01 10:10:00 UTC)
+            start_time: 1735724400, // Unix timestamp (2025-01-01 10:00:00 UTC)
+            end_time: Some(1735725000), // Unix timestamp (2025-01-01 10:10:00 UTC)
             duration_s: 600.0,
             words_dictated: 120,
             wpm: 12.0,
