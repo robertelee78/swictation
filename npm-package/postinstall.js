@@ -1131,6 +1131,20 @@ function generateSystemdService(ortLibPath) {
   log('cyan', '\n⚙️  Generating systemd service files...');
 
   try {
+    // Get platform package binary paths
+    const { resolveBinaryPaths } = require('./src/resolve-binary');
+    let binaryPaths;
+    try {
+      binaryPaths = resolveBinaryPaths();
+      log('cyan', `  Using platform package: ${binaryPaths.packageName}`);
+      log('cyan', `  Daemon binary: ${binaryPaths.daemon}`);
+      log('cyan', `  Platform lib directory: ${binaryPaths.libDir}`);
+    } catch (err) {
+      log('red', `  ✗ Could not resolve platform package binaries: ${err.message}`);
+      log('yellow', '  Service generation cannot proceed without platform package');
+      return;
+    }
+
     const systemdDir = path.join(os.homedir(), '.config', 'systemd', 'user');
 
     // Create systemd directory if it doesn't exist
@@ -1163,9 +1177,11 @@ function generateSystemdService(ortLibPath) {
     } else {
       let template = fs.readFileSync(templatePath, 'utf8');
 
-      // Replace placeholders
-      const installDir = __dirname; // npm package installation directory
-      template = template.replace(/__INSTALL_DIR__/g, installDir);
+      // Replace placeholders with platform package paths
+      // __INSTALL_DIR__ in template refers to daemon binary location
+      // Template has: __INSTALL_DIR__/lib/native/swictation-daemon.bin
+      // We need to replace with actual daemon path from platform package
+      template = template.replace(/__INSTALL_DIR__\/lib\/native\/swictation-daemon\.bin/g, binaryPaths.daemon);
 
       // CRITICAL: Detect GPU variant to determine which ONNX Runtime to use
       const configDir = path.join(os.homedir(), '.config', 'swictation');
@@ -1195,23 +1211,25 @@ function generateSystemdService(ortLibPath) {
 
         if (fs.existsSync(legacyOrtPath)) {
           finalOrtLibPath = legacyOrtPath;
-          // LD_LIBRARY_PATH only needs gpu-libs (includes all CUDA 11.8 libs)
-          finalLdLibraryPath = gpuLibsDir;
+          // LD_LIBRARY_PATH: gpu-libs (CUDA 11.8) + platform package lib directory
+          finalLdLibraryPath = [gpuLibsDir, binaryPaths.libDir].join(':');
           log('cyan', `  Using LEGACY ONNX Runtime 1.23.2: ${finalOrtLibPath}`);
-          log('cyan', `  Using LEGACY CUDA 11.8 libraries: ${finalLdLibraryPath}`);
+          log('cyan', `  Using LEGACY CUDA 11.8 libraries: ${gpuLibsDir}`);
+          log('cyan', `  Platform lib directory: ${binaryPaths.libDir}`);
         } else {
           log('yellow', `  ⚠️  Legacy ONNX Runtime not found at ${legacyOrtPath}`);
-          log('yellow', '     Falling back to npm bundled ONNX Runtime');
-          finalOrtLibPath = ortLibPath;
-          const nativeLibPath = detectNpmNativeLibPath();
-          finalLdLibraryPath = [...detectedCudaPaths, nativeLibPath].join(':');
+          log('yellow', '     Falling back to platform package ONNX Runtime');
+          // Use platform package lib directory
+          finalOrtLibPath = path.join(binaryPaths.libDir, 'libonnxruntime.so');
+          finalLdLibraryPath = [...detectedCudaPaths, binaryPaths.libDir].join(':');
         }
       } else {
-        // LATEST/MODERN: Use npm bundled ONNX Runtime (CUDA 12)
-        finalOrtLibPath = ortLibPath;
-        const nativeLibPath = detectNpmNativeLibPath();
-        finalLdLibraryPath = [...detectedCudaPaths, nativeLibPath].join(':');
-        log('cyan', `  Using npm bundled ONNX Runtime: ${finalOrtLibPath}`);
+        // LATEST/MODERN: Use platform package ONNX Runtime (CUDA 12)
+        finalOrtLibPath = path.join(binaryPaths.libDir, 'libonnxruntime.so');
+        // LD_LIBRARY_PATH: CUDA paths + platform package lib directory
+        finalLdLibraryPath = [...detectedCudaPaths, binaryPaths.libDir].join(':');
+        log('cyan', `  Using platform package ONNX Runtime: ${finalOrtLibPath}`);
+        log('cyan', `  Platform lib directory: ${binaryPaths.libDir}`);
       }
 
       // CRITICAL: Trim all whitespace and newlines from paths to prevent malformed service file
@@ -1287,8 +1305,8 @@ function generateSystemdService(ortLibPath) {
     if (fs.existsSync(uiServiceTemplate)) {
       let uiTemplate = fs.readFileSync(uiServiceTemplate, 'utf8');
 
-      // Replace placeholders
-      uiTemplate = uiTemplate.replace(/__INSTALL_DIR__/g, __dirname);
+      // Replace placeholders with platform package UI binary path
+      uiTemplate = uiTemplate.replace(/__INSTALL_DIR__/g, binaryPaths.binDir);
       uiTemplate = uiTemplate.replace(/__DISPLAY__/g, xDisplay || ':0');
       uiTemplate = uiTemplate.replace(/__WAYLAND_DISPLAY__/g, waylandDisplay || 'wayland-0');
 
@@ -1325,6 +1343,21 @@ function generateLaunchdServices(ortLibPath) {
   log('cyan', '\n⚙️  Generating launchd service files...');
 
   try {
+    // Get platform package binary paths
+    const { resolveBinaryPaths } = require('./src/resolve-binary');
+    let binaryPaths;
+    try {
+      binaryPaths = resolveBinaryPaths();
+      log('cyan', `  Using platform package: ${binaryPaths.packageName}`);
+      log('cyan', `  Daemon binary: ${binaryPaths.daemon}`);
+      log('cyan', `  UI binary: ${binaryPaths.ui}`);
+      log('cyan', `  Platform lib directory: ${binaryPaths.libDir}`);
+    } catch (err) {
+      log('red', `  ✗ Could not resolve platform package binaries: ${err.message}`);
+      log('yellow', '  Service generation cannot proceed without platform package');
+      return;
+    }
+
     const launchAgentsDir = path.join(os.homedir(), 'Library', 'LaunchAgents');
     const logDir = path.join(os.homedir(), 'Library', 'Logs', 'swictation');
     const daemonPlistPath = path.join(launchAgentsDir, 'com.swictation.daemon.plist');
@@ -1371,20 +1404,22 @@ function generateLaunchdServices(ortLibPath) {
       let daemonTemplate = fs.readFileSync(daemonTemplatePath, 'utf8');
 
       // Replace template variables
-      const installDir = __dirname;
-      const daemonBinaryPath = path.join(installDir, 'bin', 'swictation-daemon-macos');
+      // Use platform package binary paths instead of __dirname
+      const daemonBinaryPath = binaryPaths.daemon;
       const homeDir = os.homedir();
 
-      // DYLD_LIBRARY_PATH: CoreML runtime + ONNX Runtime providers
-      const dylibPath = path.join(installDir, 'lib', 'native');
+      // DYLD_LIBRARY_PATH: CoreML runtime + ONNX Runtime providers from platform package
+      const dylibPath = binaryPaths.libDir;
 
-      // ORT_DYLIB_PATH: Points to CoreML-enabled ONNX Runtime
-      const ortDylibPath = path.join(dylibPath, 'libonnxruntime.dylib');
+      // ORT_DYLIB_PATH: Points to CoreML-enabled ONNX Runtime from platform package
+      const ortDylibPath = path.join(binaryPaths.libDir, 'libonnxruntime.dylib');
 
       // CRITICAL: macOS SIP (System Integrity Protection) strips DYLD_* environment
       // variables from launchd processes. We MUST use a wrapper script that sets
       // the environment variables before executing the daemon binary.
-      const wrapperScriptPath = path.join(installDir, 'bin', 'swictation-daemon-launcher');
+      // Wrapper script goes in main package bin/ directory, executes daemon from platform package
+      const mainPackageDir = __dirname; // Main swictation package directory
+      const wrapperScriptPath = path.join(mainPackageDir, 'bin', 'swictation-daemon-launcher');
       const wrapperScript = `#!/bin/bash
 # Wrapper script for swictation-daemon on macOS
 # Required because SIP strips DYLD_* env vars from launchd processes
@@ -1435,7 +1470,8 @@ exec "${daemonBinaryPath}" "$@"
     }
 
     // 2. Generate UI plist from template (if UI binary exists)
-    const uiPath = path.join(__dirname, 'bin', 'swictation-ui-macos');
+    // UI binary comes from platform package
+    const uiPath = binaryPaths.ui;
     if (fs.existsSync(uiPath)) {
       const uiTemplatePath = path.join(__dirname, 'templates', 'macos', 'com.swictation.ui.plist');
       if (!fs.existsSync(uiTemplatePath)) {
