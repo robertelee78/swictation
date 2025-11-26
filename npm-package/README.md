@@ -264,11 +264,96 @@ bindsym Mod4+Shift+d exec echo '{"action":"toggle"}' | nc -U /tmp/swictation.soc
 
 ## Architecture
 
+### Runtime Components
+
 Swictation consists of three main components:
 
 1. **Daemon** (`swictation-daemon`) - Rust service handling audio capture and transcription
 2. **UI** (`swictation-ui`) - Tauri application for metrics and control
 3. **CLI** (`swictation`) - Node.js command-line interface
+
+### Package Architecture
+
+Swictation uses a **platform-specific package architecture** similar to esbuild and swc:
+
+```
+swictation (main package)
+├── @swictation/linux-x64 (Linux x86_64 binaries)
+└── @swictation/darwin-arm64 (macOS Apple Silicon binaries)
+```
+
+**How it works:**
+
+1. **Automatic Platform Detection**: When you run `npm install -g swictation`, npm automatically detects your platform (Linux x64 or macOS ARM64)
+
+2. **Platform Package Installation**: npm installs the main `swictation` package PLUS the correct platform package for your system via `optionalDependencies`
+
+3. **Binary Resolution**: The CLI wrapper automatically finds and uses the binaries from your platform package
+
+**Example installation flow on Linux:**
+```bash
+npm install -g swictation
+# npm automatically installs:
+#   - swictation (main package with CLI)
+#   - @swictation/linux-x64 (platform binaries)
+```
+
+**What's in each package:**
+
+| Package | Contents |
+|---------|----------|
+| `swictation` | CLI wrapper, postinstall scripts, configuration |
+| `@swictation/linux-x64` | Linux ELF binaries, ONNX Runtime base library |
+| `@swictation/darwin-arm64` | macOS Mach-O ARM64 binaries, ONNX Runtime with CoreML |
+
+**Benefits:**
+- ✅ Smaller downloads - only your platform's binaries are installed
+- ✅ Cleaner architecture - binaries grouped by platform
+- ✅ Better CI/CD - each platform built independently
+- ✅ Same simple install command - `npm install -g swictation` just works
+
+### Versioning Strategy
+
+Swictation uses **semantic versioning** with a two-level approach:
+
+1. **Distribution Version** (user-facing): `0.7.9`
+   - The version you see in `npm install swictation@0.7.9`
+   - Synchronized across all three packages (main + both platform packages)
+   - Single version number for the entire distribution
+
+2. **Component Versions** (internal):
+   - **Daemon**: `0.7.5` (Rust binary version)
+   - **UI**: `0.1.0` (Tauri application version)
+   - **ONNX Runtime**: `1.22.0` (macOS), `1.23.2` (Linux GPU)
+
+**Version Synchronization:**
+
+All package versions are automatically synchronized via `npm-package/versions.json`:
+
+```json
+{
+  "distribution": "0.7.9",
+  "components": {
+    "daemon": { "version": "0.7.5" },
+    "ui": { "version": "0.1.0" }
+  }
+}
+```
+
+**Why separate versions?**
+- Components evolve at different rates (UI changes rarely, daemon changes often)
+- Users see ONE simple version number for the distribution
+- Developers track component versions internally for debugging
+- Platform packages use distribution version for npm publishing
+
+**Checking versions:**
+```bash
+swictation --version
+# Shows distribution version: 0.7.9
+
+swictation-daemon --version
+# Shows daemon component version: 0.7.5
+```
 
 ## Verification
 
@@ -337,6 +422,69 @@ systemctl --user restart swictation-daemon.service
 journalctl --user -u swictation-daemon.service | grep CUDA
 # Expected: "Successfully registered `CUDAExecutionProvider`"
 # Expected: "cuDNN version: 91501"
+```
+
+### Platform Package Issues
+
+#### "Platform package @swictation/linux-x64 not found"
+**Cause**: npm's optionalDependencies failed to install the platform package.
+
+**Solution**:
+```bash
+# Force reinstall with clean cache
+npm install -g swictation --force
+
+# Or manually install platform package
+npm install -g @swictation/linux-x64
+npm install -g swictation
+```
+
+**Verify installation:**
+```bash
+# Check that platform package is installed
+npm list -g @swictation/linux-x64    # Linux
+npm list -g @swictation/darwin-arm64  # macOS
+
+# Check binary locations
+swictation --version
+# Should show platform package location
+```
+
+#### "Unsupported platform: win32-x64"
+**Cause**: Swictation currently supports Linux x64 and macOS ARM64 only.
+
+**Supported platforms:**
+- ✅ Linux x86_64 (Ubuntu 24.04+, Debian 13+, Fedora 39+)
+- ✅ macOS Apple Silicon (ARM64)
+- ❌ Windows (planned for future release)
+- ❌ macOS Intel (planned for future release)
+- ❌ Linux ARM64 (planned for future release)
+
+#### "Platform package installed but binaries are missing"
+**Cause**: Platform package build was incomplete or corrupted.
+
+**Solution**:
+```bash
+# Reinstall platform package
+npm uninstall -g @swictation/linux-x64
+npm install -g @swictation/linux-x64 --force
+
+# Verify binaries exist
+ls -lh ~/.npm-global/lib/node_modules/@swictation/linux-x64/bin/
+# Should show: swictation-daemon, swictation-ui
+```
+
+#### "Wrong architecture - ELF 64-bit instead of Mach-O"
+**Cause**: Wrong platform package installed (Linux package on macOS or vice versa).
+
+**Solution**:
+```bash
+# Remove wrong platform package
+npm uninstall -g @swictation/linux-x64
+npm uninstall -g @swictation/darwin-arm64
+
+# Clean install with correct platform detection
+npm install -g swictation --force
 ```
 
 ### General Installation Issues
