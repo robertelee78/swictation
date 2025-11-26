@@ -304,23 +304,51 @@ async function cleanOldServices() {
 }
 
 function ensureBinaryPermissions() {
-  const binDir = path.join(__dirname, 'bin');
-  const daemonBinary = path.join(binDir, 'swictation-daemon');
-  const uiBinary = path.join(binDir, 'swictation-ui');
-  const cliBinary = path.join(binDir, 'swictation');
-  const daemonBin = path.join(__dirname, 'lib', 'native', 'swictation-daemon.bin');
+  const binaries = [];
 
-  // Make sure all binaries are executable
-  const binaries = [daemonBinary, uiBinary, cliBinary, daemonBin];
+  // CLI wrapper in main package
+  const cliBinary = path.join(__dirname, 'bin', 'swictation');
+  if (fs.existsSync(cliBinary)) {
+    binaries.push(cliBinary);
+  }
 
-  for (const binary of binaries) {
+  // Platform package binaries
+  try {
+    const { resolveBinaryPaths } = require('./src/resolve-binary');
+    const binaryPaths = resolveBinaryPaths();
+
+    // Add daemon and UI from platform package
+    if (fs.existsSync(binaryPaths.daemon)) {
+      binaries.push(binaryPaths.daemon);
+    }
+    if (fs.existsSync(binaryPaths.ui)) {
+      binaries.push(binaryPaths.ui);
+    }
+  } catch (err) {
+    // Platform package not installed yet - skip platform binaries
+    log('yellow', `  ⚠️  Platform package binaries not found (will be checked later)`);
+  }
+
+  // Legacy binaries (if they exist from old installations)
+  const legacyBinaries = [
+    path.join(__dirname, 'lib', 'native', 'swictation-daemon.bin'),
+    path.join(__dirname, 'bin', 'swictation-daemon'),
+    path.join(__dirname, 'bin', 'swictation-ui')
+  ];
+
+  for (const binary of legacyBinaries) {
     if (fs.existsSync(binary)) {
-      try {
-        fs.chmodSync(binary, '755');
-        log('green', `✓ Set execute permissions for ${path.basename(binary)}`);
-      } catch (err) {
-        log('yellow', `Warning: Could not set permissions for ${path.basename(binary)}: ${err.message}`);
-      }
+      binaries.push(binary);
+    }
+  }
+
+  // Set execute permissions
+  for (const binary of binaries) {
+    try {
+      fs.chmodSync(binary, '755');
+      log('green', `✓ Set execute permissions for ${path.basename(binary)}`);
+    } catch (err) {
+      log('yellow', `Warning: Could not set permissions for ${path.basename(binary)}: ${err.message}`);
     }
   }
 }
@@ -1008,264 +1036,11 @@ async function downloadONNXRuntimeCoreML() {
  * Download macOS ARM64 daemon binary from GitHub releases
  * Required for Apple Silicon Macs - cannot use bundled Linux ELF binaries
  */
-async function downloadMacOSDaemon() {
-  log('cyan', '\n📦 Downloading swictation-daemon for macOS ARM64...');
-
-  const DAEMON_VERSION = '0.7.4';
-  const releaseUrl = `https://github.com/robertelee78/swictation/releases/download/daemon-macos-arm64-v${DAEMON_VERSION}/swictation-daemon-macos-arm64.tar.gz`;
-  const tmpDir = path.join(os.tmpdir(), 'swictation-macos-daemon');
-  const tarPath = path.join(tmpDir, 'swictation-daemon-macos-arm64.tar.gz');
-
-  // Target directory in npm package
-  const binDir = path.join(__dirname, 'bin');
-  const targetDaemonPath = path.join(binDir, 'swictation-daemon-macos');
-
-  try {
-    // Check if already downloaded and is valid Mach-O binary
-    if (fs.existsSync(targetDaemonPath)) {
-      try {
-        const fileOutput = execSync(`file "${targetDaemonPath}"`, { encoding: 'utf8' });
-        if (fileOutput.includes('Mach-O') && fileOutput.includes('arm64')) {
-          log('green', `  ✓ macOS daemon already present and valid`);
-          log('cyan', `    Location: ${targetDaemonPath}`);
-          log('cyan', `    Skipping download`);
-          return;
-        } else {
-          log('yellow', `  ⚠️  Existing daemon is not valid Mach-O ARM64, re-downloading...`);
-        }
-      } catch (err) {
-        log('yellow', `  ⚠️  Could not verify existing daemon, re-downloading...`);
-      }
-    }
-
-    // Create directories
-    if (!fs.existsSync(tmpDir)) {
-      fs.mkdirSync(tmpDir, { recursive: true });
-    }
-    if (!fs.existsSync(binDir)) {
-      fs.mkdirSync(binDir, { recursive: true });
-    }
-
-    // Download tarball
-    log('cyan', `  Downloading macOS ARM64 daemon v${DAEMON_VERSION}...`);
-    log('cyan', `  URL: ${releaseUrl}`);
-    await downloadFile(releaseUrl, tarPath);
-    log('green', `  ✓ Downloaded macOS daemon (~3MB)`);
-
-    // SECURITY: Verify SHA256 checksum before extraction
-    const expectedChecksum = MACOS_CHECKSUMS[`daemon-${DAEMON_VERSION}`];
-    if (expectedChecksum) {
-      log('cyan', '  Verifying SHA256 checksum...');
-      const actualChecksum = getFileChecksum(tarPath);
-      if (actualChecksum !== expectedChecksum) {
-        log('red', `  ✗ CHECKSUM MISMATCH - download may be corrupted or tampered!`);
-        log('red', `    Expected: ${expectedChecksum}`);
-        log('red', `    Got:      ${actualChecksum}`);
-        fs.unlinkSync(tarPath);
-        throw new Error('Checksum verification failed for macOS daemon');
-      }
-      log('green', `  ✓ Checksum verified (SHA256: ${actualChecksum.substring(0, 16)}...)`);
-    } else {
-      log('yellow', `  ⚠️  No checksum available for daemon v${DAEMON_VERSION} - skipping verification`);
-    }
-
-    // Extract tarball
-    log('cyan', '  Extracting daemon binary...');
-    execSync(`tar -xzf "${tarPath}" -C "${tmpDir}"`, { stdio: 'inherit' });
-
-    // Find and copy the daemon binary
-    const extractedDaemon = path.join(tmpDir, 'swictation-daemon');
-    if (!fs.existsSync(extractedDaemon)) {
-      throw new Error(`Daemon binary not found in archive at ${extractedDaemon}`);
-    }
-
-    // Verify it's a valid Mach-O binary
-    try {
-      const fileOutput = execSync(`file "${extractedDaemon}"`, { encoding: 'utf8' });
-      if (!fileOutput.includes('Mach-O') || !fileOutput.includes('arm64')) {
-        throw new Error(`Invalid Mach-O binary: ${fileOutput}`);
-      }
-      log('green', `  ✓ Verified Mach-O ARM64 executable`);
-    } catch (err) {
-      log('red', `  ✗ Binary verification failed: ${err.message}`);
-      throw err;
-    }
-
-    // Copy to target location
-    fs.copyFileSync(extractedDaemon, targetDaemonPath);
-    fs.chmodSync(targetDaemonPath, 0o755); // rwxr-xr-x
-    log('green', `  ✓ Installed daemon to ${targetDaemonPath}`);
-
-    // Verify version
-    try {
-      const versionOutput = execSync(`"${targetDaemonPath}" --version 2>&1`, { encoding: 'utf8' }).trim();
-      log('green', `  ✓ Daemon version: ${versionOutput}`);
-    } catch (err) {
-      log('yellow', `  ⚠️  Could not verify daemon version (may need permissions)`);
-    }
-
-    // Cleanup temp files
-    try {
-      fs.unlinkSync(tarPath);
-      fs.unlinkSync(extractedDaemon);
-      fs.rmdirSync(tmpDir, { recursive: true });
-    } catch (err) {
-      // Cleanup is optional
-    }
-
-    log('green', `✅ macOS daemon ready`);
-
-  } catch (err) {
-    log('red', `\n❌ Failed to download macOS daemon`);
-    log('yellow', `   Error: ${err.message}`);
-    log('cyan', '\n   Manual installation:');
-    log('cyan', `   1. Download: ${releaseUrl}`);
-    log('cyan', `   2. Extract: tar -xzf swictation-daemon-macos-arm64.tar.gz`);
-    log('cyan', `   3. Copy to: ${targetDaemonPath}`);
-    log('cyan', `   4. Make executable: chmod +x ${targetDaemonPath}`);
-    throw err;
-  }
-}
 
 /**
  * Download macOS ARM64 UI application from GitHub releases
  * Required for Apple Silicon Macs - the Tauri-based UI application
  */
-async function downloadMacOSUI() {
-  log('cyan', '\n📦 Downloading Swictation UI for macOS ARM64...');
-
-  const UI_VERSION = '0.1.0';
-  const releaseUrl = `https://github.com/robertelee78/swictation/releases/download/ui-macos-arm64-v${UI_VERSION}/swictation-ui-macos-arm64.tar.gz`;
-  const tmpDir = path.join(os.tmpdir(), 'swictation-macos-ui');
-  const tarPath = path.join(tmpDir, 'swictation-ui-macos-arm64.tar.gz');
-
-  // Target directory in npm package
-  const binDir = path.join(__dirname, 'bin');
-  const targetUIPath = path.join(binDir, 'swictation-ui-macos');
-  const applicationsDir = path.join(os.homedir(), 'Applications');
-  const appBundlePath = path.join(applicationsDir, 'Swictation.app');
-
-  try {
-    // Check if already downloaded (either in bin or ~/Applications)
-    if (fs.existsSync(appBundlePath)) {
-      try {
-        const binaryPath = path.join(appBundlePath, 'Contents', 'MacOS', 'swictation-ui');
-        const fileOutput = execSync(`file "${binaryPath}"`, { encoding: 'utf8' });
-        if (fileOutput.includes('Mach-O') && fileOutput.includes('arm64')) {
-          log('green', `  ✓ Swictation.app already installed in ~/Applications`);
-          log('cyan', `    Location: ${appBundlePath}`);
-
-          // Still need to ensure CLI binary exists in bin directory
-          if (!fs.existsSync(targetUIPath)) {
-            log('cyan', `    Creating CLI binary symlink...`);
-            fs.copyFileSync(binaryPath, targetUIPath);
-            fs.chmodSync(targetUIPath, 0o755);
-            log('green', `  ✓ CLI binary installed to ${targetUIPath}`);
-          }
-
-          log('cyan', `    Skipping download`);
-          return;
-        } else {
-          log('yellow', `  ⚠️  Existing app is not valid Mach-O ARM64, re-downloading...`);
-        }
-      } catch (err) {
-        log('yellow', `  ⚠️  Could not verify existing app, re-downloading...`);
-      }
-    }
-
-    // Create directories
-    if (!fs.existsSync(tmpDir)) {
-      fs.mkdirSync(tmpDir, { recursive: true });
-    }
-    if (!fs.existsSync(binDir)) {
-      fs.mkdirSync(binDir, { recursive: true });
-    }
-    if (!fs.existsSync(applicationsDir)) {
-      fs.mkdirSync(applicationsDir, { recursive: true });
-    }
-
-    // Download tarball
-    log('cyan', `  Downloading macOS ARM64 UI v${UI_VERSION}...`);
-    log('cyan', `  URL: ${releaseUrl}`);
-    await downloadFile(releaseUrl, tarPath);
-    log('green', `  ✓ Downloaded Swictation.app (~3MB)`);
-
-    // SECURITY: Verify SHA256 checksum before extraction
-    const expectedChecksum = MACOS_CHECKSUMS[`ui-${UI_VERSION}`];
-    if (expectedChecksum) {
-      log('cyan', '  Verifying SHA256 checksum...');
-      const actualChecksum = getFileChecksum(tarPath);
-      if (actualChecksum !== expectedChecksum) {
-        log('red', `  ✗ CHECKSUM MISMATCH - download may be corrupted or tampered!`);
-        log('red', `    Expected: ${expectedChecksum}`);
-        log('red', `    Got:      ${actualChecksum}`);
-        fs.unlinkSync(tarPath);
-        throw new Error('Checksum verification failed for macOS UI');
-      }
-      log('green', `  ✓ Checksum verified (SHA256: ${actualChecksum.substring(0, 16)}...)`);
-    } else {
-      log('yellow', `  ⚠️  No checksum available for UI v${UI_VERSION} - skipping verification`);
-    }
-
-    // Extract tarball
-    log('cyan', '  Extracting application bundle...');
-    execSync(`tar -xzf "${tarPath}" -C "${tmpDir}"`, { stdio: 'inherit' });
-
-    // Find the extracted app bundle
-    const extractedApp = path.join(tmpDir, 'Swictation.app');
-    if (!fs.existsSync(extractedApp)) {
-      throw new Error(`Swictation.app not found in archive at ${extractedApp}`);
-    }
-
-    // Verify it contains a valid Mach-O binary
-    const binaryPath = path.join(extractedApp, 'Contents', 'MacOS', 'swictation-ui');
-    try {
-      const fileOutput = execSync(`file "${binaryPath}"`, { encoding: 'utf8' });
-      if (!fileOutput.includes('Mach-O') || !fileOutput.includes('arm64')) {
-        throw new Error(`Invalid Mach-O binary: ${fileOutput}`);
-      }
-      log('green', `  ✓ Verified Mach-O ARM64 executable`);
-    } catch (err) {
-      log('red', `  ✗ Binary verification failed: ${err.message}`);
-      throw err;
-    }
-
-    // Copy app bundle to ~/Applications
-    if (fs.existsSync(appBundlePath)) {
-      // Remove old version
-      execSync(`rm -rf "${appBundlePath}"`, { stdio: 'inherit' });
-    }
-    execSync(`cp -R "${extractedApp}" "${appBundlePath}"`, { stdio: 'inherit' });
-    log('green', `  ✓ Installed Swictation.app to ~/Applications`);
-
-    // Also copy the binary to bin directory for CLI access
-    const targetBinaryPath = path.join(binDir, 'swictation-ui-macos');
-    fs.copyFileSync(binaryPath, targetBinaryPath);
-    fs.chmodSync(targetBinaryPath, 0o755);
-    log('green', `  ✓ Installed CLI binary to ${targetBinaryPath}`);
-
-    // Cleanup temp files
-    try {
-      fs.unlinkSync(tarPath);
-      execSync(`rm -rf "${tmpDir}"`, { stdio: 'ignore' });
-    } catch (err) {
-      // Cleanup is optional
-    }
-
-    log('green', `✅ Swictation UI ready`);
-    log('cyan', `   App: ${appBundlePath}`);
-    log('cyan', `   CLI: ${targetBinaryPath}`);
-
-  } catch (err) {
-    log('red', `\n❌ Failed to download macOS UI`);
-    log('yellow', `   Error: ${err.message}`);
-    log('cyan', '\n   Manual installation:');
-    log('cyan', `   1. Download: ${releaseUrl}`);
-    log('cyan', `   2. Extract: tar -xzf swictation-ui-macos-arm64.tar.gz`);
-    log('cyan', `   3. Copy Swictation.app to ~/Applications`);
-    throw err;
-  }
-}
 
 function detectOrtLibrary() {
   log('cyan', '\n🔍 Detecting ONNX Runtime library path...');
@@ -2786,6 +2561,27 @@ async function main() {
   try {
     // Platform and basic checks
     checkPlatform();
+
+    // Verify platform package installation
+    const { resolveBinaryPaths, isPlatformPackageInstalled } = require('./src/resolve-binary');
+
+    if (!isPlatformPackageInstalled()) {
+      log('red', '\n❌ Platform package not installed');
+      log('yellow', '   npm optionalDependencies failed to install the correct platform package');
+      log('cyan', '   This usually means:');
+      log('cyan', '     1. You\'re on an unsupported platform');
+      log('cyan', '     2. The platform package build is missing from npm');
+      log('cyan', '     3. npm\'s optional dependency resolution failed');
+      log('cyan', '\n   Try: npm install -g swictation --force');
+      throw new Error('Platform package not found');
+    }
+
+    const binaryPaths = resolveBinaryPaths();
+    log('green', `✓ Platform package: ${binaryPaths.packageName}`);
+    log('cyan', `  Location: ${binaryPaths.packageDir}`);
+    log('cyan', `  Binaries: ${binaryPaths.binDir}`);
+    log('cyan', `  Libraries: ${binaryPaths.libDir}`);
+
     ensureBinaryPermissions();
     createDirectories();
 
@@ -2835,11 +2631,9 @@ async function main() {
         await downloadONNXRuntimeCoreML();
       }
 
-      // Download macOS ARM64 daemon binary (always required on macOS)
-      await downloadMacOSDaemon();
-
-      // Download macOS ARM64 UI application (always required on macOS)
-      await downloadMacOSUI();
+      // macOS binaries come from @swictation/darwin-arm64 platform package
+      // (installed via npm optionalDependencies)
+      log('green', `  ✓ Using binaries from platform package: ${binaryPaths.packageName}`);
 
       // macOS ONNX Runtime path
       ortLibPath = path.join(__dirname, 'lib', 'native', 'libonnxruntime.dylib');
@@ -2848,9 +2642,9 @@ async function main() {
     // Phase 3.5: Model test-loading (actual verification)
     if (!SKIP_MODEL_TEST && gpuInfo.hasGPU && gpuInfo.recommendedModel !== 'cpu-only') {
       log('cyan', '\n═══ Phase 3.5: Model Verification ═══');
-      const daemonBin = process.platform === 'linux'
-        ? path.join(__dirname, 'lib', 'native', 'swictation-daemon.bin')
-        : path.join(__dirname, 'bin', 'swictation-daemon-macos');
+      // Use daemon binary from platform package
+      const daemonBin = binaryPaths.daemon;
+      log('cyan', `  Using daemon: ${daemonBin}`);
 
       const testResult = await testModelsInOrder(gpuInfo, daemonBin, ortLibPath);
 
