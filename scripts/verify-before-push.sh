@@ -4,19 +4,23 @@
 
 set -e
 
-echo "🔍 Running pre-push verification..."
+# Find git root directory
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+cd "$REPO_ROOT"
+
+echo "🔍 Running pre-push verification from $REPO_ROOT..."
 echo ""
 
 # 1. TypeScript build
 echo "📦 Building TypeScript..."
-cd tauri-ui
+cd "$REPO_ROOT/tauri-ui"
 npm run build
 echo "✅ TypeScript build passed"
 echo ""
 
 # 2. Rust build with strict warnings (same as GitHub Actions)
 echo "🦀 Building Rust with RUSTFLAGS=-D warnings..."
-cd src-tauri
+cd "$REPO_ROOT/tauri-ui/src-tauri"
 export RUSTFLAGS="-D warnings"
 cargo build
 echo "✅ Rust build passed (zero warnings)"

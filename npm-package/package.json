@@ -55,6 +55,7 @@
     "build": "./scripts/build-release.sh",
     "build-macos": "./scripts/build-macos-release.sh",
     "build-ui": "../tauri-ui/scripts/build-ui-release.sh",
+    "verify": "../scripts/verify-before-push.sh",
     "version:sync": "node scripts/sync-versions.js",
     "version:sync:dry-run": "node scripts/sync-versions.js --dry-run",
     "version:sync:verbose": "node scripts/sync-versions.js --verbose",

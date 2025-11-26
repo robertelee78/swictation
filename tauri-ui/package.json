@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "build:release": "npm run build && cd src-tauri && cargo build --release --features custom-protocol",
+    "verify": "../scripts/verify-before-push.sh",
     "preview": "vite preview",
     "tauri": "tauri"
   },
