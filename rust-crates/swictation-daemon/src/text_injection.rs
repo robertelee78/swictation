@@ -390,7 +390,7 @@ mod tests {
     fn test_empty_text() {
         if let Ok(injector) = TextInjector::new() {
             // Empty text should not error
-            assert!(injector.inject_plain_text("").is_ok());
+            assert!(injector.inject_text("").is_ok());
         }
     }
 }

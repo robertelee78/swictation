@@ -51,6 +51,7 @@ fn check_cuda_available() -> bool {
         .unwrap_or(false)
 }
 
+#[allow(dead_code)]
 #[cfg(target_os = "macos")]
 fn check_cuda_available() -> bool {
     false // No CUDA on macOS
@@ -90,7 +91,7 @@ fn check_coreml_available() -> bool {
 
     // Check if we're running on Apple Silicon
     let output = Command::new("sysctl")
-        .args(&["-n", "machdep.cpu.brand_string"])
+        .args(["-n", "machdep.cpu.brand_string"])
         .output();
 
     if let Ok(output) = output {
@@ -147,7 +148,7 @@ pub fn get_gpu_memory_mb() -> Option<(u64, u64)> {
     // Linux/Windows: Query NVIDIA GPU VRAM via nvidia-smi
     #[cfg(not(target_os = "macos"))]
     {
-        return get_nvidia_vram_mb();
+        get_nvidia_vram_mb()
     }
 }
 

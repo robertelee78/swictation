@@ -28,6 +28,7 @@ use tracing::{debug, info, warn};
 /// Trait for environment variable access (enables testing with mock environments)
 /// This is public so tests can implement mock environments
 pub trait EnvProvider {
+    #[allow(dead_code)]
     fn get(&self, key: &str) -> Option<String>;
 }
 
@@ -43,10 +44,14 @@ impl EnvProvider for SystemEnv {
 /// Platform/Display server type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DisplayServer {
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
     X11,
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
     Wayland,
     /// macOS window server (Quartz Compositor)
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     MacOS,
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
     Unknown,
 }
 
@@ -65,6 +70,7 @@ pub enum TextInjectionTool {
 
 impl TextInjectionTool {
     /// Get the command name for this tool
+    #[allow(dead_code)]
     pub fn command(&self) -> &'static str {
         match self {
             Self::Xdotool => "xdotool",
@@ -95,6 +101,7 @@ pub struct DisplayServerInfo {
     /// Whether this is GNOME running on Wayland (requires ydotool)
     pub is_gnome_wayland: bool,
     /// Confidence level in detection
+    #[allow(dead_code)]
     pub confidence: ConfidenceLevel,
 }
 
@@ -104,8 +111,10 @@ pub enum ConfidenceLevel {
     /// High confidence (≥4 evidence points)
     High,
     /// Medium confidence (2-3 evidence points)
+    #[allow(dead_code)]
     Medium,
     /// Low confidence (<2 evidence points)
+    #[allow(dead_code)]
     Low,
 }
 
@@ -232,6 +241,7 @@ pub fn detect_display_server_with_env(env: &dyn EnvProvider) -> DisplayServerInf
 }
 
 /// Check if a tool is available on the system
+#[allow(dead_code)]
 pub fn is_tool_available(tool: TextInjectionTool) -> bool {
     match tool {
         // macOS native is always available on macOS
