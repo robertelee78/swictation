@@ -142,7 +142,7 @@ pub fn get_gpu_memory_mb() -> Option<(u64, u64)> {
     // macOS: Query unified system memory (GPU shares RAM with CPU)
     #[cfg(target_os = "macos")]
     {
-        return get_macos_unified_memory_mb();
+        get_macos_unified_memory_mb()
     }
 
     // Linux/Windows: Query NVIDIA GPU VRAM via nvidia-smi

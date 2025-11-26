@@ -475,7 +475,7 @@ mod tests {
         for combo in combos {
             let parts: Vec<&str> = combo.split('+').collect();
             assert!(
-                parts.len() >= 1,
+                !parts.is_empty(),
                 "Combo should have at least one part: {}",
                 combo
             );
