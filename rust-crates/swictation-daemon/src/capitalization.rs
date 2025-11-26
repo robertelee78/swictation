@@ -343,10 +343,19 @@ mod tests {
     fn test_normalize_0_6b_word_missing_add_word() {
         // When the word form doesn't exist, convert symbol to word
         // This handles: "comma" → "," where model replaced word with symbol
-        assert_eq!(normalize_0_6b_punctuation("hello, world"), "hello comma world");
+        assert_eq!(
+            normalize_0_6b_punctuation("hello, world"),
+            "hello comma world"
+        );
         assert_eq!(normalize_0_6b_punctuation("what?"), "what question mark");
-        assert_eq!(normalize_0_6b_punctuation("stop!"), "stop exclamation point");
-        assert_eq!(normalize_0_6b_punctuation("note: important"), "note colon important");
+        assert_eq!(
+            normalize_0_6b_punctuation("stop!"),
+            "stop exclamation point"
+        );
+        assert_eq!(
+            normalize_0_6b_punctuation("note: important"),
+            "note colon important"
+        );
         assert_eq!(
             normalize_0_6b_punctuation("first; second"),
             "first semicolon second"
@@ -375,10 +384,7 @@ mod tests {
     #[test]
     fn test_normalize_0_6b_whitespace_cleanup() {
         // Should normalize whitespace
-        assert_eq!(
-            normalize_0_6b_punctuation("hello   world"),
-            "hello world"
-        );
+        assert_eq!(normalize_0_6b_punctuation("hello   world"), "hello world");
         assert_eq!(
             normalize_0_6b_punctuation("  hello  world  "),
             "hello world"
@@ -447,7 +453,10 @@ mod tests {
 
         // "Stop exclamation point" - model might output "Stop!" or "Stop exclamation point!"
         // CRITICAL: Model may add trailing PERIOD instead of "!" - must strip it
-        assert_eq!(normalize_0_6b_punctuation("Stop!"), "stop exclamation point");
+        assert_eq!(
+            normalize_0_6b_punctuation("Stop!"),
+            "stop exclamation point"
+        );
         assert_eq!(
             normalize_0_6b_punctuation("Stop exclamation point!"),
             "stop exclamation point"

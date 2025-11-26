@@ -20,13 +20,13 @@
 use crate::audio::AudioProcessor;
 use crate::error::{Result, SttError};
 use ndarray::{s, Array1, Array2, Array3};
+#[cfg(target_os = "macos")]
+use ort::execution_providers::coreml::{CoreMLComputeUnits, CoreMLModelFormat};
 use ort::{
     execution_providers as ep,
     session::{builder::GraphOptimizationLevel, Session},
     value::Tensor,
 };
-#[cfg(target_os = "macos")]
-use ort::execution_providers::coreml::{CoreMLComputeUnits, CoreMLModelFormat};
 use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
@@ -169,7 +169,10 @@ impl OrtRecognizer {
                         ep::CPUExecutionProvider::default().build(),
                     ])
                     .map_err(|e| {
-                        SttError::ModelLoadError(format!("Failed to set CoreML execution providers: {}", e))
+                        SttError::ModelLoadError(format!(
+                            "Failed to set CoreML execution providers: {}",
+                            e
+                        ))
                     })?;
             }
 
@@ -183,7 +186,10 @@ impl OrtRecognizer {
                         ep::CPUExecutionProvider::default().build(),
                     ])
                     .map_err(|e| {
-                        SttError::ModelLoadError(format!("Failed to set CUDA execution providers: {}", e))
+                        SttError::ModelLoadError(format!(
+                            "Failed to set CUDA execution providers: {}",
+                            e
+                        ))
                     })?;
             }
         } else {
@@ -203,7 +209,10 @@ impl OrtRecognizer {
                     // Try FP16 first (best for Apple Silicon)
                     let fp16_path = model_path.join(format!("{}.fp16.onnx", name));
                     if fp16_path.exists() {
-                        info!("Using FP16 model for CoreML (Apple Silicon): {}.fp16.onnx", name);
+                        info!(
+                            "Using FP16 model for CoreML (Apple Silicon): {}.fp16.onnx",
+                            name
+                        );
                         return Ok(fp16_path);
                     }
                     // Fallback to FP32

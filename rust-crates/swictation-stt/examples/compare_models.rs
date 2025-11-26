@@ -14,7 +14,6 @@
 /// export ORT_DYLIB_PATH=$(python3 -c "import onnxruntime; import os; print(os.path.join(os.path.dirname(onnxruntime.__file__), 'capi/libonnxruntime.so.1.23.2'))")
 /// cargo run --release --example compare_models
 /// ```
-
 use std::path::PathBuf;
 use std::time::Instant;
 use swictation_stt::OrtRecognizer;
@@ -55,8 +54,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let has_1_1b = model_1_1b.exists();
 
     println!("Model availability:");
-    println!("  0.6B: {} ({})", if has_0_6b { "✓" } else { "✗" }, model_0_6b.display());
-    println!("  1.1B: {} ({})\n", if has_1_1b { "✓" } else { "✗" }, model_1_1b.display());
+    println!(
+        "  0.6B: {} ({})",
+        if has_0_6b { "✓" } else { "✗" },
+        model_0_6b.display()
+    );
+    println!(
+        "  1.1B: {} ({})\n",
+        if has_1_1b { "✓" } else { "✗" },
+        model_1_1b.display()
+    );
 
     if !has_0_6b && !has_1_1b {
         eprintln!("❌ ERROR: No models found. Please download at least one model.");
@@ -112,11 +119,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Search for "period" and "comma" as words
         let lines: Vec<&str> = content.lines().collect();
-        let period_tokens: Vec<&str> = lines.iter()
+        let period_tokens: Vec<&str> = lines
+            .iter()
             .filter(|l| l.contains("period") || l.contains("Period"))
             .copied()
             .collect();
-        let comma_tokens: Vec<&str> = lines.iter()
+        let comma_tokens: Vec<&str> = lines
+            .iter()
             .filter(|l| l.contains("comma") || l.contains("Comma"))
             .copied()
             .collect();
@@ -156,7 +165,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         continue;
                     }
 
-                    println!("  Processing: {}", test_file.file_name().unwrap().to_string_lossy());
+                    println!(
+                        "  Processing: {}",
+                        test_file.file_name().unwrap().to_string_lossy()
+                    );
                     let start = Instant::now();
                     match recognizer.recognize_file(test_file) {
                         Ok(text) => {
@@ -192,7 +204,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         continue;
                     }
 
-                    println!("  Processing: {}", test_file.file_name().unwrap().to_string_lossy());
+                    println!(
+                        "  Processing: {}",
+                        test_file.file_name().unwrap().to_string_lossy()
+                    );
                     let start = Instant::now();
                     match recognizer.recognize_file(test_file) {
                         Ok(text) => {
@@ -220,9 +235,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("======================================================\n");
 
         for (file_0_6b, text_0_6b) in &results_0_6b {
-            if let Some((_, text_1_1b)) = results_1_1b.iter()
-                .find(|(f, _)| f == file_0_6b) {
-
+            if let Some((_, text_1_1b)) = results_1_1b.iter().find(|(f, _)| f == file_0_6b) {
                 println!("File: {}", file_0_6b.file_name().unwrap().to_string_lossy());
                 println!("  0.6B: \"{}\"", text_0_6b);
                 println!("  1.1B: \"{}\"", text_1_1b);
@@ -239,14 +252,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let has_comma_word_1_1b = text_1_1b.to_lowercase().contains("comma");
 
                 println!("  Analysis:");
-                println!("    0.6B: period={}/{}, comma={}/{}",
-                    if has_period_symbol_0_6b { "symbol" } else { "-" },
+                println!(
+                    "    0.6B: period={}/{}, comma={}/{}",
+                    if has_period_symbol_0_6b {
+                        "symbol"
+                    } else {
+                        "-"
+                    },
                     if has_period_word_0_6b { "word" } else { "-" },
                     if has_comma_symbol_0_6b { "symbol" } else { "-" },
                     if has_comma_word_0_6b { "word" } else { "-" }
                 );
-                println!("    1.1B: period={}/{}, comma={}/{}",
-                    if has_period_symbol_1_1b { "symbol" } else { "-" },
+                println!(
+                    "    1.1B: period={}/{}, comma={}/{}",
+                    if has_period_symbol_1_1b {
+                        "symbol"
+                    } else {
+                        "-"
+                    },
                     if has_period_word_1_1b { "word" } else { "-" },
                     if has_comma_symbol_1_1b { "symbol" } else { "-" },
                     if has_comma_word_1_1b { "word" } else { "-" }

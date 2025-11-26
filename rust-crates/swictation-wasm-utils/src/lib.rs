@@ -7,9 +7,9 @@
 //!
 //! No database dependencies - designed to process data fetched via Tauri commands.
 
-use wasm_bindgen::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use wasm_bindgen::prelude::*;
 
 // Initialize panic hook for better error messages
 #[wasm_bindgen(start)]
@@ -26,9 +26,9 @@ pub fn init() {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionMetrics {
     pub id: i64,
-    pub start_time: i64,           // Unix timestamp
-    pub end_time: Option<i64>,     // Unix timestamp
-    pub duration_s: f64,           // Duration in seconds
+    pub start_time: i64,       // Unix timestamp
+    pub end_time: Option<i64>, // Unix timestamp
+    pub duration_s: f64,       // Duration in seconds
     pub words_dictated: i32,
     pub wpm: f64,
     pub avg_latency_ms: f64,
@@ -69,9 +69,7 @@ pub fn calculate_aggregate_stats(sessions_json: &str) -> Result<String, JsValue>
 
     let total_sessions = sessions.len();
     let total_words: i64 = sessions.iter().map(|s| s.words_dictated as i64).sum();
-    let total_duration_hours: f64 = sessions.iter()
-        .map(|s| s.duration_s / 3600.0)
-        .sum();
+    let total_duration_hours: f64 = sessions.iter().map(|s| s.duration_s / 3600.0).sum();
 
     // WPM statistics
     let mut wpm_values: Vec<f64> = sessions.iter().map(|s| s.wpm).collect();
@@ -128,22 +126,31 @@ pub fn calculate_wpm_trend(sessions_json: &str, bucket_size_hours: f64) -> Resul
     for session in sessions {
         // start_time is already a Unix timestamp (i64)
         let bucket_key = session.start_time / bucket_seconds;
-        buckets.entry(bucket_key).or_insert_with(Vec::new).push(session.wpm);
+        buckets
+            .entry(bucket_key)
+            .or_insert_with(Vec::new)
+            .push(session.wpm);
     }
 
     // Return with Unix timestamps instead of formatted strings
-    let mut trend_points: Vec<_> = buckets.iter().map(|(key, wpm_values)| {
-        let bucket_timestamp_unix = *key * bucket_seconds;
-        let average_wpm = wpm_values.iter().sum::<f64>() / wpm_values.len() as f64;
-        serde_json::json!({
-            "timestamp_unix": bucket_timestamp_unix,
-            "average_wpm": average_wpm,
-            "session_count": wpm_values.len(),
+    let mut trend_points: Vec<_> = buckets
+        .iter()
+        .map(|(key, wpm_values)| {
+            let bucket_timestamp_unix = *key * bucket_seconds;
+            let average_wpm = wpm_values.iter().sum::<f64>() / wpm_values.len() as f64;
+            serde_json::json!({
+                "timestamp_unix": bucket_timestamp_unix,
+                "average_wpm": average_wpm,
+                "session_count": wpm_values.len(),
+            })
         })
-    }).collect();
+        .collect();
 
     trend_points.sort_by(|a, b| {
-        a["timestamp_unix"].as_i64().unwrap().cmp(&b["timestamp_unix"].as_i64().unwrap())
+        a["timestamp_unix"]
+            .as_i64()
+            .unwrap()
+            .cmp(&b["timestamp_unix"].as_i64().unwrap())
     });
 
     serde_json::to_string(&trend_points)
@@ -209,7 +216,9 @@ where
         trace.push(v.clone());
 
         for k in (-d..=d).step_by(2) {
-            let mut x = if k == -d || (k != d && v.get(&(k - 1)).unwrap_or(&-1) < v.get(&(k + 1)).unwrap_or(&-1)) {
+            let mut x = if k == -d
+                || (k != d && v.get(&(k - 1)).unwrap_or(&-1) < v.get(&(k + 1)).unwrap_or(&-1))
+            {
                 *v.get(&(k + 1)).unwrap_or(&0)
             } else {
                 v.get(&(k - 1)).unwrap_or(&0) + 1
@@ -239,7 +248,9 @@ where
         let d = d as i32;
         let k = x - y;
 
-        let prev_k = if k == -d || (k != d && v.get(&(k - 1)).unwrap_or(&-1) < v.get(&(k + 1)).unwrap_or(&-1)) {
+        let prev_k = if k == -d
+            || (k != d && v.get(&(k - 1)).unwrap_or(&-1) < v.get(&(k + 1)).unwrap_or(&-1))
+        {
             k + 1
         } else {
             k - 1
@@ -299,7 +310,7 @@ pub struct PatternCluster {
     pub cluster_id: usize,
     pub centroid_original: String,
     pub centroid_corrected: String,
-    pub members: Vec<i64>,  // Pattern IDs
+    pub members: Vec<i64>, // Pattern IDs
     pub size: usize,
 }
 
@@ -339,10 +350,8 @@ pub fn cluster_correction_patterns(patterns_json: &str, k: usize) -> Result<Stri
             let mut best_cluster = 0;
 
             for (cluster_id, &centroid_idx) in centroids.iter().enumerate() {
-                let dist = levenshtein_distance(
-                    &pattern.original,
-                    &patterns[centroid_idx].original,
-                );
+                let dist =
+                    levenshtein_distance(&pattern.original, &patterns[centroid_idx].original);
                 if dist < min_dist {
                     min_dist = dist;
                     best_cluster = cluster_id;
@@ -441,10 +450,14 @@ fn levenshtein_distance(a: &str, b: &str) -> usize {
 
     for i in 1..=n {
         for j in 1..=m {
-            let cost = if a_chars[i - 1] == b_chars[j - 1] { 0 } else { 1 };
-            dp[i][j] = (dp[i - 1][j] + 1)            // Deletion
-                .min(dp[i][j - 1] + 1)               // Insertion
-                .min(dp[i - 1][j - 1] + cost);       // Substitution
+            let cost = if a_chars[i - 1] == b_chars[j - 1] {
+                0
+            } else {
+                1
+            };
+            dp[i][j] = (dp[i - 1][j] + 1) // Deletion
+                .min(dp[i][j - 1] + 1) // Insertion
+                .min(dp[i - 1][j - 1] + cost); // Substitution
         }
     }
 
@@ -464,20 +477,18 @@ mod tests {
 
     #[test]
     fn test_aggregate_stats() {
-        let sessions = vec![
-            SessionMetrics {
-                id: 1,
-                start_time: "2025-01-01T10:00:00Z".to_string(),
-                end_time: Some("2025-01-01T10:10:00Z".to_string()),
-                duration_seconds: 600.0,
-                words_dictated: 120,
-                segments_dictated: 10,
-                wpm: 12.0,
-                average_latency_ms: 250.0,
-                gpu_name: None,
-                gpu_memory_used_mb: None,
-            },
-        ];
+        let sessions = vec![SessionMetrics {
+            id: 1,
+            start_time: "2025-01-01T10:00:00Z".to_string(),
+            end_time: Some("2025-01-01T10:10:00Z".to_string()),
+            duration_seconds: 600.0,
+            words_dictated: 120,
+            segments_dictated: 10,
+            wpm: 12.0,
+            average_latency_ms: 250.0,
+            gpu_name: None,
+            gpu_memory_used_mb: None,
+        }];
 
         let json = serde_json::to_string(&sessions).unwrap();
         let result = calculate_aggregate_stats(&json).unwrap();

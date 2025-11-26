@@ -64,8 +64,8 @@ impl TextInjector {
 
         // Create macOS injector if on macOS
         #[cfg(target_os = "macos")]
-        let macos_injector = MacOSTextInjector::new()
-            .context("Failed to create macOS text injector")?;
+        let macos_injector =
+            MacOSTextInjector::new().context("Failed to create macOS text injector")?;
 
         Ok(Self {
             display_server_info,

@@ -16,9 +16,7 @@ use core_foundation::base::{CFType, TCFType};
 use core_foundation::boolean::CFBoolean;
 use core_foundation::dictionary::CFDictionary;
 use core_foundation::string::CFString;
-use core_graphics::event::{
-    CGEvent, CGEventFlags, CGEventTapLocation, CGEventType, CGKeyCode,
-};
+use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation, CGEventType, CGKeyCode};
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use foreign_types_shared::ForeignType;
 use std::os::raw::{c_long, c_void};
@@ -145,7 +143,9 @@ impl MacOSTextInjector {
             info!("Accessibility permissions already granted");
         } else {
             info!("Accessibility permissions not yet granted - system dialog shown");
-            info!("User must enable toggle in: System Settings > Privacy & Security > Accessibility");
+            info!(
+                "User must enable toggle in: System Settings > Privacy & Security > Accessibility"
+            );
         }
 
         is_trusted
@@ -434,7 +434,10 @@ mod tests {
                 println!("✅ Text injector created successfully");
             }
             Err(e) => {
-                println!("⚠️  Text injector creation failed (expected if no permissions): {}", e);
+                println!(
+                    "⚠️  Text injector creation failed (expected if no permissions): {}",
+                    e
+                );
             }
         }
     }
@@ -471,7 +474,11 @@ mod tests {
 
         for combo in combos {
             let parts: Vec<&str> = combo.split('+').collect();
-            assert!(parts.len() >= 1, "Combo should have at least one part: {}", combo);
+            assert!(
+                parts.len() >= 1,
+                "Combo should have at least one part: {}",
+                combo
+            );
             println!("✅ Parsed combo: {} → {:?}", combo, parts);
         }
     }
