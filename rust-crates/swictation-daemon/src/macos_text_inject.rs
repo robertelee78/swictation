@@ -20,7 +20,7 @@ use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation, CGKeyCode}
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use foreign_types_shared::ForeignType;
 use std::os::raw::{c_long, c_void};
-use std::sync::Arc;
+use std::rc::Rc;
 use tracing::{debug, info, warn};
 
 // FFI declaration for CGEventKeyboardSetUnicodeString
@@ -66,8 +66,8 @@ static KAXTRUSTED_CHECK_OPTION_PROMPT: &str = "AXTrustedCheckOptionPrompt";
 
 /// macOS text injector using Core Graphics Accessibility API
 pub struct MacOSTextInjector {
-    /// Event source for generating keyboard events (Arc for efficient cloning)
-    event_source: Arc<CGEventSource>,
+    /// Event source for generating keyboard events (Rc for single-threaded efficient cloning)
+    event_source: Rc<CGEventSource>,
 }
 
 impl MacOSTextInjector {
@@ -90,12 +90,12 @@ impl MacOSTextInjector {
             );
         }
 
-        // Create event source (wrapped in Arc for efficient sharing)
+        // Create event source (wrapped in Rc for efficient sharing - single-threaded)
         let event_source = CGEventSource::new(CGEventSourceStateID::CombinedSessionState)
             .map_err(|_| anyhow::anyhow!("Failed to create CGEventSource"))?;
 
         Ok(Self {
-            event_source: Arc::new(event_source),
+            event_source: Rc::new(event_source),
         })
     }
 

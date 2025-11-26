@@ -121,7 +121,8 @@ pub fn detect_display_server() -> DisplayServerInfo {
 
 /// Internal detection function that accepts environment provider (for testing)
 /// This is public so integration tests can inject mock environments
-pub fn detect_display_server_with_env(_env: &dyn EnvProvider) -> DisplayServerInfo {
+#[cfg_attr(target_os = "macos", allow(unused_variables))]
+pub fn detect_display_server_with_env(env: &dyn EnvProvider) -> DisplayServerInfo {
     // Check for macOS first (platform-level detection)
     #[cfg(target_os = "macos")]
     {
