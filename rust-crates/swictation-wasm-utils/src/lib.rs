@@ -128,7 +128,7 @@ pub fn calculate_wpm_trend(sessions_json: &str, bucket_size_hours: f64) -> Resul
         let bucket_key = session.start_time / bucket_seconds;
         buckets
             .entry(bucket_key)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(session.wpm);
     }
 
@@ -199,9 +199,9 @@ pub fn compute_text_diff(original: &str, corrected: &str) -> Result<String, JsVa
 }
 
 /// Myers diff algorithm (simplified word-level implementation)
-fn myers_diff<T: PartialEq>(a: &[T], b: &[T]) -> Vec<DiffHunk>
+fn myers_diff<T>(a: &[T], b: &[T]) -> Vec<DiffHunk>
 where
-    T: std::fmt::Display,
+    T: PartialEq + std::fmt::Display,
 {
     let n = a.len();
     let m = b.len();
@@ -362,7 +362,7 @@ pub fn cluster_correction_patterns(patterns_json: &str, k: usize) -> Result<Stri
         }
 
         // Update centroids (most central pattern in each cluster)
-        for cluster_id in 0..k {
+        for (cluster_id, centroid) in centroids.iter_mut().enumerate().take(k) {
             let cluster_members: Vec<usize> = assignments
                 .iter()
                 .enumerate()
@@ -395,7 +395,7 @@ pub fn cluster_correction_patterns(patterns_json: &str, k: usize) -> Result<Stri
                 }
             }
 
-            centroids[cluster_id] = best_centroid;
+            *centroid = best_centroid;
         }
     }
 
@@ -441,11 +441,11 @@ fn levenshtein_distance(a: &str, b: &str) -> usize {
 
     let mut dp = vec![vec![0; m + 1]; n + 1];
 
-    for i in 0..=n {
-        dp[i][0] = i;
+    for (i, row) in dp.iter_mut().enumerate().take(n + 1) {
+        row[0] = i;
     }
-    for j in 0..=m {
-        dp[0][j] = j;
+    for (j, cell) in dp[0].iter_mut().enumerate().take(m + 1) {
+        *cell = j;
     }
 
     for i in 1..=n {
