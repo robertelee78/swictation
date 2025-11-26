@@ -35,7 +35,7 @@ pub struct SessionMetrics {
 }
 
 /// Aggregated statistics for a set of sessions
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct AggregatedStats {
     pub total_sessions: usize,
     pub total_words: i64,
@@ -476,15 +476,12 @@ mod tests {
     fn test_aggregate_stats() {
         let sessions = vec![SessionMetrics {
             id: 1,
-            start_time: "2025-01-01T10:00:00Z".to_string(),
-            end_time: Some("2025-01-01T10:10:00Z".to_string()),
-            duration_seconds: 600.0,
+            start_time: 1735724400,            // Unix timestamp (2025-01-01 10:00:00 UTC)
+            end_time: Some(1735725000),        // Unix timestamp (2025-01-01 10:10:00 UTC)
+            duration_s: 600.0,
             words_dictated: 120,
-            segments_dictated: 10,
             wpm: 12.0,
-            average_latency_ms: 250.0,
-            gpu_name: None,
-            gpu_memory_used_mb: None,
+            avg_latency_ms: 250.0,
         }];
 
         let json = serde_json::to_string(&sessions).unwrap();
