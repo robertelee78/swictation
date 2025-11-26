@@ -45,6 +45,12 @@ fn detect_with_env(
     swictation_daemon::display_server::detect_display_server_with_env(&mock_env)
 }
 
+// All display server tests are Linux-specific (X11/Wayland)
+// They should not run on macOS which has its own display server
+#[cfg(target_os = "linux")]
+mod linux_display_tests {
+    use super::*;
+
 #[test]
 fn test_x11_pure_detection() {
     // Pure X11: DISPLAY set, no WAYLAND_DISPLAY, XDG_SESSION_TYPE=x11
@@ -282,3 +288,5 @@ fn test_confidence_levels() {
     let info = detect_with_env(env);
     assert_eq!(info.confidence, ConfidenceLevel::Low);
 }
+
+} // End of linux_display_tests module

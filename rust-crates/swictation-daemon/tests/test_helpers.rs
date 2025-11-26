@@ -104,7 +104,8 @@ pub fn ambiguous_env() -> HashMap<String, String> {
     env
 }
 
-#[cfg(test)]
+// Tests for Linux-specific display server environment fixtures
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
 
