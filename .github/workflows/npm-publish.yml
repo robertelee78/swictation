@@ -71,6 +71,7 @@ jobs:
       working-directory: tauri-ui
       run: |
         npm install
+        npm run build
         cd src-tauri
         cargo build --release
         strip target/release/swictation-ui
