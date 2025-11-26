@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 #[cfg(all(target_os = "macos", feature = "gpu-monitoring"))]
-use metal::{Device, MTLResourceOptions};
+use metal::Device;
 
 /// GPU metrics snapshot
 #[derive(Debug, Clone, Serialize, Deserialize)]

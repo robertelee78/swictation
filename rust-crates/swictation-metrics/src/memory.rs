@@ -359,7 +359,7 @@ mod metal_gpu {
     use super::*;
 
     #[cfg(feature = "gpu-monitoring")]
-    use metal::{Device, MTLResourceOptions};
+    use metal::Device;
 
     pub struct MetalProvider {
         #[cfg(feature = "gpu-monitoring")]
