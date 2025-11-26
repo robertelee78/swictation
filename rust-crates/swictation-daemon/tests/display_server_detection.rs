@@ -11,31 +11,39 @@
 
 mod test_helpers;
 
+// Linux-specific test utilities (only compiled on Linux)
+#[cfg(target_os = "linux")]
 use std::collections::HashMap;
+#[cfg(target_os = "linux")]
 use test_helpers::*;
 
 // Import internal module for testing
 // We need to use the internal detection function that accepts EnvProvider
+#[cfg(target_os = "linux")]
 use swictation_daemon::display_server::{ConfidenceLevel, DisplayServer};
 
-// Mock environment provider for testing
+// Mock environment provider for testing (Linux only)
+#[cfg(target_os = "linux")]
 struct MockEnv {
     vars: HashMap<String, String>,
 }
 
+#[cfg(target_os = "linux")]
 impl MockEnv {
     fn new(vars: HashMap<String, String>) -> Self {
         Self { vars }
     }
 }
 
+#[cfg(target_os = "linux")]
 impl swictation_daemon::display_server::EnvProvider for MockEnv {
     fn get(&self, key: &str) -> Option<String> {
         self.vars.get(key).cloned()
     }
 }
 
-// Helper to call internal detection function
+// Helper to call internal detection function (Linux only)
+#[cfg(target_os = "linux")]
 fn detect_with_env(
     env: HashMap<String, String>,
 ) -> swictation_daemon::display_server::DisplayServerInfo {

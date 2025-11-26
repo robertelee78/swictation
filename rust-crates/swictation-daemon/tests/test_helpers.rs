@@ -6,7 +6,10 @@
 //! - Test fixture creation
 //! - Performance measurement
 
+// Linux-specific test utilities (only compiled on Linux)
+#[cfg(target_os = "linux")]
 use std::collections::HashMap;
+#[cfg(target_os = "linux")]
 use std::sync::Mutex;
 
 /// Thread-safe environment variable storage for testing
@@ -17,22 +20,26 @@ use std::sync::Mutex;
 /// 3. Would cause race conditions
 ///
 /// Instead, we inject a custom environment getter during tests.
+#[cfg(target_os = "linux")]
 static TEST_ENV: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
 
-/// Set up test environment with specific variables
+/// Set up test environment with specific variables (Linux only)
+#[cfg(target_os = "linux")]
 pub fn setup_test_env(vars: HashMap<String, String>) {
     let mut env = TEST_ENV.lock().unwrap();
     *env = Some(vars);
 }
 
-/// Clear test environment
+/// Clear test environment (Linux only)
+#[cfg(target_os = "linux")]
 pub fn clear_test_env() {
     let mut env = TEST_ENV.lock().unwrap();
     *env = None;
 }
 
-/// Get environment variable for testing
+/// Get environment variable for testing (Linux only)
 /// Falls back to actual env::var if not in test mode
+#[cfg(target_os = "linux")]
 pub fn test_env_var(key: &str) -> Result<String, std::env::VarError> {
     let env = TEST_ENV.lock().unwrap();
     if let Some(ref vars) = *env {
@@ -42,7 +49,8 @@ pub fn test_env_var(key: &str) -> Result<String, std::env::VarError> {
     }
 }
 
-/// Test fixture for X11 environment
+/// Test fixture for X11 environment (Linux only)
+#[cfg(target_os = "linux")]
 pub fn x11_env() -> HashMap<String, String> {
     let mut env = HashMap::new();
     env.insert("DISPLAY".to_string(), ":0".to_string());
@@ -50,7 +58,8 @@ pub fn x11_env() -> HashMap<String, String> {
     env
 }
 
-/// Test fixture for pure Wayland environment (KDE)
+/// Test fixture for pure Wayland environment (KDE) (Linux only)
+#[cfg(target_os = "linux")]
 pub fn wayland_kde_env() -> HashMap<String, String> {
     let mut env = HashMap::new();
     env.insert("WAYLAND_DISPLAY".to_string(), "wayland-0".to_string());
@@ -59,7 +68,8 @@ pub fn wayland_kde_env() -> HashMap<String, String> {
     env
 }
 
-/// Test fixture for GNOME Wayland environment
+/// Test fixture for GNOME Wayland environment (Linux only)
+#[cfg(target_os = "linux")]
 pub fn wayland_gnome_env() -> HashMap<String, String> {
     let mut env = HashMap::new();
     env.insert("WAYLAND_DISPLAY".to_string(), "wayland-0".to_string());
@@ -68,7 +78,8 @@ pub fn wayland_gnome_env() -> HashMap<String, String> {
     env
 }
 
-/// Test fixture for Sway environment
+/// Test fixture for Sway environment (Linux only)
+#[cfg(target_os = "linux")]
 pub fn sway_env() -> HashMap<String, String> {
     let mut env = HashMap::new();
     env.insert(
@@ -81,7 +92,8 @@ pub fn sway_env() -> HashMap<String, String> {
     env
 }
 
-/// Test fixture for XWayland environment (X11 apps on Wayland)
+/// Test fixture for XWayland environment (X11 apps on Wayland) (Linux only)
+#[cfg(target_os = "linux")]
 pub fn xwayland_env() -> HashMap<String, String> {
     let mut env = HashMap::new();
     env.insert("DISPLAY".to_string(), ":0".to_string());
@@ -91,12 +103,14 @@ pub fn xwayland_env() -> HashMap<String, String> {
     env
 }
 
-/// Test fixture for headless/unknown environment
+/// Test fixture for headless/unknown environment (Linux only)
+#[cfg(target_os = "linux")]
 pub fn headless_env() -> HashMap<String, String> {
     HashMap::new() // No display server variables
 }
 
-/// Test fixture for ambiguous environment (old systems)
+/// Test fixture for ambiguous environment (old systems) (Linux only)
+#[cfg(target_os = "linux")]
 pub fn ambiguous_env() -> HashMap<String, String> {
     let mut env = HashMap::new();
     env.insert("DISPLAY".to_string(), ":0".to_string());
