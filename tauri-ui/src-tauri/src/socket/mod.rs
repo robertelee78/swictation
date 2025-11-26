@@ -10,7 +10,6 @@ mod socket_utils;
 
 // Primary exports
 pub use metrics::MetricsSocket;
-pub use socket_utils::get_metrics_socket_path;
 
 #[cfg(test)]
 mod tests {

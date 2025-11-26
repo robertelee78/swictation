@@ -46,7 +46,8 @@ pub struct ConnectionStatus {
     pub socket_path: String,
 }
 
-/// Daemon state
+/// Daemon state (used by TypeScript frontend via Tauri IPC serialization)
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DaemonState {
