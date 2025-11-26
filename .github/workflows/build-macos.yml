@@ -75,6 +75,39 @@ jobs:
         workspaces: |
           rust-crates -> target
 
+    - name: Cache ONNX Runtime libraries
+      id: onnx-cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/onnxruntime
+        key: onnxruntime-macos-arm64-coreml-1.22.0
+        restore-keys: |
+          onnxruntime-macos-arm64-coreml-
+
+    - name: Download ONNX Runtime (on cache miss)
+      if: steps.onnx-cache.outputs.cache-hit != 'true'
+      run: |
+        mkdir -p ~/.cache/onnxruntime
+        cd ~/.cache/onnxruntime
+
+        # Download official ONNX Runtime macOS ARM64 release (1.22.0 with CoreML)
+        echo "Downloading ONNX Runtime 1.22.0 macOS ARM64 release..."
+        wget -q https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-osx-arm64-1.22.0.tgz
+
+        # Extract libraries
+        tar -xzf onnxruntime-osx-arm64-1.22.0.tgz
+
+        echo "✓ ONNX Runtime libraries downloaded and extracted"
+        ls -lh onnxruntime-osx-arm64-1.22.0/lib/
+
+    - name: Copy ONNX Runtime to platform package
+      run: |
+        mkdir -p npm-package/packages/darwin-arm64/lib
+        cp ~/.cache/onnxruntime/onnxruntime-osx-arm64-1.22.0/lib/*.dylib npm-package/packages/darwin-arm64/lib/
+
+        echo "✓ ONNX Runtime libraries copied to platform package"
+        ls -lh npm-package/packages/darwin-arm64/lib/
+
     - name: Build daemon (release)
       working-directory: rust-crates
       run: |

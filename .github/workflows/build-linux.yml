@@ -94,6 +94,39 @@ jobs:
         workspaces: |
           rust-crates -> target
 
+    - name: Cache ONNX Runtime libraries
+      id: onnx-cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/onnxruntime
+        key: onnxruntime-linux-gpu-1.23.2
+        restore-keys: |
+          onnxruntime-linux-gpu-
+
+    - name: Download ONNX Runtime (on cache miss)
+      if: steps.onnx-cache.outputs.cache-hit != 'true'
+      run: |
+        mkdir -p ~/.cache/onnxruntime
+        cd ~/.cache/onnxruntime
+
+        # Download official ONNX Runtime GPU release (1.23.2 with CUDA 12.9)
+        echo "Downloading ONNX Runtime 1.23.2 GPU release..."
+        wget -q https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-linux-x64-gpu-1.23.2.tgz
+
+        # Extract libraries
+        tar -xzf onnxruntime-linux-x64-gpu-1.23.2.tgz
+
+        echo "✓ ONNX Runtime libraries downloaded and extracted"
+        ls -lh onnxruntime-linux-x64-gpu-1.23.2/lib/
+
+    - name: Copy ONNX Runtime to platform package
+      run: |
+        mkdir -p npm-package/packages/linux-x64/lib
+        cp ~/.cache/onnxruntime/onnxruntime-linux-x64-gpu-1.23.2/lib/*.so* npm-package/packages/linux-x64/lib/
+
+        echo "✓ ONNX Runtime libraries copied to platform package"
+        ls -lh npm-package/packages/linux-x64/lib/
+
     - name: Build daemon (release)
       working-directory: rust-crates
       run: |
