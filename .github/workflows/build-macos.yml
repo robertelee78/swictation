@@ -7,6 +7,7 @@ on:
   pull_request:
     branches:
       - main
+  workflow_dispatch:  # Allow manual triggering
 
 env:
   CARGO_TERM_COLOR: always
@@ -181,6 +182,85 @@ jobs:
         echo "Testing memory detection:"
         sysinfo=$(system_profiler SPHardwareDataType)
         echo "$sysinfo" | grep "Memory"
+
+  package-macos:
+    name: Package for npm
+    runs-on: macos-14
+    needs: [build-macos, build-tauri-macos]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+
+    - name: Download daemon artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: swictation-daemon-macos-arm64
+        path: ./artifacts/daemon
+
+    - name: Download UI artifact (if available)
+      uses: actions/download-artifact@v4
+      with:
+        name: swictation-ui-macos-arm64
+        path: ./artifacts/ui
+      continue-on-error: true
+
+    - name: Install npm package dependencies
+      working-directory: npm-package
+      run: npm ci
+
+    - name: Copy binaries to platform package
+      run: |
+        # Copy daemon binary
+        mkdir -p npm-package/packages/darwin-arm64/bin
+        cp ./artifacts/daemon/swictation-daemon npm-package/packages/darwin-arm64/bin/
+        chmod +x npm-package/packages/darwin-arm64/bin/swictation-daemon
+
+        echo "Daemon binary copied:"
+        ls -lh npm-package/packages/darwin-arm64/bin/swictation-daemon
+        file npm-package/packages/darwin-arm64/bin/swictation-daemon
+
+        # Copy UI binary if available (extract from .app bundle)
+        if [ -d ./artifacts/ui/*.app ]; then
+          # Extract binary from Tauri .app bundle
+          echo "UI .app bundle found but extraction not yet implemented"
+        fi
+
+    - name: Verify binaries
+      run: |
+        echo "Platform package contents:"
+        ls -lR npm-package/packages/darwin-arm64/bin/
+
+        echo "Binary verification:"
+        file npm-package/packages/darwin-arm64/bin/* || echo "No binaries found"
+
+        echo "Verify Mach-O arm64 architecture:"
+        lipo -info npm-package/packages/darwin-arm64/bin/swictation-daemon || echo "lipo check failed"
+
+    - name: Sync versions
+      working-directory: npm-package
+      run: npm run version:sync
+
+    - name: Verify versions
+      working-directory: npm-package
+      run: npm run version:verify
+
+    - name: Create package tarball
+      working-directory: npm-package/packages/darwin-arm64
+      run: |
+        npm pack
+        ls -lh *.tgz
+
+    - name: Upload package artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: npm-package-darwin-arm64
+        path: npm-package/packages/darwin-arm64/*.tgz
+        retention-days: 7
 
   performance-benchmark-macos:
     name: Performance Benchmarks (macOS)
