@@ -32,9 +32,15 @@ pub enum HotkeyEvent {
 /// Hotkey-specific display server types (extends base detection with Sway)
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum HotkeyDisplayServer {
+    /// X11 on Linux (uses global-hotkey crate with X11 backend)
     X11,
+    /// macOS (uses global-hotkey crate with CGEvent/NSEvent backend)
+    MacOS,
+    /// Sway compositor on Linux (requires manual config)
     Sway,
+    /// Generic Wayland (compositor-specific integration required)
     Wayland,
+    /// Headless/unknown (no hotkey support)
     Headless,
 }
 
@@ -75,7 +81,7 @@ fn detect_hotkey_server() -> HotkeyDisplayServer {
                 HotkeyDisplayServer::Wayland
             }
         }
-        BaseDisplayServer::MacOS => HotkeyDisplayServer::X11, // global-hotkey supports macOS
+        BaseDisplayServer::MacOS => HotkeyDisplayServer::MacOS,
         BaseDisplayServer::Unknown => HotkeyDisplayServer::Headless,
     }
 }
@@ -111,6 +117,11 @@ impl HotkeyManager {
         match display_server {
             HotkeyDisplayServer::X11 => {
                 info!("Using X11 hotkey backend (direct key grabbing)");
+                Self::new_global_hotkey(config)
+            }
+            HotkeyDisplayServer::MacOS => {
+                info!("Using macOS hotkey backend (CGEvent/NSEvent)");
+                info!("Note: Accessibility permission may be required in System Settings");
                 Self::new_global_hotkey(config)
             }
             HotkeyDisplayServer::Sway => {
@@ -175,7 +186,14 @@ impl HotkeyManager {
             Ok(m) => m,
             Err(e) => {
                 warn!("Failed to initialize global hotkey manager: {}", e);
+                #[cfg(target_os = "macos")]
+                {
+                    warn!("macOS: Grant Accessibility permissions in System Settings:");
+                    warn!("  System Settings → Privacy & Security → Accessibility");
+                    warn!("  Add and enable swictation-daemon-macos");
+                }
                 warn!("Hotkeys disabled - use IPC/CLI for control");
+                warn!("You can still use: swictation toggle");
                 return Ok(None);
             }
         };
