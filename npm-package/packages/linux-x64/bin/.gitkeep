@@ -1,0 +1,6 @@
+# This directory will contain Linux x64 binaries:
+# - swictation-daemon (main voice recognition daemon)
+# - swictation-ui (Tauri-based UI application)
+#
+# Binaries are built by CI/CD (GitHub Actions) or locally via build scripts.
+# They are NOT checked into git.

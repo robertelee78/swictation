@@ -1,0 +1,49 @@
+{
+  "name": "@swictation/darwin-arm64",
+  "version": "0.7.9",
+  "description": "macOS ARM64 (Apple Silicon) binaries for Swictation - voice-to-text dictation with CoreML acceleration",
+  "keywords": [
+    "voice-to-text",
+    "speech-recognition",
+    "dictation",
+    "macos",
+    "apple-silicon",
+    "arm64",
+    "coreml",
+    "onnx"
+  ],
+  "homepage": "https://github.com/robertelee78/swictation",
+  "bugs": {
+    "url": "https://github.com/robertelee78/swictation/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/robertelee78/swictation.git",
+    "directory": "npm-package/packages/darwin-arm64"
+  },
+  "license": "Apache-2.0",
+  "author": "Robert E. Lee <robert@agidreams.us>",
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "files": [
+    "bin/",
+    "lib/",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "metadata": {
+    "distribution": "0.7.9",
+    "daemon": "0.7.5",
+    "ui": "0.1.0",
+    "onnxruntime": "1.22.0",
+    "platform": "darwin-arm64",
+    "buildDate": null,
+    "description": "This package contains pre-built macOS ARM64 (Apple Silicon) binaries for Swictation. It is automatically installed by the main swictation package via optionalDependencies."
+  }
+}

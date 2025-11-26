@@ -1,0 +1,36 @@
+# NPM Ignore for @swictation/linux-x64
+#
+# Only include binaries and libraries in the published package.
+# Everything else is excluded by default.
+
+# Include only these directories
+!bin/
+!lib/
+!README.md
+!package.json
+
+# Exclude common development files
+*.log
+*.tmp
+*.bak
+.DS_Store
+.git/
+.gitignore
+node_modules/
+scripts/
+tests/
+*.test.js
+*.spec.js
+
+# Exclude build artifacts
+*.o
+*.a
+*.so.debug
+*.debug
+core
+core.*
+
+# Exclude documentation (except README.md)
+docs/
+*.md
+!README.md

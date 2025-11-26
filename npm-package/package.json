@@ -1,7 +1,7 @@
 {
   "name": "swictation",
   "version": "0.7.9",
-  "description": "Cross-platform voice-to-text dictation for Linux and macOS with GPU acceleration (NVIDIA CUDA/CoreML), Secretary Mode (60+ natural language commands), Context-Aware Meta-Learning, and pure Rust performance",
+  "description": "Cross-platform voice-to-text dictation for Linux and macOS with GPU acceleration (NVIDIA CUDA/CoreML), Secretary Mode (60+ natural language commands), Context-Aware Meta-Learning, and pure Rust performance. Meta-package that automatically installs platform-specific binaries.",
   "keywords": [
     "voice-to-text",
     "speech-recognition",
@@ -38,16 +38,6 @@
   "files": [
     "bin/",
     "lib/model-downloader.js",
-    "lib/native/swictation-daemon.bin",
-    "lib/native/swictation-daemon-macos",
-    "lib/native/swictation-daemon-macos.bin",
-    "lib/native/swictation-ui",
-    "lib/native/swictation-ui-macos",
-    "lib/native/libonnxruntime.so",
-    "lib/native/libonnxruntime_providers_shared.so",
-    "lib/native/libonnxruntime.dylib",
-    "lib/native/package.json",
-    "lib/native/.gitkeep",
     "config/",
     "src/",
     "docs/",
@@ -56,8 +46,6 @@
     "tests/",
     "postinstall.js",
     "preuninstall.js",
-    "checksums.txt",
-    "build-checksums-macos.txt",
     "README.md"
   ],
   "scripts": {
@@ -66,8 +54,16 @@
     "test": "node test.js",
     "build": "./scripts/build-release.sh",
     "build-macos": "./scripts/build-macos-release.sh",
-    "prepublishOnly": "./scripts/build-release.sh",
-    "build-ui": "../tauri-ui/scripts/build-ui-release.sh"
+    "build-ui": "../tauri-ui/scripts/build-ui-release.sh",
+    "version:sync": "node scripts/sync-versions.js",
+    "version:sync:dry-run": "node scripts/sync-versions.js --dry-run",
+    "version:sync:verbose": "node scripts/sync-versions.js --verbose",
+    "version:bump": "node scripts/bump-version.js",
+    "version:bump:dry-run": "node scripts/bump-version.js --dry-run",
+    "version:bump:verbose": "node scripts/bump-version.js --verbose",
+    "version:verify": "node scripts/verify-versions.js",
+    "version:verify:verbose": "node scripts/verify-versions.js --verbose",
+    "version:verify:allow-missing": "node scripts/verify-versions.js --allow-missing"
   },
   "engines": {
     "node": ">=18.0.0"
@@ -84,6 +80,10 @@
     "chalk": "^4.1.2",
     "inquirer": "^8.2.5",
     "which": "^2.0.2"
+  },
+  "optionalDependencies": {
+    "@swictation/linux-x64": "0.7.9",
+    "@swictation/darwin-arm64": "0.7.9"
   },
   "devDependencies": {
     "eslint": "^8.0.0"

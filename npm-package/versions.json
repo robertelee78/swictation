@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "$comment": "Single source of truth for all version numbers in the Swictation project",
+  "distribution": "0.7.9",
+  "_distribution_comment": "Main npm package version - this is the user-facing version for swictation, @swictation/linux-x64, and @swictation/darwin-arm64. All three packages MUST have the same version.",
+  "components": {
+    "_comment": "Component versions are extracted from Cargo.toml files. These can evolve independently from the distribution version.",
+    "daemon": {
+      "version": "0.7.5",
+      "source": "rust-crates/swictation-daemon/Cargo.toml",
+      "description": "Main daemon binary that handles voice recognition and text injection"
+    },
+    "ui": {
+      "version": "0.1.0",
+      "source": "tauri-ui/src-tauri/Cargo.toml",
+      "description": "Tauri-based UI application for configuration and monitoring"
+    },
+    "context-learning": {
+      "version": "0.1.0",
+      "source": "rust-crates/swictation-context-learning/Cargo.toml",
+      "description": "Context-aware meta-learning module"
+    }
+  },
+  "libraries": {
+    "_comment": "Third-party library versions. These are external dependencies.",
+    "onnxruntime": {
+      "linux-cpu": "1.22.0",
+      "linux-gpu": "1.23.2",
+      "macos-coreml": "1.22.0",
+      "_comment": "macOS uses 1.22.0 due to ORT 1.23.x regression with external data + CoreML. Linux GPU uses 1.23.2 for CUDA 12.9 support.",
+      "_sources": {
+        "linux": "https://github.com/microsoft/onnxruntime/releases",
+        "macos": "https://github.com/microsoft/onnxruntime/releases"
+      }
+    },
+    "cuda": {
+      "version": "12.9",
+      "_comment": "CUDA version for modern GPUs (Turing, Ampere, Ada, Hopper). Legacy GPUs use CUDA 11.8.",
+      "legacy_version": "11.8"
+    },
+    "cudnn": {
+      "version": "9.15.1",
+      "_comment": "cuDNN version for CUDA 12.9. Legacy uses cuDNN compatible with CUDA 11.8."
+    }
+  },
+  "metadata": {
+    "_comment": "Build metadata - updated automatically by build scripts",
+    "last_updated": "2025-11-26T18:37:38.120Z",
+    "schema_version": "1.0.0"
+  }
+}

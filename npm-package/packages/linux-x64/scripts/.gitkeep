@@ -1,0 +1,4 @@
+# This directory will contain build scripts:
+# - build.sh (main build script that compiles Rust binaries)
+#
+# Scripts will be created in later tasks.
