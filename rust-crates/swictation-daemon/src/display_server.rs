@@ -148,63 +148,63 @@ pub fn detect_display_server_with_env(env: &dyn EnvProvider) -> DisplayServerInf
         debug!("  WAYLAND_DISPLAY: {:?}", wayland_display);
         debug!("  DISPLAY: {:?}", x11_display);
 
-    // Evidence-based scoring
-    let mut x11_score = 0;
-    let mut wayland_score = 0;
+        // Evidence-based scoring
+        let mut x11_score = 0;
+        let mut wayland_score = 0;
 
-    // XDG_SESSION_TYPE is most reliable (4 points)
-    match session_type.as_deref() {
-        Some("x11") => x11_score += 4,
-        Some("wayland") => wayland_score += 4,
-        _ => {}
-    }
+        // XDG_SESSION_TYPE is most reliable (4 points)
+        match session_type.as_deref() {
+            Some("x11") => x11_score += 4,
+            Some("wayland") => wayland_score += 4,
+            _ => {}
+        }
 
-    // WAYLAND_DISPLAY is Wayland-specific (2 points)
-    if wayland_display.is_some() {
-        wayland_score += 2;
-    }
+        // WAYLAND_DISPLAY is Wayland-specific (2 points)
+        if wayland_display.is_some() {
+            wayland_score += 2;
+        }
 
-    // DISPLAY can be X11 or XWayland (1 point)
-    if x11_display.is_some() {
-        x11_score += 1;
-    }
+        // DISPLAY can be X11 or XWayland (1 point)
+        if x11_display.is_some() {
+            x11_score += 1;
+        }
 
-    // Determine server type and confidence
-    let (server_type, confidence) = if wayland_score > x11_score {
-        let confidence = if wayland_score >= 4 {
-            ConfidenceLevel::High
-        } else if wayland_score >= 2 {
-            ConfidenceLevel::Medium
+        // Determine server type and confidence
+        let (server_type, confidence) = if wayland_score > x11_score {
+            let confidence = if wayland_score >= 4 {
+                ConfidenceLevel::High
+            } else if wayland_score >= 2 {
+                ConfidenceLevel::Medium
+            } else {
+                ConfidenceLevel::Low
+            };
+            (DisplayServer::Wayland, confidence)
+        } else if x11_score > wayland_score {
+            let confidence = if x11_score >= 4 {
+                ConfidenceLevel::High
+            } else if x11_score >= 2 {
+                ConfidenceLevel::Medium
+            } else {
+                ConfidenceLevel::Low
+            };
+            (DisplayServer::X11, confidence)
         } else {
-            ConfidenceLevel::Low
+            (DisplayServer::Unknown, ConfidenceLevel::Low)
         };
-        (DisplayServer::Wayland, confidence)
-    } else if x11_score > wayland_score {
-        let confidence = if x11_score >= 4 {
-            ConfidenceLevel::High
-        } else if x11_score >= 2 {
-            ConfidenceLevel::Medium
-        } else {
-            ConfidenceLevel::Low
+
+        // Check for GNOME Wayland (special case - wtype doesn't work)
+        let is_gnome_wayland = server_type == DisplayServer::Wayland
+            && desktop
+                .as_ref()
+                .map(|d| d.to_lowercase().contains("gnome"))
+                .unwrap_or(false);
+
+        let info = DisplayServerInfo {
+            server_type,
+            desktop_environment: desktop,
+            is_gnome_wayland,
+            confidence,
         };
-        (DisplayServer::X11, confidence)
-    } else {
-        (DisplayServer::Unknown, ConfidenceLevel::Low)
-    };
-
-    // Check for GNOME Wayland (special case - wtype doesn't work)
-    let is_gnome_wayland = server_type == DisplayServer::Wayland
-        && desktop
-            .as_ref()
-            .map(|d| d.to_lowercase().contains("gnome"))
-            .unwrap_or(false);
-
-    let info = DisplayServerInfo {
-        server_type,
-        desktop_environment: desktop,
-        is_gnome_wayland,
-        confidence,
-    };
 
         info!(
             "Detected display server: {:?} (confidence: {:?})",
