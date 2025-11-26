@@ -100,7 +100,7 @@ export function useWasmUtils(): UseWasmUtilsReturn {
         setState({ isLoaded: true, error: null });
         console.log('[WASM] swictation-wasm-utils loaded successfully');
       })
-      .catch((err) => {
+      .catch((err: unknown) => {
         const error = err instanceof Error ? err : new Error(String(err));
         setState({ isLoaded: false, error });
         console.error('[WASM] Failed to load swictation-wasm-utils:', error);

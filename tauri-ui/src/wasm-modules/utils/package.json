@@ -1,0 +1,20 @@
+{
+  "name": "swictation-wasm-utils",
+  "type": "module",
+  "collaborators": [
+    "Robert E. Lee <robert@agidreams.us>"
+  ],
+  "description": "WebAssembly utilities for swictation UI - metrics calculations and text processing",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "files": [
+    "swictation_wasm_utils_bg.wasm",
+    "swictation_wasm_utils.js",
+    "swictation_wasm_utils.d.ts"
+  ],
+  "main": "swictation_wasm_utils.js",
+  "types": "swictation_wasm_utils.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
