@@ -126,10 +126,7 @@ pub fn calculate_wpm_trend(sessions_json: &str, bucket_size_hours: f64) -> Resul
     for session in sessions {
         // start_time is already a Unix timestamp (i64)
         let bucket_key = session.start_time / bucket_seconds;
-        buckets
-            .entry(bucket_key)
-            .or_default()
-            .push(session.wpm);
+        buckets.entry(bucket_key).or_default().push(session.wpm);
     }
 
     // Return with Unix timestamps instead of formatted strings
