@@ -1,0 +1,361 @@
+name: Release - Build and Publish
+
+on:
+  push:
+    tags:
+      - 'v*'  # Trigger on version tags (e.g., v0.7.9)
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 0.7.9)'
+        required: false
+        type: string
+      dry_run:
+        description: 'Dry run (test without publishing)'
+        required: false
+        type: boolean
+        default: false
+      skip_build:
+        description: 'Skip builds (use existing artifacts for testing)'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  NODE_VERSION: '18'
+
+jobs:
+  # Build Linux binaries and npm package
+  build-linux:
+    name: Build Linux Package
+    if: ${{ !inputs.skip_build }}
+    uses: ./.github/workflows/build-linux.yml
+    secrets: inherit
+
+  # Build macOS binaries and npm package
+  build-macos:
+    name: Build macOS Package
+    if: ${{ !inputs.skip_build }}
+    uses: ./.github/workflows/build-macos.yml
+    secrets: inherit
+
+  # Verify version synchronization before publishing
+  verify-versions:
+    name: Verify Version Sync
+    runs-on: ubuntu-latest
+    needs: [build-linux, build-macos]
+    if: always() && (needs.build-linux.result == 'success' || inputs.skip_build) && (needs.build-macos.result == 'success' || inputs.skip_build)
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+
+    - name: Install dependencies
+      working-directory: npm-package
+      run: npm ci
+
+    - name: Verify version synchronization
+      working-directory: npm-package
+      run: |
+        npm run version:verify
+        echo "✓ All versions synchronized"
+
+    - name: Display versions
+      working-directory: npm-package
+      run: |
+        echo "Distribution version:"
+        node -e "console.log(require('./versions.json').distribution)"
+
+        echo ""
+        echo "Package versions:"
+        node -e "const main = require('./package.json'); const linux = require('./packages/linux-x64/package.json'); const macos = require('./packages/darwin-arm64/package.json'); console.log('  main:', main.version); console.log('  linux-x64:', linux.version); console.log('  darwin-arm64:', macos.version);"
+
+  # Publish platform packages to npm
+  publish-platform-packages:
+    name: Publish Platform Packages
+    runs-on: ubuntu-latest
+    needs: [verify-versions]
+    permissions:
+      contents: read
+      id-token: write  # Required for npm provenance
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        registry-url: 'https://registry.npmjs.org'
+
+    - name: Download Linux package artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: npm-package-linux-x64
+        path: ./artifacts/linux-x64/
+      continue-on-error: ${{ inputs.skip_build }}
+
+    - name: Download macOS package artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: npm-package-darwin-arm64
+        path: ./artifacts/darwin-arm64/
+      continue-on-error: ${{ inputs.skip_build }}
+
+    - name: Extract packages
+      run: |
+        mkdir -p npm-package/packages/linux-x64
+        mkdir -p npm-package/packages/darwin-arm64
+
+        # Extract Linux package if available
+        if [ -f ./artifacts/linux-x64/*.tgz ]; then
+          echo "Extracting Linux package..."
+          tar -xzf ./artifacts/linux-x64/*.tgz -C npm-package/packages/linux-x64 --strip-components=1
+        else
+          echo "⚠️  Linux package not found (may be using existing)"
+        fi
+
+        # Extract macOS package if available
+        if [ -f ./artifacts/darwin-arm64/*.tgz ]; then
+          echo "Extracting macOS package..."
+          tar -xzf ./artifacts/darwin-arm64/*.tgz -C npm-package/packages/darwin-arm64 --strip-components=1
+        else
+          echo "⚠️  macOS package not found (may be using existing)"
+        fi
+
+    - name: Verify npm authentication
+      env:
+        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      run: |
+        npm whoami
+        echo "✓ Authenticated to npm registry"
+
+    - name: Publish @swictation/linux-x64
+      if: ${{ !inputs.dry_run }}
+      env:
+        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      working-directory: npm-package/packages/linux-x64
+      run: |
+        npm publish --provenance --access public
+        echo "✓ @swictation/linux-x64 published"
+
+    - name: Dry run @swictation/linux-x64
+      if: ${{ inputs.dry_run }}
+      working-directory: npm-package/packages/linux-x64
+      run: |
+        npm publish --dry-run --access public
+        echo "✓ @swictation/linux-x64 dry run successful"
+
+    - name: Publish @swictation/darwin-arm64
+      if: ${{ !inputs.dry_run }}
+      env:
+        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      working-directory: npm-package/packages/darwin-arm64
+      run: |
+        npm publish --provenance --access public
+        echo "✓ @swictation/darwin-arm64 published"
+
+    - name: Dry run @swictation/darwin-arm64
+      if: ${{ inputs.dry_run }}
+      working-directory: npm-package/packages/darwin-arm64
+      run: |
+        npm publish --dry-run --access public
+        echo "✓ @swictation/darwin-arm64 dry run successful"
+
+    - name: Get published versions
+      id: versions
+      run: |
+        LINUX_VERSION=$(node -e "console.log(require('./npm-package/packages/linux-x64/package.json').version)")
+        MACOS_VERSION=$(node -e "console.log(require('./npm-package/packages/darwin-arm64/package.json').version)")
+
+        echo "linux_version=$LINUX_VERSION" >> $GITHUB_OUTPUT
+        echo "macos_version=$MACOS_VERSION" >> $GITHUB_OUTPUT
+
+    outputs:
+      linux_version: ${{ steps.versions.outputs.linux_version }}
+      macos_version: ${{ steps.versions.outputs.macos_version }}
+
+  # Wait for npm registry propagation
+  wait-for-packages:
+    name: Wait for Registry Propagation
+    runs-on: ubuntu-latest
+    needs: [publish-platform-packages]
+    if: ${{ !inputs.dry_run }}
+
+    steps:
+    - name: Wait for @swictation/linux-x64
+      run: |
+        VERSION="${{ needs.publish-platform-packages.outputs.linux_version }}"
+        echo "Waiting for @swictation/linux-x64@$VERSION to be available..."
+
+        MAX_ATTEMPTS=60
+        ATTEMPT=0
+        while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+          if npm view @swictation/linux-x64@$VERSION version &>/dev/null; then
+            echo "✓ @swictation/linux-x64@$VERSION is available"
+            break
+          fi
+
+          ATTEMPT=$((ATTEMPT + 1))
+          echo "Attempt $ATTEMPT/$MAX_ATTEMPTS - waiting 5s..."
+          sleep 5
+        done
+
+        if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
+          echo "⚠️  Timeout waiting for package (may still be propagating)"
+        fi
+
+    - name: Wait for @swictation/darwin-arm64
+      run: |
+        VERSION="${{ needs.publish-platform-packages.outputs.macos_version }}"
+        echo "Waiting for @swictation/darwin-arm64@$VERSION to be available..."
+
+        MAX_ATTEMPTS=60
+        ATTEMPT=0
+        while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+          if npm view @swictation/darwin-arm64@$VERSION version &>/dev/null; then
+            echo "✓ @swictation/darwin-arm64@$VERSION is available"
+            break
+          fi
+
+          ATTEMPT=$((ATTEMPT + 1))
+          echo "Attempt $ATTEMPT/$MAX_ATTEMPTS - waiting 5s..."
+          sleep 5
+        done
+
+        if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
+          echo "⚠️  Timeout waiting for package (may still be propagating)"
+        fi
+
+  # Publish main swictation package
+  publish-main-package:
+    name: Publish Main Package
+    runs-on: ubuntu-latest
+    needs: [wait-for-packages]
+    if: always() && (needs.wait-for-packages.result == 'success' || inputs.dry_run)
+    permissions:
+      contents: read
+      id-token: write  # Required for npm provenance
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        registry-url: 'https://registry.npmjs.org'
+
+    - name: Install dependencies
+      working-directory: npm-package
+      run: npm ci
+
+    - name: Verify platform packages are available
+      if: ${{ !inputs.dry_run }}
+      working-directory: npm-package
+      run: |
+        LINUX_VERSION="${{ needs.publish-platform-packages.outputs.linux_version }}"
+        MACOS_VERSION="${{ needs.publish-platform-packages.outputs.macos_version }}"
+
+        echo "Verifying @swictation/linux-x64@$LINUX_VERSION..."
+        npm view @swictation/linux-x64@$LINUX_VERSION version
+
+        echo "Verifying @swictation/darwin-arm64@$MACOS_VERSION..."
+        npm view @swictation/darwin-arm64@$MACOS_VERSION version
+
+        echo "✓ Both platform packages are available"
+
+    - name: Publish swictation
+      if: ${{ !inputs.dry_run }}
+      env:
+        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      working-directory: npm-package
+      run: |
+        npm publish --provenance --access public
+        echo "✓ swictation published"
+
+    - name: Dry run swictation
+      if: ${{ inputs.dry_run }}
+      working-directory: npm-package
+      run: |
+        npm publish --dry-run --access public
+        echo "✓ swictation dry run successful"
+
+    - name: Get main package version
+      id: version
+      run: |
+        VERSION=$(node -e "console.log(require('./npm-package/package.json').version)")
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+  # Create GitHub release
+  create-github-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [publish-main-package]
+    if: always() && needs.publish-main-package.result == 'success' && !inputs.dry_run
+    permissions:
+      contents: write  # Required for creating releases
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Get release notes
+      id: notes
+      run: |
+        VERSION="${{ needs.publish-main-package.outputs.version }}"
+
+        # Extract release notes from CHANGELOG.md if available
+        if [ -f npm-package/CHANGELOG.md ]; then
+          # Get section for this version
+          NOTES=$(awk "/## \[${VERSION}\]/,/## \[/" npm-package/CHANGELOG.md | head -n -1 | tail -n +2)
+        else
+          NOTES="Release version ${VERSION}"
+        fi
+
+        # Save to file for multiline output
+        echo "$NOTES" > release-notes.txt
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v${{ needs.publish-main-package.outputs.version }}
+        name: Release v${{ needs.publish-main-package.outputs.version }}
+        body_path: release-notes.txt
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Summary
+  release-summary:
+    name: Release Summary
+    runs-on: ubuntu-latest
+    needs: [publish-platform-packages, publish-main-package, create-github-release]
+    if: always()
+
+    steps:
+    - name: Display summary
+      run: |
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "🎉 Release Complete"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        echo "Published packages:"
+        echo "  ✓ @swictation/linux-x64@${{ needs.publish-platform-packages.outputs.linux_version }}"
+        echo "  ✓ @swictation/darwin-arm64@${{ needs.publish-platform-packages.outputs.macos_version }}"
+        echo "  ✓ swictation@${{ needs.publish-main-package.outputs.version }}"
+        echo ""
+        echo "Installation:"
+        echo "  npm install -g swictation@${{ needs.publish-main-package.outputs.version }}"
+        echo ""
+        echo "Registry:"
+        echo "  https://www.npmjs.com/package/swictation"
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
