@@ -13,14 +13,13 @@ mod metrics;
 mod socket_utils;
 
 // Primary exports (use these!)
-pub use metrics::{MetricsEvent, MetricsSocket};
-pub use socket_utils::{get_ipc_socket_path, get_metrics_socket_path};
+pub use metrics::MetricsSocket;
+pub use socket_utils::get_metrics_socket_path;
 
 use anyhow::{Context, Result};
 use serde_json::Value;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader};
 use std::os::unix::net::UnixStream as StdUnixStream;
-use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use std::time::Duration;

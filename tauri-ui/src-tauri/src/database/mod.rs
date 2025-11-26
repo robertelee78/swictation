@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
-use chrono::Utc;
-use rusqlite::{params, Connection, Row};
+use rusqlite::{params, Connection};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 

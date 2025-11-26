@@ -1,4 +1,3 @@
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 /// Session summary for history list
