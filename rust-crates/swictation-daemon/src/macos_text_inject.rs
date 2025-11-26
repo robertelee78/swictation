@@ -12,25 +12,25 @@
 //! We must declare the FFI binding manually.
 
 use anyhow::{Context, Result};
-use core_foundation::base::{CFType, TCFType};
+use core_foundation::base::TCFType;
 use core_foundation::boolean::CFBoolean;
 use core_foundation::dictionary::CFDictionary;
 use core_foundation::string::CFString;
-use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation, CGEventType, CGKeyCode};
+use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation, CGKeyCode};
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use foreign_types_shared::ForeignType;
 use std::os::raw::{c_long, c_void};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-/// FFI declaration for CGEventKeyboardSetUnicodeString
-///
-/// This function is not exposed by the core-graphics crate, so we declare it manually.
-/// It allows setting Unicode text content for keyboard events.
-///
-/// CRITICAL: stringLength is CFIndex (c_long on 64-bit) NOT c_uint.
-/// Apple's signature: void CGEventKeyboardSetUnicodeString(CGEventRef event, CFIndex stringLength, const UniChar *unicodeString);
-/// where CFIndex = signed long (64-bit on Apple Silicon)
+// FFI declaration for CGEventKeyboardSetUnicodeString
+//
+// This function is not exposed by the core-graphics crate, so we declare it manually.
+// It allows setting Unicode text content for keyboard events.
+//
+// CRITICAL: stringLength is CFIndex (c_long on 64-bit) NOT c_uint.
+// Apple's signature: void CGEventKeyboardSetUnicodeString(CGEventRef event, CFIndex stringLength, const UniChar *unicodeString);
+// where CFIndex = signed long (64-bit on Apple Silicon)
 #[link(name = "CoreGraphics", kind = "framework")]
 extern "C" {
     fn CGEventKeyboardSetUnicodeString(
@@ -40,10 +40,10 @@ extern "C" {
     );
 }
 
-/// FFI declarations for Accessibility permission APIs
-///
-/// WARNING: On macOS Ventura 13.0+, these may return incorrect values
-/// if permissions are rapidly toggled in System Settings.
+// FFI declarations for Accessibility permission APIs
+//
+// WARNING: On macOS Ventura 13.0+, these may return incorrect values
+// if permissions are rapidly toggled in System Settings.
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
     /// Check if process has Accessibility permissions (simple check, no prompt)

@@ -121,17 +121,17 @@ pub fn detect_display_server() -> DisplayServerInfo {
 
 /// Internal detection function that accepts environment provider (for testing)
 /// This is public so integration tests can inject mock environments
-pub fn detect_display_server_with_env(env: &dyn EnvProvider) -> DisplayServerInfo {
+pub fn detect_display_server_with_env(_env: &dyn EnvProvider) -> DisplayServerInfo {
     // Check for macOS first (platform-level detection)
     #[cfg(target_os = "macos")]
     {
         info!("Detected macOS window server");
-        return DisplayServerInfo {
+        DisplayServerInfo {
             server_type: DisplayServer::MacOS,
             desktop_environment: Some("macOS".to_string()),
             is_gnome_wayland: false,
             confidence: ConfidenceLevel::High,
-        };
+        }
     }
 
     // Linux display server detection (X11/Wayland)

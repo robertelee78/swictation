@@ -11,8 +11,13 @@
 //! This version properly handles <KEY:...> markers by sending actual key events
 
 use anyhow::{Context, Result};
+use tracing::info;
+
+// Linux-specific imports
+#[cfg(target_os = "linux")]
 use std::process::Command;
-use tracing::{debug, info};
+#[cfg(target_os = "linux")]
+use tracing::debug;
 
 use crate::display_server::{
     detect_available_tools, detect_display_server, select_best_tool, DisplayServerInfo,
@@ -80,7 +85,7 @@ impl TextInjector {
         // macOS: Delegate to macOS injector
         #[cfg(target_os = "macos")]
         {
-            return self.macos_injector.inject_text(text);
+            self.macos_injector.inject_text(text)
         }
 
         // Linux: Use command-line tools

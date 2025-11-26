@@ -31,7 +31,7 @@ pub fn get_socket_dir() -> Result<PathBuf> {
         std::fs::set_permissions(&socket_dir, permissions)
             .context("Failed to set socket directory permissions")?;
 
-        return Ok(socket_dir);
+        Ok(socket_dir)
     }
 
     // Linux: Try XDG_RUNTIME_DIR first (best practice for sockets)
