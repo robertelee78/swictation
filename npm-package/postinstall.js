@@ -791,6 +791,19 @@ async function downloadGPULibraries() {
   log('green', '\n✓ NVIDIA GPU detected!');
   log('cyan', '📦 Detecting GPU architecture and downloading optimized libraries...\n');
 
+  // Get platform package lib directory for GPU libraries
+  const { resolveBinaryPaths } = require('./src/resolve-binary');
+  let gpuLibsDir;
+  try {
+    const binaryPaths = resolveBinaryPaths();
+    gpuLibsDir = binaryPaths.libDir;
+    log('cyan', `   GPU libraries will be installed to platform package: ${gpuLibsDir}\n`);
+  } catch (err) {
+    log('red', '   ✗ Platform package not found - cannot install GPU libraries');
+    log('cyan', '   This should not happen as platform package was verified earlier');
+    throw new Error('Platform package lib directory not found');
+  }
+
   // Detect GPU compute capability
   const gpuInfo = detectGPUComputeCapability();
 
@@ -825,9 +838,6 @@ async function downloadGPULibraries() {
   const releaseUrl = `https://github.com/robertelee78/swictation/releases/download/gpu-libs-v${GPU_LIBS_VERSION}/cuda-libs-${variant}.tar.gz`;
   const tmpDir = path.join(os.tmpdir(), 'swictation-gpu-install');
   const tarPath = path.join(tmpDir, `cuda-libs-${variant}.tar.gz`);
-
-  // Extract to user's home directory for GPU libs (shared across npm installs)
-  const gpuLibsDir = path.join(os.homedir(), '.local', 'share', 'swictation', 'gpu-libs');
 
   try {
     // Load checksums for verification
