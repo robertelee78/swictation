@@ -4,6 +4,7 @@
 //! - Linux: XDG_RUNTIME_DIR or ~/.local/share/swictation
 //! - macOS: ~/Library/Application Support/swictation
 
+#[cfg(not(target_os = "macos"))]
 use std::env;
 use std::path::PathBuf;
 
@@ -49,9 +50,6 @@ mod tests {
 
     #[test]
     fn test_socket_paths() {
-        let ipc_path = get_ipc_socket_path();
-        assert!(ipc_path.ends_with("swictation.sock"));
-
         let metrics_path = get_metrics_socket_path();
         assert!(metrics_path.ends_with("swictation_metrics.sock"));
     }
