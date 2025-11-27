@@ -1303,10 +1303,80 @@ function generateSystemdService(ortLibPath) {
     // 2. Install UI service - detect environment and use appropriate UI
     // Sway/wlroots compositors: Use Python Qt tray (better Wayland support)
     // GNOME/KDE/X11: Use Tauri UI binary
-    const isSway = !!process.env.SWAYSOCK || process.env.XDG_CURRENT_DESKTOP?.toLowerCase().includes('sway');
-    const isWlroots = isSway || process.env.XDG_CURRENT_DESKTOP?.toLowerCase().includes('hyprland') ||
-                      process.env.XDG_CURRENT_DESKTOP?.toLowerCase().includes('river');
+
+    // CRITICAL: Environment variables may not be set during npm postinstall
+    // So we use multiple detection methods that work regardless of environment:
+    // 1. Check running compositor processes (most reliable)
+    // 2. Check for compositor sockets
+    // 3. Fall back to environment variables if available
+
+    let isSway = false;
+    let isHyprland = false;
+    let isRiver = false;
+    let detectedCompositor = 'unknown';
+
+    // Method 1: Check running processes (works even without env vars)
+    try {
+      const pgrepSway = execSync('pgrep -x sway 2>/dev/null || true', { encoding: 'utf8' }).trim();
+      if (pgrepSway) {
+        isSway = true;
+        detectedCompositor = 'sway';
+      }
+    } catch (e) { /* ignore */ }
+
+    try {
+      const pgrepHyprland = execSync('pgrep -x Hyprland 2>/dev/null || true', { encoding: 'utf8' }).trim();
+      if (pgrepHyprland) {
+        isHyprland = true;
+        detectedCompositor = 'hyprland';
+      }
+    } catch (e) { /* ignore */ }
+
+    try {
+      const pgrepRiver = execSync('pgrep -x river 2>/dev/null || true', { encoding: 'utf8' }).trim();
+      if (pgrepRiver) {
+        isRiver = true;
+        detectedCompositor = 'river';
+      }
+    } catch (e) { /* ignore */ }
+
+    // Method 2: Check for sway IPC socket
+    const uid = process.getuid();
+    const swaySocketDir = `/run/user/${uid}`;
+    try {
+      if (fs.existsSync(swaySocketDir)) {
+        const files = fs.readdirSync(swaySocketDir);
+        if (files.some(f => f.startsWith('sway-ipc'))) {
+          isSway = true;
+          detectedCompositor = 'sway';
+        }
+      }
+    } catch (e) { /* ignore */ }
+
+    // Method 3: Check Hyprland socket directory
+    try {
+      const hyprDir = path.join(swaySocketDir, 'hypr');
+      if (fs.existsSync(hyprDir)) {
+        isHyprland = true;
+        detectedCompositor = 'hyprland';
+      }
+    } catch (e) { /* ignore */ }
+
+    // Method 4: Environment variables (fallback, may not be available)
+    if (!isSway && !isHyprland && !isRiver) {
+      isSway = !!process.env.SWAYSOCK || process.env.XDG_CURRENT_DESKTOP?.toLowerCase().includes('sway');
+      isHyprland = process.env.XDG_CURRENT_DESKTOP?.toLowerCase().includes('hyprland') || !!process.env.HYPRLAND_INSTANCE_SIGNATURE;
+      isRiver = process.env.XDG_CURRENT_DESKTOP?.toLowerCase().includes('river');
+
+      if (isSway) detectedCompositor = 'sway';
+      else if (isHyprland) detectedCompositor = 'hyprland';
+      else if (isRiver) detectedCompositor = 'river';
+    }
+
+    const isWlroots = isSway || isHyprland || isRiver;
     const isWayland = !!process.env.WAYLAND_DISPLAY || process.env.XDG_SESSION_TYPE === 'wayland';
+
+    log('cyan', `  Compositor detection: ${detectedCompositor} (wlroots: ${isWlroots})`);
 
     let uiServiceContent;
     const uiServiceDest = path.join(systemdDir, 'swictation-ui.service');
@@ -1315,7 +1385,7 @@ function generateSystemdService(ortLibPath) {
       // Use Python Qt tray for wlroots-based compositors (Sway, Hyprland, River)
       // These compositors have better Qt/PySide6 tray support than Tauri/libappindicator
       const pythonTrayPath = path.join(__dirname, 'src', 'ui', 'swictation_tray.py');
-      log('cyan', `  Detected wlroots compositor (${isSway ? 'Sway' : 'other'}) - using Python Qt tray`);
+      log('cyan', `  Detected wlroots compositor: ${detectedCompositor} - using Python Qt tray`);
 
       uiServiceContent = `[Unit]
 Description=Swictation System Tray (Python/Qt)
