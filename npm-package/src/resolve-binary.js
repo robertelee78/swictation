@@ -62,48 +62,70 @@ function detectPlatform() {
 /**
  * Find the platform package in node_modules
  *
- * Searches upward through parent directories to handle:
- * - Global installs: npm install -g swictation
- * - Local installs: npm install swictation
+ * Searches multiple locations to handle:
+ * - Global installs: npm install -g swictation (sibling packages)
+ * - Local installs: npm install swictation (nested in node_modules)
  * - Development: working within the repo
  */
 function findPlatformPackage(packageName) {
-  // Start from current directory
-  let currentDir = __dirname;
+  const packageShortName = packageName.replace('@agidreams/', '');
 
-  // Try up to 10 levels up (should be more than enough)
-  for (let i = 0; i < 10; i++) {
-    // Check for node_modules at this level
-    const nodeModulesDir = path.join(currentDir, 'node_modules');
-
-    if (fs.existsSync(nodeModulesDir)) {
-      // Check for @agidreams scope directory
-      const scopeDir = path.join(nodeModulesDir, '@agidreams');
-
-      if (fs.existsSync(scopeDir)) {
-        // Extract package name without scope (@agidreams/linux-x64 -> linux-x64)
-        const packageShortName = packageName.replace('@agidreams/', '');
-        const packageDir = path.join(scopeDir, packageShortName);
-
-        if (fs.existsSync(packageDir)) {
-          // Verify it has a package.json
-          const packageJsonPath = path.join(packageDir, 'package.json');
-          if (fs.existsSync(packageJsonPath)) {
-            return packageDir;
-          }
+  // Helper to check if package exists at a given node_modules path
+  function checkNodeModules(nodeModulesDir) {
+    const scopeDir = path.join(nodeModulesDir, '@agidreams');
+    if (fs.existsSync(scopeDir)) {
+      const packageDir = path.join(scopeDir, packageShortName);
+      if (fs.existsSync(packageDir)) {
+        const packageJsonPath = path.join(packageDir, 'package.json');
+        if (fs.existsSync(packageJsonPath)) {
+          return packageDir;
         }
       }
     }
+    return null;
+  }
 
-    // Move up one directory
+  // Strategy 1: Check for sibling package (global installs)
+  // If we're at /usr/local/lib/node_modules/swictation/src,
+  // the platform package would be at /usr/local/lib/node_modules/@agidreams/linux-x64
+  let currentDir = __dirname;
+  for (let i = 0; i < 5; i++) {
     const parentDir = path.dirname(currentDir);
-
-    // If we've reached the root, stop
-    if (parentDir === currentDir) {
-      break;
+    // Check if parent is a node_modules directory
+    if (path.basename(parentDir) === 'node_modules') {
+      const result = checkNodeModules(parentDir);
+      if (result) return result;
     }
-
     currentDir = parentDir;
+    if (parentDir === currentDir) break;
+  }
+
+  // Strategy 2: Search upward for nested node_modules (local installs)
+  currentDir = __dirname;
+  for (let i = 0; i < 10; i++) {
+    const nodeModulesDir = path.join(currentDir, 'node_modules');
+    if (fs.existsSync(nodeModulesDir)) {
+      const result = checkNodeModules(nodeModulesDir);
+      if (result) return result;
+    }
+    const parentDir = path.dirname(currentDir);
+    if (parentDir === currentDir) break;
+    currentDir = parentDir;
+  }
+
+  // Strategy 3: Check common global npm locations
+  const globalPaths = [
+    '/usr/local/lib/node_modules',
+    '/usr/lib/node_modules',
+    path.join(os.homedir(), '.npm-global', 'lib', 'node_modules'),
+    path.join(os.homedir(), 'node_modules')
+  ];
+
+  for (const globalPath of globalPaths) {
+    if (fs.existsSync(globalPath)) {
+      const result = checkNodeModules(globalPath);
+      if (result) return result;
+    }
   }
 
   return null;

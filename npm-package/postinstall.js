@@ -2608,18 +2608,49 @@ async function main() {
     // Platform and basic checks
     checkPlatform();
 
-    // Verify platform package installation
-    const { resolveBinaryPaths, isPlatformPackageInstalled } = require('./src/resolve-binary');
+    // Verify platform package installation - auto-install if missing
+    const { resolveBinaryPaths, isPlatformPackageInstalled, detectPlatform } = require('./src/resolve-binary');
 
     if (!isPlatformPackageInstalled()) {
-      log('red', '\n❌ Platform package not installed');
-      log('yellow', '   npm optionalDependencies failed to install the correct platform package');
-      log('cyan', '   This usually means:');
-      log('cyan', '     1. You\'re on an unsupported platform');
-      log('cyan', '     2. The platform package build is missing from npm');
-      log('cyan', '     3. npm\'s optional dependency resolution failed');
-      log('cyan', '\n   Try: npm install -g swictation --force');
-      throw new Error('Platform package not found');
+      log('yellow', '\n⚠ Platform package not installed automatically');
+      log('cyan', '   Installing platform-specific binaries...');
+
+      // Determine the correct platform package
+      const platformInfo = detectPlatform();
+      if (platformInfo.supported === false) {
+        log('red', `\n❌ Unsupported platform: ${platformInfo.platform}-${platformInfo.arch}`);
+        log('yellow', '   Swictation supports linux-x64 and darwin-arm64 only');
+        throw new Error(platformInfo.error);
+      }
+
+      const packageName = platformInfo.packageName;
+      const packageVersion = require('./package.json').version;
+
+      log('cyan', `   Package: ${packageName}@${packageVersion}`);
+
+      try {
+        // Install the platform package globally
+        // Use --global-style to install as sibling in global node_modules
+        execSync(`npm install -g ${packageName}@${packageVersion}`, {
+          stdio: 'inherit',
+          encoding: 'utf8'
+        });
+        log('green', `✓ Successfully installed ${packageName}`);
+
+        // Clear require cache and re-check
+        delete require.cache[require.resolve('./src/resolve-binary')];
+        const { isPlatformPackageInstalled: recheckInstalled } = require('./src/resolve-binary');
+
+        if (!recheckInstalled()) {
+          log('red', '\n❌ Platform package installation completed but still not detected');
+          log('yellow', '   This may be a path issue. Try running: npm install -g swictation --force');
+          throw new Error('Platform package not found after installation');
+        }
+      } catch (installErr) {
+        log('red', `\n❌ Failed to install platform package: ${installErr.message}`);
+        log('yellow', `   Try manually: npm install -g ${packageName}`);
+        throw new Error('Platform package installation failed');
+      }
     }
 
     const binaryPaths = resolveBinaryPaths();
