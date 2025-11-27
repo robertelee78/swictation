@@ -207,10 +207,17 @@ jobs:
         ls -lh tauri-ui/src-tauri/target/release/bundle/deb/ || echo "DEB not found"
         ls -lh tauri-ui/src-tauri/target/release/bundle/appimage/ || echo "AppImage not found"
 
-    - name: Upload Tauri artifacts
+    - name: Upload UI binary artifact
       uses: actions/upload-artifact@v4
       with:
         name: swictation-ui-linux-x64
+        path: tauri-ui/src-tauri/target/release/swictation-ui
+        retention-days: 7
+
+    - name: Upload Tauri bundle artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: swictation-ui-bundle-linux-x64
         path: |
           tauri-ui/src-tauri/target/release/bundle/deb/**/*.deb
           tauri-ui/src-tauri/target/release/bundle/appimage/**/*.AppImage
@@ -236,12 +243,11 @@ jobs:
         name: swictation-daemon-linux-x64
         path: ./artifacts/daemon
 
-    - name: Download UI artifact (if available)
+    - name: Download UI artifact
       uses: actions/download-artifact@v4
       with:
         name: swictation-ui-linux-x64
         path: ./artifacts/ui
-      continue-on-error: true
 
     - name: Install npm package dependencies
       working-directory: npm-package
@@ -258,10 +264,17 @@ jobs:
         ls -lh npm-package/packages/linux-x64/bin/swictation-daemon
         file npm-package/packages/linux-x64/bin/swictation-daemon
 
-        # Copy UI binary if available (extract from AppImage or DEB)
-        if [ -f ./artifacts/ui/*.AppImage ]; then
-          # Extract AppImage (TODO: implement extraction logic)
-          echo "UI AppImage found but extraction not yet implemented"
+        # Copy UI binary
+        if [ -f ./artifacts/ui/swictation-ui ]; then
+          cp ./artifacts/ui/swictation-ui npm-package/packages/linux-x64/bin/
+          chmod +x npm-package/packages/linux-x64/bin/swictation-ui
+          echo "UI binary copied:"
+          ls -lh npm-package/packages/linux-x64/bin/swictation-ui
+          file npm-package/packages/linux-x64/bin/swictation-ui
+        else
+          echo "ERROR: UI binary not found in artifacts!"
+          ls -la ./artifacts/ui/ || echo "UI artifacts directory not found"
+          exit 1
         fi
 
     - name: Verify binaries
