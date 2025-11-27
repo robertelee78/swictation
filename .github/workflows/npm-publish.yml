@@ -1,12 +1,15 @@
 name: NPM Package Build and Publish
 
+# NOTE: This workflow builds but does NOT publish to npm on tags.
+# For releases, use release.yml which properly publishes platform packages
+# BEFORE the main package (required for optionalDependencies to work).
+
 on:
   push:
     branches:
       - main
       - rust-migration
-    tags:
-      - 'v*'
+    # REMOVED: tags: - 'v*'  -- releases handled by release.yml
   pull_request:
     branches:
       - main
@@ -123,13 +126,8 @@ jobs:
         npm pack
         mv swictation-*.tgz ../
 
-    - name: Publish to npm (with provenance)
-      if: startsWith(github.ref, 'refs/tags/')
-      env:
-        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      run: |
-        cd npm-package
-        npm publish --provenance --access public
+    # NOTE: Publishing is handled by release.yml which ensures platform packages
+    # are published first. This workflow only builds and creates artifacts.
 
   create-release:
     if: startsWith(github.ref, 'refs/tags/')
