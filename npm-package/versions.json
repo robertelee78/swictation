@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft-07/schema#",
   "$comment": "Single source of truth for all version numbers in the Swictation project",
-  "distribution": "0.7.15",
+  "distribution": "0.7.16",
   "_distribution_comment": "Main npm package version - this is the user-facing version for swictation, @agidreams/linux-x64, and @agidreams/darwin-arm64. All three packages MUST have the same version.",
   "components": {
     "_comment": "Component versions are extracted from Cargo.toml files. These can evolve independently from the distribution version.",
@@ -45,7 +45,7 @@
   },
   "metadata": {
     "_comment": "Build metadata - updated automatically by build scripts",
-    "last_updated": "2025-11-27T02:17:16.722Z",
+    "last_updated": "2025-11-27T03:27:27.519Z",
     "schema_version": "1.0.0"
   }
 }

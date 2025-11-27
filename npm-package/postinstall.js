@@ -1300,22 +1300,66 @@ function generateSystemdService(ortLibPath) {
       }
     }
 
-    // 2. Install UI service (template-based, like daemon service)
-    const uiServiceTemplate = path.join(__dirname, 'templates', 'swictation-ui.service.template');
-    if (fs.existsSync(uiServiceTemplate)) {
-      let uiTemplate = fs.readFileSync(uiServiceTemplate, 'utf8');
+    // 2. Install UI service - detect environment and use appropriate UI
+    // Sway/wlroots compositors: Use Python Qt tray (better Wayland support)
+    // GNOME/KDE/X11: Use Tauri UI binary
+    const isSway = !!process.env.SWAYSOCK || process.env.XDG_CURRENT_DESKTOP?.toLowerCase().includes('sway');
+    const isWlroots = isSway || process.env.XDG_CURRENT_DESKTOP?.toLowerCase().includes('hyprland') ||
+                      process.env.XDG_CURRENT_DESKTOP?.toLowerCase().includes('river');
+    const isWayland = !!process.env.WAYLAND_DISPLAY || process.env.XDG_SESSION_TYPE === 'wayland';
 
-      // Replace placeholders with platform package UI binary path
-      uiTemplate = uiTemplate.replace(/__INSTALL_DIR__/g, binaryPaths.binDir);
-      uiTemplate = uiTemplate.replace(/__DISPLAY__/g, xDisplay || ':0');
-      uiTemplate = uiTemplate.replace(/__WAYLAND_DISPLAY__/g, waylandDisplay || 'wayland-0');
+    let uiServiceContent;
+    const uiServiceDest = path.join(systemdDir, 'swictation-ui.service');
 
-      const uiServiceDest = path.join(systemdDir, 'swictation-ui.service');
-      fs.writeFileSync(uiServiceDest, uiTemplate);
-      log('green', `✓ Installed UI service: ${uiServiceDest}`);
+    if (isWlroots) {
+      // Use Python Qt tray for wlroots-based compositors (Sway, Hyprland, River)
+      // These compositors have better Qt/PySide6 tray support than Tauri/libappindicator
+      const pythonTrayPath = path.join(__dirname, 'src', 'ui', 'swictation_tray.py');
+      log('cyan', `  Detected wlroots compositor (${isSway ? 'Sway' : 'other'}) - using Python Qt tray`);
+
+      uiServiceContent = `[Unit]
+Description=Swictation System Tray (Python/Qt)
+After=swictation-daemon.service
+Requires=swictation-daemon.service
+BindsTo=swictation-daemon.service
+PartOf=swictation-daemon.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 ${pythonTrayPath}
+Restart=on-failure
+RestartSec=5
+
+Environment="DISPLAY=${xDisplay || ':0'}"
+Environment="WAYLAND_DISPLAY=${waylandDisplay || 'wayland-1'}"
+Environment="QT_QPA_PLATFORM=wayland"
+Environment="XDG_RUNTIME_DIR=/run/user/${process.getuid()}"
+
+MemoryMax=100M
+CPUQuota=10%
+
+[Install]
+WantedBy=default.target
+`;
+      fs.writeFileSync(uiServiceDest, uiServiceContent);
+      log('green', `✓ Installed Python Qt tray service: ${uiServiceDest}`);
     } else {
-      log('yellow', `⚠️  Warning: UI service template not found at ${uiServiceTemplate}`);
-      log('yellow', '   You can manually create it later');
+      // Use Tauri UI for GNOME, KDE, or X11 environments
+      const uiServiceTemplate = path.join(__dirname, 'templates', 'swictation-ui.service.template');
+      if (fs.existsSync(uiServiceTemplate)) {
+        let uiTemplate = fs.readFileSync(uiServiceTemplate, 'utf8');
+
+        // Replace placeholders with platform package UI binary path
+        uiTemplate = uiTemplate.replace(/__INSTALL_DIR__/g, binaryPaths.binDir);
+        uiTemplate = uiTemplate.replace(/__DISPLAY__/g, xDisplay || ':0');
+        uiTemplate = uiTemplate.replace(/__WAYLAND_DISPLAY__/g, waylandDisplay || 'wayland-0');
+
+        fs.writeFileSync(uiServiceDest, uiTemplate);
+        log('green', `✓ Installed Tauri UI service: ${uiServiceDest}`);
+      } else {
+        log('yellow', `⚠️  Warning: UI service template not found at ${uiServiceTemplate}`);
+        log('yellow', '   You can manually create it later');
+      }
     }
 
     // CRITICAL: Reload systemd to pick up service file changes
