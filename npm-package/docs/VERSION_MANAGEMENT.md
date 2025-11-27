@@ -16,8 +16,8 @@ npm install -g swictation@0.7.9
 
 **Critical Rule:** The following packages **MUST always have the same version**:
 - `swictation` (main package)
-- `@swictation/linux-x64` (Linux binaries)
-- `@swictation/darwin-arm64` (macOS binaries)
+- `@agidreams/linux-x64` (Linux binaries)
+- `@agidreams/darwin-arm64` (macOS binaries)
 
 ### Component Versions (Independent)
 
@@ -127,7 +127,7 @@ npm run version:verify:allow-missing
 The verification script checks:
 - Main package.json version matches distribution version in versions.json
 - optionalDependencies versions match distribution version
-- Platform packages (@swictation/linux-x64, @swictation/darwin-arm64) match distribution version
+- Platform packages (@agidreams/linux-x64, @agidreams/darwin-arm64) match distribution version
 
 Exit codes:
 - **0**: All versions synchronized (safe to publish)
@@ -186,7 +186,7 @@ Each platform package includes build metadata:
 
 ```json
 {
-  "name": "@swictation/linux-x64",
+  "name": "@agidreams/linux-x64",
   "version": "0.7.9",
   "metadata": {
     "distribution": "0.7.9",

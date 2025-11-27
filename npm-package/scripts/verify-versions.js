@@ -4,7 +4,7 @@
  * Version Verification Script
  *
  * Validates that all package.json files have synchronized versions before publishing.
- * Ensures swictation, @swictation/linux-x64, and @swictation/darwin-arm64 all have
+ * Ensures swictation, @agidreams/linux-x64, and @agidreams/darwin-arm64 all have
  * the same version as specified in versions.json.
  *
  * Usage:
@@ -143,17 +143,17 @@ function verifyPackageJson(filePath, expectedVersion, packageName, isMainPackage
 
   // For main package, verify optionalDependencies
   if (isMainPackage && pkg.optionalDependencies) {
-    if (pkg.optionalDependencies['@swictation/linux-x64']) {
-      const linuxVersion = pkg.optionalDependencies['@swictation/linux-x64'];
+    if (pkg.optionalDependencies['@agidreams/linux-x64']) {
+      const linuxVersion = pkg.optionalDependencies['@agidreams/linux-x64'];
       if (linuxVersion !== expectedVersion) {
-        errors.push(`optionalDependencies.@swictation/linux-x64 mismatch: ${linuxVersion} (expected ${expectedVersion})`);
+        errors.push(`optionalDependencies.@agidreams/linux-x64 mismatch: ${linuxVersion} (expected ${expectedVersion})`);
       }
     }
 
-    if (pkg.optionalDependencies['@swictation/darwin-arm64']) {
-      const macosVersion = pkg.optionalDependencies['@swictation/darwin-arm64'];
+    if (pkg.optionalDependencies['@agidreams/darwin-arm64']) {
+      const macosVersion = pkg.optionalDependencies['@agidreams/darwin-arm64'];
       if (macosVersion !== expectedVersion) {
-        errors.push(`optionalDependencies.@swictation/darwin-arm64 mismatch: ${macosVersion} (expected ${expectedVersion})`);
+        errors.push(`optionalDependencies.@agidreams/darwin-arm64 mismatch: ${macosVersion} (expected ${expectedVersion})`);
       }
     }
   }
@@ -188,8 +188,8 @@ function main() {
   // Track results
   const results = {
     main: verifyPackageJson(mainPackageFile, expectedVersion, 'swictation (main)', true),
-    linux: verifyPackageJson(linuxPackageFile, expectedVersion, '@swictation/linux-x64', false),
-    macos: verifyPackageJson(macosPackageFile, expectedVersion, '@swictation/darwin-arm64', false)
+    linux: verifyPackageJson(linuxPackageFile, expectedVersion, '@agidreams/linux-x64', false),
+    macos: verifyPackageJson(macosPackageFile, expectedVersion, '@agidreams/darwin-arm64', false)
   };
 
   // Summary
@@ -199,8 +199,8 @@ function main() {
 
   const packages = [
     { name: 'swictation (main)', result: results.main },
-    { name: '@swictation/linux-x64', result: results.linux },
-    { name: '@swictation/darwin-arm64', result: results.macos }
+    { name: '@agidreams/linux-x64', result: results.linux },
+    { name: '@agidreams/darwin-arm64', result: results.macos }
   ];
 
   let validCount = 0;

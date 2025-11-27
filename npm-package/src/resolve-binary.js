@@ -5,8 +5,8 @@
  * Works with postinstall.js GPU detection to ensure correct library paths.
  *
  * Platform packages:
- * - @swictation/linux-x64: Linux x86_64 binaries + ONNX Runtime
- * - @swictation/darwin-arm64: macOS ARM64 binaries + CoreML ONNX Runtime
+ * - @agidreams/linux-x64: Linux x86_64 binaries + ONNX Runtime
+ * - @agidreams/darwin-arm64: macOS ARM64 binaries + CoreML ONNX Runtime
  *
  * After platform package is found, postinstall.js will:
  * - Detect GPU (NVIDIA/AMD/Intel)
@@ -30,7 +30,7 @@ function detectPlatform() {
     return {
       platform: 'linux',
       arch: 'x64',
-      packageName: '@swictation/linux-x64',
+      packageName: '@agidreams/linux-x64',
       binaries: {
         daemon: 'swictation-daemon',
         ui: 'swictation-ui'
@@ -42,7 +42,7 @@ function detectPlatform() {
     return {
       platform: 'darwin',
       arch: 'arm64',
-      packageName: '@swictation/darwin-arm64',
+      packageName: '@agidreams/darwin-arm64',
       binaries: {
         daemon: 'swictation-daemon',
         ui: 'swictation-ui'
@@ -77,12 +77,12 @@ function findPlatformPackage(packageName) {
     const nodeModulesDir = path.join(currentDir, 'node_modules');
 
     if (fs.existsSync(nodeModulesDir)) {
-      // Check for @swictation scope directory
-      const scopeDir = path.join(nodeModulesDir, '@swictation');
+      // Check for @agidreams scope directory
+      const scopeDir = path.join(nodeModulesDir, '@agidreams');
 
       if (fs.existsSync(scopeDir)) {
-        // Extract package name without scope (@swictation/linux-x64 -> linux-x64)
-        const packageShortName = packageName.replace('@swictation/', '');
+        // Extract package name without scope (@agidreams/linux-x64 -> linux-x64)
+        const packageShortName = packageName.replace('@agidreams/', '');
         const packageDir = path.join(scopeDir, packageShortName);
 
         if (fs.existsSync(packageDir)) {
@@ -132,12 +132,12 @@ function verifyBinaries(binDir, binaries) {
  * {
  *   platform: 'linux' | 'darwin',
  *   arch: 'x64' | 'arm64',
- *   packageName: '@swictation/linux-x64' | '@swictation/darwin-arm64',
- *   packageDir: '/path/to/node_modules/@swictation/linux-x64',
- *   binDir: '/path/to/node_modules/@swictation/linux-x64/bin',
- *   libDir: '/path/to/node_modules/@swictation/linux-x64/lib',
- *   daemon: '/path/to/node_modules/@swictation/linux-x64/bin/swictation-daemon',
- *   ui: '/path/to/node_modules/@swictation/linux-x64/bin/swictation-ui'
+ *   packageName: '@agidreams/linux-x64' | '@agidreams/darwin-arm64',
+ *   packageDir: '/path/to/node_modules/@agidreams/linux-x64',
+ *   binDir: '/path/to/node_modules/@agidreams/linux-x64/bin',
+ *   libDir: '/path/to/node_modules/@agidreams/linux-x64/lib',
+ *   daemon: '/path/to/node_modules/@agidreams/linux-x64/bin/swictation-daemon',
+ *   ui: '/path/to/node_modules/@agidreams/linux-x64/bin/swictation-ui'
  * }
  *
  * libDir is where postinstall.js will download GPU-specific libraries:

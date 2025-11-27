@@ -1,4 +1,4 @@
-# @swictation/darwin-arm64
+# @agidreams/darwin-arm64
 
 macOS ARM64 (Apple Silicon) binaries for [Swictation](https://github.com/robertelee78/swictation) - cross-platform voice-to-text dictation with CoreML acceleration.
 
@@ -14,7 +14,7 @@ Install the main package instead:
 npm install -g swictation
 ```
 
-The main package will automatically install `@swictation/darwin-arm64` on macOS ARM64 systems via npm's `optionalDependencies` mechanism.
+The main package will automatically install `@agidreams/darwin-arm64` on macOS ARM64 systems via npm's `optionalDependencies` mechanism.
 
 ## Package Contents
 
@@ -53,8 +53,8 @@ This package is part of Swictation's platform-specific distribution strategy:
 
 ```
 swictation (main package)
-├── @swictation/linux-x64 (Linux binaries)
-└── @swictation/darwin-arm64 (macOS binaries) - THIS PACKAGE
+├── @agidreams/linux-x64 (Linux binaries)
+└── @agidreams/darwin-arm64 (macOS binaries) - THIS PACKAGE
 ```
 
 When you install `swictation`, npm automatically installs the correct platform package for your system.

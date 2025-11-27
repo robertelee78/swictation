@@ -278,8 +278,8 @@ Swictation uses a **platform-specific package architecture** similar to esbuild 
 
 ```
 swictation (main package)
-├── @swictation/linux-x64 (Linux x86_64 binaries)
-└── @swictation/darwin-arm64 (macOS Apple Silicon binaries)
+├── @agidreams/linux-x64 (Linux x86_64 binaries)
+└── @agidreams/darwin-arm64 (macOS Apple Silicon binaries)
 ```
 
 **How it works:**
@@ -295,7 +295,7 @@ swictation (main package)
 npm install -g swictation
 # npm automatically installs:
 #   - swictation (main package with CLI)
-#   - @swictation/linux-x64 (platform binaries)
+#   - @agidreams/linux-x64 (platform binaries)
 ```
 
 **What's in each package:**
@@ -303,8 +303,8 @@ npm install -g swictation
 | Package | Contents |
 |---------|----------|
 | `swictation` | CLI wrapper, postinstall scripts, configuration |
-| `@swictation/linux-x64` | Linux ELF binaries, ONNX Runtime base library |
-| `@swictation/darwin-arm64` | macOS Mach-O ARM64 binaries, ONNX Runtime with CoreML |
+| `@agidreams/linux-x64` | Linux ELF binaries, ONNX Runtime base library |
+| `@agidreams/darwin-arm64` | macOS Mach-O ARM64 binaries, ONNX Runtime with CoreML |
 
 **Benefits:**
 - ✅ Smaller downloads - only your platform's binaries are installed
@@ -426,7 +426,7 @@ journalctl --user -u swictation-daemon.service | grep CUDA
 
 ### Platform Package Issues
 
-#### "Platform package @swictation/linux-x64 not found"
+#### "Platform package @agidreams/linux-x64 not found"
 **Cause**: npm's optionalDependencies failed to install the platform package.
 
 **Solution**:
@@ -435,15 +435,15 @@ journalctl --user -u swictation-daemon.service | grep CUDA
 npm install -g swictation --force
 
 # Or manually install platform package
-npm install -g @swictation/linux-x64
+npm install -g @agidreams/linux-x64
 npm install -g swictation
 ```
 
 **Verify installation:**
 ```bash
 # Check that platform package is installed
-npm list -g @swictation/linux-x64    # Linux
-npm list -g @swictation/darwin-arm64  # macOS
+npm list -g @agidreams/linux-x64    # Linux
+npm list -g @agidreams/darwin-arm64  # macOS
 
 # Check binary locations
 swictation --version
@@ -466,11 +466,11 @@ swictation --version
 **Solution**:
 ```bash
 # Reinstall platform package
-npm uninstall -g @swictation/linux-x64
-npm install -g @swictation/linux-x64 --force
+npm uninstall -g @agidreams/linux-x64
+npm install -g @agidreams/linux-x64 --force
 
 # Verify binaries exist
-ls -lh ~/.npm-global/lib/node_modules/@swictation/linux-x64/bin/
+ls -lh ~/.npm-global/lib/node_modules/@agidreams/linux-x64/bin/
 # Should show: swictation-daemon, swictation-ui
 ```
 
@@ -480,8 +480,8 @@ ls -lh ~/.npm-global/lib/node_modules/@swictation/linux-x64/bin/
 **Solution**:
 ```bash
 # Remove wrong platform package
-npm uninstall -g @swictation/linux-x64
-npm uninstall -g @swictation/darwin-arm64
+npm uninstall -g @agidreams/linux-x64
+npm uninstall -g @agidreams/darwin-arm64
 
 # Clean install with correct platform detection
 npm install -g swictation --force

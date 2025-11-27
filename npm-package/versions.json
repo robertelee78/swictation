@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft-07/schema#",
   "$comment": "Single source of truth for all version numbers in the Swictation project",
   "distribution": "0.7.9",
-  "_distribution_comment": "Main npm package version - this is the user-facing version for swictation, @swictation/linux-x64, and @swictation/darwin-arm64. All three packages MUST have the same version.",
+  "_distribution_comment": "Main npm package version - this is the user-facing version for swictation, @agidreams/linux-x64, and @agidreams/darwin-arm64. All three packages MUST have the same version.",
   "components": {
     "_comment": "Component versions are extracted from Cargo.toml files. These can evolve independently from the distribution version.",
     "daemon": {

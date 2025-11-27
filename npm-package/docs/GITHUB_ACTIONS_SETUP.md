@@ -278,7 +278,7 @@ npm ERR! You cannot publish over the previously published versions
 
 **Error:**
 ```
-Error: Platform package @swictation/linux-x64 not found
+Error: Platform package @agidreams/linux-x64 not found
 ```
 
 **Fix:**

@@ -20,8 +20,8 @@ Swictation uses a **multi-package architecture** with platform-specific builds:
 ```
 Release Flow:
 1. Bump versions → versions.json updated
-2. Build Linux   → @swictation/linux-x64 (ELF binaries)
-3. Build macOS   → @swictation/darwin-arm64 (Mach-O binaries)
+2. Build Linux   → @agidreams/linux-x64 (ELF binaries)
+3. Build macOS   → @agidreams/darwin-arm64 (Mach-O binaries)
 4. Publish       → Platform packages to npm
 5. Wait          → npm registry propagation
 6. Publish       → Main swictation package to npm
@@ -35,8 +35,8 @@ Release Flow:
 
 - [ ] **npm Account** with publish rights to:
   - `swictation`
-  - `@swictation/linux-x64`
-  - `@swictation/darwin-arm64`
+  - `@agidreams/linux-x64`
+  - `@agidreams/darwin-arm64`
 - [ ] **GitHub Repository** write access
 - [ ] **NPM_TOKEN** configured in GitHub Secrets (see [GitHub Actions Setup](./GITHUB_ACTIONS_SETUP.md))
 
@@ -121,8 +121,8 @@ sleep 120
 
 # Verify packages are published
 npm view swictation@0.7.9
-npm view @swictation/linux-x64@0.7.9
-npm view @swictation/darwin-arm64@0.7.9
+npm view @agidreams/linux-x64@0.7.9
+npm view @agidreams/darwin-arm64@0.7.9
 
 # Test installation
 npm install -g swictation@0.7.9
@@ -195,8 +195,8 @@ node scripts/publish-all.js
 
 # This script:
 # 1. Verifies versions are synchronized
-# 2. Publishes @swictation/linux-x64
-# 3. Publishes @swictation/darwin-arm64
+# 2. Publishes @agidreams/linux-x64
+# 3. Publishes @agidreams/darwin-arm64
 # 4. Waits for npm registry propagation
 # 5. Publishes main swictation package
 ```
@@ -313,7 +313,7 @@ Verifying versions are synchronized...
     Linux binaries                    macOS binaries
     (ELF 64-bit)                      (Mach-O arm64)
           ↓                                 ↓
-    @swictation/linux-x64.tgz         @swictation/darwin-arm64.tgz
+    @agidreams/linux-x64.tgz         @agidreams/darwin-arm64.tgz
           └────────────────┬────────────────┘
                            ↓
                       Artifacts
@@ -556,8 +556,8 @@ node scripts/publish-all.js --dry-run
 node scripts/publish-all.js
 
 # Monitor progress
-# - Publishes @swictation/linux-x64
-# - Publishes @swictation/darwin-arm64
+# - Publishes @agidreams/linux-x64
+# - Publishes @agidreams/darwin-arm64
 # - Waits for npm registry propagation
 # - Publishes swictation (main package)
 ```
@@ -567,8 +567,8 @@ node scripts/publish-all.js
 ```bash
 # Check packages are available
 npm view swictation@0.7.9
-npm view @swictation/linux-x64@0.7.9
-npm view @swictation/darwin-arm64@0.7.9
+npm view @agidreams/linux-x64@0.7.9
+npm view @agidreams/darwin-arm64@0.7.9
 
 # Test installation on Linux
 npm install -g swictation@0.7.9
@@ -602,8 +602,8 @@ If a release has critical bugs, follow this rollback procedure.
 ```bash
 # Deprecate the broken version on npm
 npm deprecate swictation@0.7.9 "Critical bug - use 0.7.8 instead"
-npm deprecate @swictation/linux-x64@0.7.9 "Critical bug - use 0.7.8"
-npm deprecate @swictation/darwin-arm64@0.7.9 "Critical bug - use 0.7.8"
+npm deprecate @agidreams/linux-x64@0.7.9 "Critical bug - use 0.7.8"
+npm deprecate @agidreams/darwin-arm64@0.7.9 "Critical bug - use 0.7.8"
 
 # Users can still install the previous version
 npm install -g swictation@0.7.8
@@ -616,8 +616,8 @@ npm install -g swictation@0.7.8
 ```bash
 # Unpublish all three packages
 npm unpublish swictation@0.7.9
-npm unpublish @swictation/linux-x64@0.7.9
-npm unpublish @swictation/darwin-arm64@0.7.9
+npm unpublish @agidreams/linux-x64@0.7.9
+npm unpublish @agidreams/darwin-arm64@0.7.9
 ```
 
 ### Emergency Patch Release
@@ -658,7 +658,7 @@ git commit -m "fix: synchronize package versions"
 
 **Error:**
 ```
-Error: Platform package @swictation/linux-x64@0.7.9 not found on registry
+Error: Platform package @agidreams/linux-x64@0.7.9 not found on registry
 ```
 
 **Causes:**
@@ -669,7 +669,7 @@ Error: Platform package @swictation/linux-x64@0.7.9 not found on registry
 **Fix:**
 ```bash
 # Check if package exists
-npm view @swictation/linux-x64@0.7.9
+npm view @agidreams/linux-x64@0.7.9
 
 # If not found, republish platform package
 cd npm-package/packages/linux-x64
@@ -690,8 +690,8 @@ Error: swictation-daemon: cannot execute binary file: Exec format error
 **Fix:**
 ```bash
 # Verify correct platform package
-npm list -g @swictation/linux-x64    # Linux
-npm list -g @swictation/darwin-arm64  # macOS
+npm list -g @agidreams/linux-x64    # Linux
+npm list -g @agidreams/darwin-arm64  # macOS
 
 # If wrong package, force reinstall
 npm uninstall -g swictation

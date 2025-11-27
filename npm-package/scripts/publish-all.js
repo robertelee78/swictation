@@ -5,8 +5,8 @@
  *
  * Publishes all three Swictation packages in the correct order:
  * 1. Verify versions are synchronized
- * 2. Publish @swictation/linux-x64 (with --access public)
- * 3. Publish @swictation/darwin-arm64 (with --access public)
+ * 2. Publish @agidreams/linux-x64 (with --access public)
+ * 3. Publish @agidreams/darwin-arm64 (with --access public)
  * 4. Wait for platform packages to be available on npm registry
  * 5. Publish main swictation package
  *
@@ -345,7 +345,7 @@ async function main() {
   logBold('  Publishing Platform Packages');
   logBold('═══════════════════════════════════════════');
 
-  const linuxResult = publishPackage(linuxPackageDir, '@swictation/linux-x64', {
+  const linuxResult = publishPackage(linuxPackageDir, '@agidreams/linux-x64', {
     access: 'public',
     tag: distTag,
     dryRun: isDryRun
@@ -356,7 +356,7 @@ async function main() {
     process.exit(1);
   }
 
-  const macosResult = publishPackage(macosPackageDir, '@swictation/darwin-arm64', {
+  const macosResult = publishPackage(macosPackageDir, '@agidreams/darwin-arm64', {
     access: 'public',
     tag: distTag,
     dryRun: isDryRun
@@ -373,8 +373,8 @@ async function main() {
     logBold('  Waiting for npm Registry Propagation');
     logBold('═══════════════════════════════════════════\n');
 
-    const linuxAvailable = await waitForPackage('@swictation/linux-x64', linuxResult.version);
-    const macosAvailable = await waitForPackage('@swictation/darwin-arm64', macosResult.version);
+    const linuxAvailable = await waitForPackage('@agidreams/linux-x64', linuxResult.version);
+    const macosAvailable = await waitForPackage('@agidreams/darwin-arm64', macosResult.version);
 
     if (!linuxAvailable || !macosAvailable) {
       log('yellow', '\n⚠️  Platform packages may not be fully propagated yet');
@@ -418,8 +418,8 @@ async function main() {
     logDim('   $ node scripts/publish-all.js\n');
   } else {
     log('cyan', 'Published packages:');
-    log('green', `  ✓ @swictation/linux-x64@${linuxResult.version}`);
-    log('green', `  ✓ @swictation/darwin-arm64@${macosResult.version}`);
+    log('green', `  ✓ @agidreams/linux-x64@${linuxResult.version}`);
+    log('green', `  ✓ @agidreams/darwin-arm64@${macosResult.version}`);
     log('green', `  ✓ swictation@${mainResult.version}\n`);
 
     log('cyan', 'Installation:');

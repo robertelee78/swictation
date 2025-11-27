@@ -1,5 +1,5 @@
 {
-  "name": "@swictation/linux-x64",
+  "name": "@agidreams/linux-x64",
   "version": "0.7.9",
   "description": "Linux x64 binaries for Swictation - voice-to-text dictation with GPU acceleration",
   "keywords": [

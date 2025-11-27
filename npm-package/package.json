@@ -83,8 +83,8 @@
     "which": "^2.0.2"
   },
   "optionalDependencies": {
-    "@swictation/linux-x64": "0.7.9",
-    "@swictation/darwin-arm64": "0.7.9"
+    "@agidreams/linux-x64": "0.7.9",
+    "@agidreams/darwin-arm64": "0.7.9"
   },
   "devDependencies": {
     "eslint": "^8.0.0"

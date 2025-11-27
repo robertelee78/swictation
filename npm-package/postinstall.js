@@ -2677,7 +2677,7 @@ async function main() {
         await downloadONNXRuntimeCoreML();
       }
 
-      // macOS binaries come from @swictation/darwin-arm64 platform package
+      // macOS binaries come from @agidreams/darwin-arm64 platform package
       // (installed via npm optionalDependencies)
       log('green', `  ✓ Using binaries from platform package: ${binaryPaths.packageName}`);
 

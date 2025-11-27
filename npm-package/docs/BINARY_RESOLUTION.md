@@ -12,8 +12,8 @@ When user runs `npm install -g swictation`:
 
 1. npm detects platform (Linux x64 or macOS ARM64)
 2. npm automatically installs the correct platform package via `optionalDependencies`:
-   - `@swictation/linux-x64` → Linux users
-   - `@swictation/darwin-arm64` → macOS users
+   - `@agidreams/linux-x64` → Linux users
+   - `@agidreams/darwin-arm64` → macOS users
 3. Platform package contains:
    - Binaries: `swictation-daemon`, `swictation-ui`
    - Base ONNX Runtime library
@@ -31,11 +31,11 @@ const paths = resolveBinaryPaths();
 // {
 //   platform: 'linux',
 //   arch: 'x64',
-//   packageDir: '/usr/local/lib/node_modules/@swictation/linux-x64',
-//   binDir: '/usr/local/lib/node_modules/@swictation/linux-x64/bin',
-//   libDir: '/usr/local/lib/node_modules/@swictation/linux-x64/lib',  // GPU libs go here
-//   daemon: '/usr/local/lib/node_modules/@swictation/linux-x64/bin/swictation-daemon',
-//   ui: '/usr/local/lib/node_modules/@swictation/linux-x64/bin/swictation-ui'
+//   packageDir: '/usr/local/lib/node_modules/@agidreams/linux-x64',
+//   binDir: '/usr/local/lib/node_modules/@agidreams/linux-x64/bin',
+//   libDir: '/usr/local/lib/node_modules/@agidreams/linux-x64/lib',  // GPU libs go here
+//   daemon: '/usr/local/lib/node_modules/@agidreams/linux-x64/bin/swictation-daemon',
+//   ui: '/usr/local/lib/node_modules/@agidreams/linux-x64/bin/swictation-ui'
 // }
 
 // Now detect GPU and download appropriate libraries to paths.libDir
@@ -43,7 +43,7 @@ const paths = resolveBinaryPaths();
 
 ## GPU Library Download Logic (Preserved)
 
-### Linux (`@swictation/linux-x64`)
+### Linux (`@agidreams/linux-x64`)
 
 postinstall.js continues to:
 
@@ -101,7 +101,7 @@ postinstall.js continues to:
    }
    ```
 
-### macOS (`@swictation/darwin-arm64`)
+### macOS (`@agidreams/darwin-arm64`)
 
 postinstall.js verifies:
 
@@ -125,7 +125,7 @@ postinstall.js verifies:
 │   ├── bin/swictation                   (CLI wrapper)
 │   ├── src/resolve-binary.js            (finds platform package)
 │   └── postinstall.js                   (GPU detection & library download)
-└── @swictation/
+└── @agidreams/
     └── linux-x64/                       (platform package)
         ├── bin/
         │   ├── swictation-daemon        (Rust binary)
@@ -145,7 +145,7 @@ postinstall.js verifies:
 │   ├── bin/swictation                   (CLI wrapper)
 │   ├── src/resolve-binary.js            (finds platform package)
 │   └── postinstall.js                   (verifies CoreML)
-└── @swictation/
+└── @agidreams/
     └── darwin-arm64/                    (platform package)
         ├── bin/
         │   ├── swictation-daemon        (Rust binary, Mach-O arm64)
@@ -193,7 +193,7 @@ Error: Unsupported platform: win32-x64. Swictation supports linux-x64 and darwin
 
 ### Platform Package Not Found
 ```
-Error: Platform package @swictation/linux-x64 not found.
+Error: Platform package @agidreams/linux-x64 not found.
 This usually means:
   1. The package failed to install (check npm install output)
   2. You're on an unsupported platform (linux-x64)
@@ -204,9 +204,9 @@ Try reinstalling: npm install -g swictation --force
 
 ### Binaries Missing
 ```
-Error: Platform package @swictation/linux-x64 is installed but binaries are missing:
+Error: Platform package @agidreams/linux-x64 is installed but binaries are missing:
   Missing: swictation-daemon, swictation-ui
-  Expected in: /usr/local/lib/node_modules/@swictation/linux-x64/bin
+  Expected in: /usr/local/lib/node_modules/@agidreams/linux-x64/bin
 
 This means the platform package was not built correctly.
 Try reinstalling: npm install -g swictation --force

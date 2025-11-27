@@ -134,37 +134,37 @@ jobs:
         npm whoami
         echo "✓ Authenticated to npm registry"
 
-    - name: Publish @swictation/linux-x64
+    - name: Publish @agidreams/linux-x64
       if: ${{ !inputs.dry_run }}
       env:
         NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       working-directory: npm-package/packages/linux-x64
       run: |
         npm publish --provenance --access public
-        echo "✓ @swictation/linux-x64 published"
+        echo "✓ @agidreams/linux-x64 published"
 
-    - name: Dry run @swictation/linux-x64
+    - name: Dry run @agidreams/linux-x64
       if: ${{ inputs.dry_run }}
       working-directory: npm-package/packages/linux-x64
       run: |
         npm publish --dry-run --access public
-        echo "✓ @swictation/linux-x64 dry run successful"
+        echo "✓ @agidreams/linux-x64 dry run successful"
 
-    - name: Publish @swictation/darwin-arm64
+    - name: Publish @agidreams/darwin-arm64
       if: ${{ !inputs.dry_run }}
       env:
         NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       working-directory: npm-package/packages/darwin-arm64
       run: |
         npm publish --provenance --access public
-        echo "✓ @swictation/darwin-arm64 published"
+        echo "✓ @agidreams/darwin-arm64 published"
 
-    - name: Dry run @swictation/darwin-arm64
+    - name: Dry run @agidreams/darwin-arm64
       if: ${{ inputs.dry_run }}
       working-directory: npm-package/packages/darwin-arm64
       run: |
         npm publish --dry-run --access public
-        echo "✓ @swictation/darwin-arm64 dry run successful"
+        echo "✓ @agidreams/darwin-arm64 dry run successful"
 
     - name: Get published versions
       id: versions
@@ -187,16 +187,16 @@ jobs:
     if: ${{ !inputs.dry_run }}
 
     steps:
-    - name: Wait for @swictation/linux-x64
+    - name: Wait for @agidreams/linux-x64
       run: |
         VERSION="${{ needs.publish-platform-packages.outputs.linux_version }}"
-        echo "Waiting for @swictation/linux-x64@$VERSION to be available..."
+        echo "Waiting for @agidreams/linux-x64@$VERSION to be available..."
 
         MAX_ATTEMPTS=60
         ATTEMPT=0
         while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
-          if npm view @swictation/linux-x64@$VERSION version &>/dev/null; then
-            echo "✓ @swictation/linux-x64@$VERSION is available"
+          if npm view @agidreams/linux-x64@$VERSION version &>/dev/null; then
+            echo "✓ @agidreams/linux-x64@$VERSION is available"
             break
           fi
 
@@ -209,16 +209,16 @@ jobs:
           echo "⚠️  Timeout waiting for package (may still be propagating)"
         fi
 
-    - name: Wait for @swictation/darwin-arm64
+    - name: Wait for @agidreams/darwin-arm64
       run: |
         VERSION="${{ needs.publish-platform-packages.outputs.macos_version }}"
-        echo "Waiting for @swictation/darwin-arm64@$VERSION to be available..."
+        echo "Waiting for @agidreams/darwin-arm64@$VERSION to be available..."
 
         MAX_ATTEMPTS=60
         ATTEMPT=0
         while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
-          if npm view @swictation/darwin-arm64@$VERSION version &>/dev/null; then
-            echo "✓ @swictation/darwin-arm64@$VERSION is available"
+          if npm view @agidreams/darwin-arm64@$VERSION version &>/dev/null; then
+            echo "✓ @agidreams/darwin-arm64@$VERSION is available"
             break
           fi
 
@@ -261,11 +261,11 @@ jobs:
         LINUX_VERSION="${{ needs.publish-platform-packages.outputs.linux_version }}"
         MACOS_VERSION="${{ needs.publish-platform-packages.outputs.macos_version }}"
 
-        echo "Verifying @swictation/linux-x64@$LINUX_VERSION..."
-        npm view @swictation/linux-x64@$LINUX_VERSION version
+        echo "Verifying @agidreams/linux-x64@$LINUX_VERSION..."
+        npm view @agidreams/linux-x64@$LINUX_VERSION version
 
-        echo "Verifying @swictation/darwin-arm64@$MACOS_VERSION..."
-        npm view @swictation/darwin-arm64@$MACOS_VERSION version
+        echo "Verifying @agidreams/darwin-arm64@$MACOS_VERSION..."
+        npm view @agidreams/darwin-arm64@$MACOS_VERSION version
 
         echo "✓ Both platform packages are available"
 
@@ -348,8 +348,8 @@ jobs:
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo ""
         echo "Published packages:"
-        echo "  ✓ @swictation/linux-x64@${{ needs.publish-platform-packages.outputs.linux_version }}"
-        echo "  ✓ @swictation/darwin-arm64@${{ needs.publish-platform-packages.outputs.macos_version }}"
+        echo "  ✓ @agidreams/linux-x64@${{ needs.publish-platform-packages.outputs.linux_version }}"
+        echo "  ✓ @agidreams/darwin-arm64@${{ needs.publish-platform-packages.outputs.macos_version }}"
         echo "  ✓ swictation@${{ needs.publish-main-package.outputs.version }}"
         echo ""
         echo "Installation:"

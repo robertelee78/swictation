@@ -1,4 +1,4 @@
-# @swictation/linux-x64
+# @agidreams/linux-x64
 
 Linux x64 binaries for [Swictation](https://github.com/robertelee78/swictation) - cross-platform voice-to-text dictation with GPU acceleration.
 
@@ -14,7 +14,7 @@ Install the main package instead:
 npm install -g swictation
 ```
 
-The main package will automatically install `@swictation/linux-x64` on Linux x64 systems via npm's `optionalDependencies` mechanism.
+The main package will automatically install `@agidreams/linux-x64` on Linux x64 systems via npm's `optionalDependencies` mechanism.
 
 ## Package Contents
 
@@ -57,8 +57,8 @@ This package is part of Swictation's platform-specific distribution strategy:
 
 ```
 swictation (main package)
-├── @swictation/linux-x64 (Linux binaries) - THIS PACKAGE
-└── @swictation/darwin-arm64 (macOS binaries)
+├── @agidreams/linux-x64 (Linux binaries) - THIS PACKAGE
+└── @agidreams/darwin-arm64 (macOS binaries)
 ```
 
 When you install `swictation`, npm automatically installs the correct platform package for your system.

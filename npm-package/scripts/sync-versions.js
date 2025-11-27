@@ -4,8 +4,8 @@
  * Version Synchronization Script
  *
  * Reads versions.json and updates all package.json files to have matching
- * distribution versions. Ensures swictation, @swictation/linux-x64, and
- * @swictation/darwin-arm64 always have the same version.
+ * distribution versions. Ensures swictation, @agidreams/linux-x64, and
+ * @agidreams/darwin-arm64 always have the same version.
  *
  * Usage:
  *   node scripts/sync-versions.js [--dry-run] [--verbose]
@@ -142,20 +142,20 @@ function updatePackageJson(filePath, distributionVersion, isMainPackage = false)
 
   // Update optionalDependencies in main package
   if (isMainPackage && pkg.optionalDependencies) {
-    if (pkg.optionalDependencies['@swictation/linux-x64']) {
-      const currentLinux = pkg.optionalDependencies['@swictation/linux-x64'];
+    if (pkg.optionalDependencies['@agidreams/linux-x64']) {
+      const currentLinux = pkg.optionalDependencies['@agidreams/linux-x64'];
       if (currentLinux !== distributionVersion) {
-        changes.push(`optionalDependencies.@swictation/linux-x64: ${currentLinux} → ${distributionVersion}`);
-        pkg.optionalDependencies['@swictation/linux-x64'] = distributionVersion;
+        changes.push(`optionalDependencies.@agidreams/linux-x64: ${currentLinux} → ${distributionVersion}`);
+        pkg.optionalDependencies['@agidreams/linux-x64'] = distributionVersion;
         modified = true;
       }
     }
 
-    if (pkg.optionalDependencies['@swictation/darwin-arm64']) {
-      const currentMacos = pkg.optionalDependencies['@swictation/darwin-arm64'];
+    if (pkg.optionalDependencies['@agidreams/darwin-arm64']) {
+      const currentMacos = pkg.optionalDependencies['@agidreams/darwin-arm64'];
       if (currentMacos !== distributionVersion) {
-        changes.push(`optionalDependencies.@swictation/darwin-arm64: ${currentMacos} → ${distributionVersion}`);
-        pkg.optionalDependencies['@swictation/darwin-arm64'] = distributionVersion;
+        changes.push(`optionalDependencies.@agidreams/darwin-arm64: ${currentMacos} → ${distributionVersion}`);
+        pkg.optionalDependencies['@agidreams/darwin-arm64'] = distributionVersion;
         modified = true;
       }
     }
@@ -219,8 +219,8 @@ function main() {
 
   const processed = [
     { name: 'swictation (main)', result: results.main },
-    { name: '@swictation/linux-x64', result: results.linux },
-    { name: '@swictation/darwin-arm64', result: results.macos }
+    { name: '@agidreams/linux-x64', result: results.linux },
+    { name: '@agidreams/darwin-arm64', result: results.macos }
   ];
 
   let modifiedCount = 0;
