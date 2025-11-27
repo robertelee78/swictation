@@ -1204,32 +1204,33 @@ function generateSystemdService(ortLibPath) {
       // Detect CUDA paths upfront (needed for logging)
       const detectedCudaPaths = detectCudaLibraryPaths();
 
-      if (variant === 'legacy') {
-        // LEGACY (Maxwell, Pascal, Volta): Use ONNX Runtime 1.23.2 from gpu-libs (CUDA 11.8)
-        const gpuLibsDir = path.join(os.homedir(), '.local', 'share', 'swictation', 'gpu-libs');
-        const legacyOrtPath = path.join(gpuLibsDir, 'libonnxruntime.so');
+      // Check multiple possible ONNX Runtime locations in priority order:
+      // 1. gpu-libs directory (downloaded GPU libraries)
+      // 2. Platform package lib directory (bundled with package)
+      const gpuLibsDir = path.join(os.homedir(), '.local', 'share', 'swictation', 'gpu-libs');
+      const gpuLibsOrtPath = path.join(gpuLibsDir, 'libonnxruntime.so');
+      const platformOrtPath = path.join(binaryPaths.libDir, 'libonnxruntime.so');
 
-        if (fs.existsSync(legacyOrtPath)) {
-          finalOrtLibPath = legacyOrtPath;
-          // LD_LIBRARY_PATH: gpu-libs (CUDA 11.8) + platform package lib directory
-          finalLdLibraryPath = [gpuLibsDir, binaryPaths.libDir].join(':');
-          log('cyan', `  Using LEGACY ONNX Runtime 1.23.2: ${finalOrtLibPath}`);
-          log('cyan', `  Using LEGACY CUDA 11.8 libraries: ${gpuLibsDir}`);
-          log('cyan', `  Platform lib directory: ${binaryPaths.libDir}`);
-        } else {
-          log('yellow', `  ⚠️  Legacy ONNX Runtime not found at ${legacyOrtPath}`);
-          log('yellow', '     Falling back to platform package ONNX Runtime');
-          // Use platform package lib directory
-          finalOrtLibPath = path.join(binaryPaths.libDir, 'libonnxruntime.so');
-          finalLdLibraryPath = [...detectedCudaPaths, binaryPaths.libDir].join(':');
-        }
-      } else {
-        // LATEST/MODERN: Use platform package ONNX Runtime (CUDA 12)
-        finalOrtLibPath = path.join(binaryPaths.libDir, 'libonnxruntime.so');
-        // LD_LIBRARY_PATH: CUDA paths + platform package lib directory
+      if (fs.existsSync(gpuLibsOrtPath)) {
+        // Use gpu-libs ONNX Runtime (downloaded GPU libraries)
+        finalOrtLibPath = gpuLibsOrtPath;
+        // LD_LIBRARY_PATH: gpu-libs first (has CUDA providers), then platform lib, then CUDA paths
+        finalLdLibraryPath = [gpuLibsDir, binaryPaths.libDir, ...detectedCudaPaths].join(':');
+        log('cyan', `  Using downloaded ONNX Runtime: ${finalOrtLibPath}`);
+        log('cyan', `  GPU libraries directory: ${gpuLibsDir}`);
+      } else if (fs.existsSync(platformOrtPath)) {
+        // Use platform package ONNX Runtime (bundled)
+        finalOrtLibPath = platformOrtPath;
         finalLdLibraryPath = [...detectedCudaPaths, binaryPaths.libDir].join(':');
         log('cyan', `  Using platform package ONNX Runtime: ${finalOrtLibPath}`);
         log('cyan', `  Platform lib directory: ${binaryPaths.libDir}`);
+      } else {
+        // Neither exists - use platform path but warn
+        log('yellow', `  ⚠️  ONNX Runtime not found in gpu-libs: ${gpuLibsOrtPath}`);
+        log('yellow', `  ⚠️  ONNX Runtime not found in platform: ${platformOrtPath}`);
+        finalOrtLibPath = platformOrtPath; // Use platform path as placeholder
+        finalLdLibraryPath = [...detectedCudaPaths, binaryPaths.libDir].join(':');
+        log('yellow', '  ⚠️  Service may fail - run GPU library download manually');
       }
 
       // CRITICAL: Trim all whitespace and newlines from paths to prevent malformed service file
