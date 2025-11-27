@@ -1,6 +1,6 @@
 {
   "name": "@agidreams/darwin-arm64",
-  "version": "0.7.11",
+  "version": "0.7.12",
   "description": "macOS ARM64 (Apple Silicon) binaries for Swictation - voice-to-text dictation with CoreML acceleration",
   "keywords": [
     "voice-to-text",

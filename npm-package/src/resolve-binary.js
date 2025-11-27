@@ -18,6 +18,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { execSync } = require('child_process');
 
 /**
  * Platform detection
@@ -66,6 +67,8 @@ function detectPlatform() {
  * - Global installs: npm install -g swictation (sibling packages)
  * - Local installs: npm install swictation (nested in node_modules)
  * - Development: working within the repo
+ * - nvm installations
+ * - Custom npm prefix configurations
  */
 function findPlatformPackage(packageName) {
   const packageShortName = packageName.replace('@agidreams/', '');
@@ -85,9 +88,21 @@ function findPlatformPackage(packageName) {
     return null;
   }
 
-  // Strategy 1: Check for sibling package (global installs)
-  // If we're at /usr/local/lib/node_modules/swictation/src,
-  // the platform package would be at /usr/local/lib/node_modules/@agidreams/linux-x64
+  // Strategy 1: Use npm root -g to find the definitive global path
+  // This handles nvm, custom prefixes, and all npm configurations correctly
+  try {
+    const npmRoot = execSync('npm root -g', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+    if (npmRoot && fs.existsSync(npmRoot)) {
+      const result = checkNodeModules(npmRoot);
+      if (result) return result;
+    }
+  } catch (e) {
+    // npm root -g failed, continue with other strategies
+  }
+
+  // Strategy 2: Check for sibling package based on __dirname
+  // If we're at /path/to/node_modules/swictation/src,
+  // the platform package would be at /path/to/node_modules/@agidreams/linux-x64
   let currentDir = __dirname;
   for (let i = 0; i < 5; i++) {
     const parentDir = path.dirname(currentDir);
@@ -100,7 +115,7 @@ function findPlatformPackage(packageName) {
     if (parentDir === currentDir) break;
   }
 
-  // Strategy 2: Search upward for nested node_modules (local installs)
+  // Strategy 3: Search upward for nested node_modules (local installs)
   currentDir = __dirname;
   for (let i = 0; i < 10; i++) {
     const nodeModulesDir = path.join(currentDir, 'node_modules');
@@ -113,13 +128,30 @@ function findPlatformPackage(packageName) {
     currentDir = parentDir;
   }
 
-  // Strategy 3: Check common global npm locations
+  // Strategy 4: Check common global npm locations and nvm paths
   const globalPaths = [
     '/usr/local/lib/node_modules',
     '/usr/lib/node_modules',
     path.join(os.homedir(), '.npm-global', 'lib', 'node_modules'),
     path.join(os.homedir(), 'node_modules')
   ];
+
+  // Add nvm paths if NVM_DIR is set
+  if (process.env.NVM_DIR) {
+    // Try to find the current node version's node_modules
+    try {
+      const nodeVersion = process.version;
+      globalPaths.unshift(path.join(process.env.NVM_DIR, 'versions', 'node', nodeVersion, 'lib', 'node_modules'));
+    } catch (e) {
+      // Ignore
+    }
+  }
+
+  // Also check paths containing literal $HOME (broken npm config edge case)
+  const literalHomePath = path.join(os.homedir(), '$HOME', '.npm-global', 'lib', 'node_modules');
+  if (fs.existsSync(literalHomePath)) {
+    globalPaths.unshift(literalHomePath);
+  }
 
   for (const globalPath of globalPaths) {
     if (fs.existsSync(globalPath)) {
