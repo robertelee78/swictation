@@ -1523,11 +1523,36 @@ function generateLaunchdServices(ortLibPath) {
       const daemonBinaryPath = binaryPaths.daemon;
       const homeDir = os.homedir();
 
-      // DYLD_LIBRARY_PATH: CoreML runtime + ONNX Runtime providers from platform package
-      const dylibPath = binaryPaths.libDir;
+      // DYLD_LIBRARY_PATH: CoreML runtime + ONNX Runtime providers
+      // ORT_DYLIB_PATH: Points to CoreML-enabled ONNX Runtime
+      // The CoreML dylib is downloaded to the main package's lib/native directory
+      // by downloadONNXRuntimeCoreML(), NOT the platform package's lib directory.
+      // We need to check where it actually exists and use that path.
+      const mainPackageNativeDir = path.join(__dirname, 'lib', 'native');
+      const mainPackageOrtPath = path.join(mainPackageNativeDir, 'libonnxruntime.dylib');
+      const platformOrtPath = path.join(binaryPaths.libDir, 'libonnxruntime.dylib');
 
-      // ORT_DYLIB_PATH: Points to CoreML-enabled ONNX Runtime from platform package
-      const ortDylibPath = path.join(binaryPaths.libDir, 'libonnxruntime.dylib');
+      let dylibPath;
+      let ortDylibPath;
+
+      if (fs.existsSync(mainPackageOrtPath)) {
+        // CoreML dylib was downloaded to main package native dir (expected case)
+        dylibPath = mainPackageNativeDir;
+        ortDylibPath = mainPackageOrtPath;
+        log('cyan', `  Found CoreML dylib in main package: ${mainPackageOrtPath}`);
+      } else if (fs.existsSync(platformOrtPath)) {
+        // Fallback: check platform package lib dir
+        dylibPath = binaryPaths.libDir;
+        ortDylibPath = platformOrtPath;
+        log('cyan', `  Found CoreML dylib in platform package: ${platformOrtPath}`);
+      } else {
+        // Neither exists - use main package path and warn
+        dylibPath = mainPackageNativeDir;
+        ortDylibPath = mainPackageOrtPath;
+        log('yellow', `  ⚠️  CoreML dylib not found at expected locations`);
+        log('yellow', `     Expected: ${mainPackageOrtPath}`);
+        log('yellow', `     Fallback: ${platformOrtPath}`);
+      }
 
       // CRITICAL: macOS SIP (System Integrity Protection) strips DYLD_* environment
       // variables from launchd processes. We MUST use a wrapper script that sets
