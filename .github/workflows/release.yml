@@ -56,7 +56,7 @@ jobs:
 
     - name: Install dependencies
       working-directory: npm-package
-      run: npm ci
+      run: npm install --omit=optional
 
     - name: Verify version synchronization
       working-directory: npm-package
@@ -252,7 +252,7 @@ jobs:
 
     - name: Install dependencies
       working-directory: npm-package
-      run: npm ci
+      run: npm install --omit=optional
 
     - name: Verify platform packages are available
       if: ${{ !inputs.dry_run }}
