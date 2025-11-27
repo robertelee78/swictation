@@ -46,6 +46,7 @@
     "tests/",
     "postinstall.js",
     "preuninstall.js",
+    "checksums.txt",
     "README.md"
   ],
   "scripts": {

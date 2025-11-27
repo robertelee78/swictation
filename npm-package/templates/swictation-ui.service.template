@@ -11,7 +11,7 @@ PartOf=swictation-daemon.service
 
 [Service]
 Type=simple
-ExecStart=__INSTALL_DIR__/bin/swictation-ui-launcher
+ExecStart=__INSTALL_DIR__/swictation-ui
 Restart=on-failure
 RestartSec=5
 
