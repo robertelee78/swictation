@@ -1178,10 +1178,10 @@ function generateSystemdService(ortLibPath) {
       let template = fs.readFileSync(templatePath, 'utf8');
 
       // Replace placeholders with platform package paths
-      // __INSTALL_DIR__ in template refers to daemon binary location
-      // Template has: __INSTALL_DIR__/lib/native/swictation-daemon.bin
-      // We need to replace with actual daemon path from platform package
-      template = template.replace(/__INSTALL_DIR__\/lib\/native\/swictation-daemon\.bin/g, binaryPaths.daemon);
+      // __INSTALL_DIR__ in template refers to the bin directory containing daemon binary
+      // Template has: __INSTALL_DIR__/swictation-daemon
+      // We need to replace __INSTALL_DIR__ with actual binDir from platform package
+      template = template.replace(/__INSTALL_DIR__/g, binaryPaths.binDir);
 
       // CRITICAL: Detect GPU variant to determine which ONNX Runtime to use
       const configDir = path.join(os.homedir(), '.config', 'swictation');
