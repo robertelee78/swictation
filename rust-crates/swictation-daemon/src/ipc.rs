@@ -134,8 +134,20 @@ pub async fn handle_connection(mut stream: UnixStream, daemon: Arc<Daemon>) -> R
     };
 
     let response_str = serde_json::to_string(&response)?;
-    stream.write_all(response_str.as_bytes()).await?;
-    stream.flush().await?;
+
+    // CRITICAL: Spawn the response write to prevent blocking the main event loop
+    // The main tokio::select! loop can deadlock if write_all/flush are awaited inline
+    // because the event loop can't poll while waiting for the write to complete.
+    // By spawning, we immediately return control to the event loop.
+    tokio::spawn(async move {
+        if let Err(e) = stream.write_all(response_str.as_bytes()).await {
+            tracing::error!("Failed to write IPC response: {}", e);
+            return;
+        }
+        if let Err(e) = stream.flush().await {
+            tracing::error!("Failed to flush IPC response: {}", e);
+        }
+    });
 
     Ok(())
 }
