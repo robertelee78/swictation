@@ -247,17 +247,17 @@ Configuration file is located at `~/.config/swictation/config.toml`
 **Sway** - Add to `~/.config/sway/config`:
 ```bash
 # Swictation toggle
-bindsym $mod+Shift+d exec sh -c 'echo "{\"action\": \"toggle\"}" | nc -U /tmp/swictation.sock'
+bindsym $mod+Shift+d exec swictation toggle
 
-# Optional: Push-to-talk
-bindsym $mod+Space exec sh -c 'echo "{\"action\": \"ptt_press\"}" | nc -U /tmp/swictation.sock'
-bindsym --release $mod+Space exec sh -c 'echo "{\"action\": \"ptt_release\"}" | nc -U /tmp/swictation.sock'
+# Optional: Push-to-talk (hold to record)
+bindsym $mod+Space exec swictation ptt-press
+bindsym --release $mod+Space exec swictation ptt-release
 ```
 Then reload: `swaymsg reload`
 
 **X11 (i3, etc.)** - Add to config:
 ```bash
-bindsym Mod4+Shift+d exec echo '{"action":"toggle"}' | nc -U /tmp/swictation.sock
+bindsym Mod4+Shift+d exec swictation toggle
 ```
 
 **[→ See Complete Wayland Support Guide](https://github.com/robertelee78/swictation/blob/main/docs/WAYLAND_SUPPORT.md)** for detailed setup and troubleshooting.

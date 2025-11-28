@@ -7,9 +7,41 @@ import sys
 import socket
 import json
 import argparse
+import os
 
 
-SOCKET_PATH = '/tmp/swictation.sock'
+def get_socket_path() -> str:
+    """Get socket path using XDG_RUNTIME_DIR or fallback to ~/.local/share/swictation.
+
+    Matches the Rust daemon's socket_utils::get_ipc_socket_path() logic.
+    Cross-platform: Linux uses XDG dirs, macOS uses ~/Library/Application Support/.
+    """
+    # macOS: Use Application Support directory
+    if sys.platform == 'darwin':
+        home = os.environ.get('HOME')
+        if home:
+            socket_dir = os.path.join(home, 'Library', 'Application Support', 'swictation')
+            os.makedirs(socket_dir, mode=0o700, exist_ok=True)
+            return os.path.join(socket_dir, 'swictation.sock')
+
+    # Linux: Try XDG_RUNTIME_DIR first (best practice for sockets)
+    runtime_dir = os.environ.get('XDG_RUNTIME_DIR')
+    if runtime_dir and os.path.exists(runtime_dir):
+        return os.path.join(runtime_dir, 'swictation.sock')
+
+    # Linux fallback to ~/.local/share/swictation/swictation.sock
+    home = os.environ.get('HOME')
+    if home:
+        socket_dir = os.path.join(home, '.local', 'share', 'swictation')
+        os.makedirs(socket_dir, mode=0o700, exist_ok=True)
+        return os.path.join(socket_dir, 'swictation.sock')
+
+    # Final fallback (should rarely happen)
+    return '/tmp/swictation.sock'
+
+
+# Get platform-appropriate socket path
+SOCKET_PATH = get_socket_path()
 
 
 def send_command(command: dict, socket_path: str = SOCKET_PATH) -> dict:

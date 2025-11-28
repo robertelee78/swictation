@@ -159,7 +159,7 @@ elif [ "$DESKTOP" = "sway" ]; then
     else
         log_warn "Sway hotkeys not found in config"
         log_info "Add to ~/.config/sway/config:"
-        log_info "  bindsym \$mod+Shift+d exec sh -c 'echo \"{\\\"action\\\": \\\"toggle\\\"}\" | nc -U /tmp/swictation.sock'"
+        log_info "  bindsym \$mod+Shift+d exec swictation toggle"
     fi
 fi
 
@@ -187,25 +187,14 @@ else
     log_info "Run: swictation setup"
 fi
 
-# 6. IPC Socket
-log_check "IPC Socket"
-if [ -S /tmp/swictation.sock ]; then
-    log_pass "IPC socket exists"
-
-    # Test socket connection
-    if command -v nc &> /dev/null; then
-        RESPONSE=$(echo '{"action": "status"}' | nc -U /tmp/swictation.sock 2>/dev/null || echo "")
-        if echo "$RESPONSE" | grep -q "status"; then
-            log_pass "IPC socket responding"
-        else
-            log_warn "IPC socket not responding correctly"
-        fi
-    else
-        log_warn "netcat not installed - cannot test socket"
-        log_info "Install: sudo apt install netcat-openbsd"
-    fi
+# 6. Daemon Status Check
+log_check "Daemon Status"
+RESPONSE=$(swictation status 2>/dev/null || echo "")
+if echo "$RESPONSE" | grep -qi "state\|idle\|recording"; then
+    log_pass "Daemon responding to commands"
 else
-    log_warn "IPC socket not found (daemon may not be running)"
+    log_warn "Daemon not responding - is it running?"
+    log_info "Start with: swictation start"
 fi
 
 # 7. AI Models

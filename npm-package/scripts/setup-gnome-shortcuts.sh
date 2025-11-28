@@ -39,7 +39,7 @@ if [ "$XDG_CURRENT_DESKTOP" != "ubuntu:GNOME" ] && [ "$XDG_CURRENT_DESKTOP" != "
     log_info "Current desktop: ${XDG_CURRENT_DESKTOP:-unknown}"
     echo ""
     log_info "For other desktops, configure hotkeys manually to call:"
-    echo "  sh -c 'echo \"{\\\"action\\\": \\\"toggle\\\"}\" | nc -U /tmp/swictation.sock'"
+    echo "  swictation toggle"
     exit 1
 fi
 
@@ -49,11 +49,11 @@ if ! command -v gsettings &> /dev/null; then
     exit 1
 fi
 
-# Check if netcat is available
-if ! command -v nc &> /dev/null; then
-    log_warning "netcat not installed - installing..."
-    sudo apt install -y netcat-openbsd || sudo dnf install -y nmap-ncat || sudo pacman -S openbsd-netcat
-    log_success "netcat installed"
+# Check if swictation CLI is available
+if ! command -v swictation &> /dev/null; then
+    log_error "swictation not found in PATH"
+    log_info "Install with: npm install -g swictation"
+    exit 1
 fi
 
 log_info "Configuring GNOME keyboard shortcut for Swictation..."
@@ -76,7 +76,7 @@ fi
 
 # Configure the toggle keybinding
 gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:$KEYBINDING_PATH name "Swictation Toggle"
-gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:$KEYBINDING_PATH command "sh -c 'echo \"{\\\"action\\\": \\\"toggle\\\"}\" | nc -U /tmp/swictation.sock'"
+gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:$KEYBINDING_PATH command "swictation toggle"
 gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:$KEYBINDING_PATH binding "<Super><Shift>d"
 
 log_success "Configured keyboard shortcut: Super+Shift+D"
