@@ -1,5 +1,52 @@
 # Changelog
 
+## [0.7.21] - 2025-11-27
+
+### Fixed - macOS Support
+This release focuses on completing macOS Apple Silicon support with critical bug fixes.
+
+- **UI Menu Bar Behavior** - Fixed macOS UI to behave as a proper menu bar app
+  - Set `ActivationPolicy::Accessory` to hide dock icon entirely
+  - Window starts hidden by default (`visible: false` in tauri.conf.json)
+  - Tray icon appears immediately on launch
+  - Middle-click tray toggles window visibility
+  - Close button hides window (tray remains active)
+
+- **Daemon Deadlock** - Resolved lock ordering deadlock causing toggle hang on macOS
+  - Fixed mutex acquisition order to prevent deadlock during recording toggle
+  - Daemon now responds reliably to toggle commands via socket and hotkey
+
+- **CoreML Library Path** - Fixed ORT_DYLIB_PATH for macOS CoreML acceleration
+  - Corrected library path from `.so` to `.dylib` extension
+  - CoreML GPU acceleration now works properly on Apple Silicon
+
+### Installation
+```bash
+npm install -g swictation@0.7.21
+```
+
+### Platforms
+- macOS ARM64 (Apple Silicon) - `@agidreams/darwin-arm64`
+- Linux x86_64 (NVIDIA CUDA/CPU) - `@agidreams/linux-x64`
+
+---
+
+## [0.7.20] - 2025-11-27
+
+### Fixed
+- **macOS ORT_DYLIB_PATH** - Corrected ONNX Runtime library path for CoreML support
+- **PostInstall improvements** - Better platform and compositor detection
+
+---
+
+## [0.7.19] - 2025-11-27
+
+### Fixed
+- **PostInstall compositor detection** - System-level wlroots detection for Wayland compositors
+- **Sway/wlroots support** - Improved environment variable handling for tray integration
+
+---
+
 ## [0.4.7] - 2025-11-16
 
 ### Added
