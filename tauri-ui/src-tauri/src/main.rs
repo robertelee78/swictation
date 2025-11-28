@@ -19,6 +19,9 @@ use tauri::{
     Emitter, Manager, WindowEvent,
 };
 
+#[cfg(target_os = "macos")]
+use tauri::ActivationPolicy;
+
 fn main() {
     // Initialize tracing subscriber (compatible with both log and tracing crates)
     tracing_subscriber::fmt()
@@ -31,6 +34,12 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
+            // macOS: Set activation policy to Accessory to hide from dock
+            // This makes the app a pure menu bar app - only the tray icon shows
+            // The dock icon won't appear and clicking dock won't reactivate hidden windows
+            #[cfg(target_os = "macos")]
+            app.set_activation_policy(ActivationPolicy::Accessory);
+
             // Only create tray icon if not disabled (e.g., when launched from QT tray on Sway)
             if std::env::var("SWICTATION_NO_TRAY").is_err() {
                 // Create menu items
