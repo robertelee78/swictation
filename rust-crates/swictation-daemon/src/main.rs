@@ -58,7 +58,7 @@ use swictation_context_learning::{
 };
 use swictation_metrics::{MemoryMonitor, MemoryPressure};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum DaemonState {
     Idle,
     Recording,
@@ -108,31 +108,46 @@ impl Daemon {
         Ok((daemon, transcription_rx))
     }
 
+    /// Toggle recording state with proper lock ordering to prevent deadlocks.
+    ///
+    /// CRITICAL: Lock order must be: state -> pipeline -> session_id
+    /// And we must RELEASE locks before any long-running operations (STT inference).
+    /// The metrics updater acquires locks in: metrics -> state (read)
+    /// To prevent deadlock, we minimize lock scope and release before await points.
     async fn toggle(&self) -> Result<String> {
-        let mut state = self.state.write().await;
-        let mut pipeline = self.pipeline.write().await;
-        let mut session_id = self.session_id.write().await;
+        // Phase 1: Check current state (minimal lock scope)
+        let current_state = {
+            let state = self.state.read().await;
+            *state
+        };
 
-        match *state {
+        match current_state {
             DaemonState::Idle => {
                 info!("▶️ Starting recording");
 
-                // Start metrics session
-                let metrics = pipeline.get_metrics();
-                let sid = metrics.lock().unwrap().start_session()?;
-                *session_id = Some(sid);
+                // Phase 2: Start session and get metrics (short lock scope)
+                let sid = {
+                    let pipeline = self.pipeline.read().await;
+                    let metrics = pipeline.get_metrics();
+                    let sid = metrics.lock().unwrap().start_session()?;
+                    sid
+                };
 
-                // Set session ID in pipeline so segments can be associated with it
-                pipeline.set_session_id(sid);
+                // Phase 3: Update state and start recording
+                {
+                    let mut state = self.state.write().await;
+                    let mut pipeline = self.pipeline.write().await;
+                    let mut session_id = self.session_id.write().await;
 
-                // Start recording pipeline
-                pipeline.start_recording().await?;
-                *state = DaemonState::Recording;
+                    *session_id = Some(sid);
+                    pipeline.set_session_id(sid);
+                    pipeline.start_recording().await?;
+                    *state = DaemonState::Recording;
+                }
+                // Locks released here before broadcast
 
-                // Broadcast session start
+                // Phase 4: Broadcast (no locks held - prevents deadlock with metrics updater)
                 self.broadcaster.start_session(sid).await;
-
-                // Broadcast state change to Recording
                 self.broadcaster
                     .broadcast_state_change(swictation_metrics::DaemonState::Recording)
                     .await;
@@ -141,23 +156,37 @@ impl Daemon {
             }
             DaemonState::Recording => {
                 info!("⏸️ Stopping recording");
-                pipeline.stop_recording().await?;
-                *state = DaemonState::Idle;
 
-                // Clear session ID in pipeline
-                pipeline.clear_session_id();
+                // Phase 2: Stop recording (this does STT inference - can take 50-500ms)
+                // We MUST release state lock before this to prevent deadlock
+                {
+                    let mut pipeline = self.pipeline.write().await;
+                    pipeline.stop_recording().await?;
+                    pipeline.clear_session_id();
+                }
+                // Pipeline lock released before we touch state
 
-                // End metrics session
-                let metrics = pipeline.get_metrics();
-                let session_metrics = metrics.lock().unwrap().end_session()?;
+                // Phase 3: Update state and end session
+                let (session_metrics, sid) = {
+                    let mut state = self.state.write().await;
+                    let pipeline = self.pipeline.read().await;
+                    let mut session_id = self.session_id.write().await;
 
-                // Broadcast session end
-                if let Some(sid) = *session_id {
+                    *state = DaemonState::Idle;
+
+                    let metrics = pipeline.get_metrics();
+                    let session_metrics = metrics.lock().unwrap().end_session()?;
+                    let sid = *session_id;
+                    *session_id = None;
+
+                    (session_metrics, sid)
+                };
+                // All locks released before broadcast
+
+                // Phase 4: Broadcast (no locks held)
+                if let Some(sid) = sid {
                     self.broadcaster.end_session(sid).await;
                 }
-                *session_id = None;
-
-                // Broadcast state change to Idle
                 self.broadcaster
                     .broadcast_state_change(swictation_metrics::DaemonState::Idle)
                     .await;
@@ -394,31 +423,45 @@ async fn main() -> Result<()> {
         .context("Failed to start IPC server")?;
 
     // Spawn background metrics updater (CPU/GPU monitoring every 1 second)
+    //
+    // CRITICAL: Lock ordering to prevent deadlock with toggle():
+    // - toggle() acquires: state -> pipeline -> session_id -> metrics
+    // - This task MUST acquire state BEFORE metrics, or use try_lock
+    //
+    // Previous bug: This task held metrics.lock() while trying to acquire state.read(),
+    // while toggle() held state.write() while trying to acquire metrics.lock() -> DEADLOCK
     let _metrics_handle = {
         let metrics = daemon_clone.pipeline.read().await.get_metrics();
         let broadcaster = daemon_clone.broadcaster.clone();
-        let daemon_state = daemon_clone.state.clone(); // Clone state for metrics thread
+        let daemon_state = daemon_clone.state.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
             loop {
                 interval.tick().await;
 
-                // Update internal metrics
-                metrics.lock().unwrap().update_system_metrics();
-                metrics.lock().unwrap().update_recording_duration();
-
-                // Get realtime metrics and update daemon state
-                let mut realtime = metrics.lock().unwrap().get_realtime_metrics();
-
-                // Update the current state from daemon
-                let state = daemon_state.read().await;
-                realtime.current_state = match *state {
-                    DaemonState::Idle => swictation_metrics::DaemonState::Idle,
-                    DaemonState::Recording => swictation_metrics::DaemonState::Recording,
+                // FIXED: Acquire state lock FIRST (before metrics)
+                // This matches the lock order in toggle() and prevents deadlock
+                let current_state = {
+                    let state = daemon_state.read().await;
+                    match *state {
+                        DaemonState::Idle => swictation_metrics::DaemonState::Idle,
+                        DaemonState::Recording => swictation_metrics::DaemonState::Recording,
+                    }
                 };
-                drop(state); // Release lock quickly
+                // State lock released here
 
-                // Broadcast to connected clients
+                // NOW safe to acquire metrics lock (no other locks held)
+                let realtime = {
+                    let metrics_guard = metrics.lock().unwrap();
+                    metrics_guard.update_system_metrics();
+                    metrics_guard.update_recording_duration();
+                    let mut realtime = metrics_guard.get_realtime_metrics();
+                    realtime.current_state = current_state;
+                    realtime
+                };
+                // Metrics lock released here
+
+                // Broadcast with no locks held
                 broadcaster.update_metrics(&realtime).await;
             }
         })

@@ -40,11 +40,17 @@
         "visible": true,
         "decorations": true,
         "alwaysOnTop": false,
-        "skipTaskbar": false
+        "skipTaskbar": false,
+        "hiddenTitle": false,
+        "closable": true,
+        "minimizable": true,
+        "maximizable": true
       }
     ],
     "security": {
       "csp": null
-    }
+    },
+    "macOSPrivateApi": false,
+    "withGlobalTauri": false
   }
 }

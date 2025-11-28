@@ -155,7 +155,8 @@ fn main() {
         })
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
-                // Prevent window close, hide instead
+                // Hide window instead of closing to keep app running in tray
+                // This is standard tray app behavior on all platforms
                 window.hide().unwrap();
                 api.prevent_close();
             }

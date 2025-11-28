@@ -626,7 +626,16 @@ impl Pipeline {
     }
 
     /// Stop recording
-    #[allow(clippy::await_holding_lock)]
+    ///
+    /// IMPORTANT: This function was previously marked with #[allow(clippy::await_holding_lock)]
+    /// which suppressed a critical warning about holding locks across await points.
+    /// The deadlock occurred because:
+    /// 1. toggle() held state.write() while calling this function
+    /// 2. This function held std::sync::Mutex locks while calling .await on channel send
+    /// 3. The metrics updater held metrics.lock() while waiting for state.read()
+    /// 4. Result: circular wait -> DEADLOCK
+    ///
+    /// Fix: Ensure no std::sync::Mutex locks are held when calling .await
     pub async fn stop_recording(&mut self) -> Result<()> {
         if !self.is_recording {
             return Ok(());
@@ -636,10 +645,12 @@ impl Pipeline {
         self.audio.lock().unwrap().stop()?;
 
         // Flush remaining audio through VAD and process any final speech
+        let flushed_speech = self.vad.lock().unwrap().flush();
+
         if let Some(swictation_vad::VadResult::Speech {
             samples: speech_samples,
             ..
-        }) = self.vad.lock().unwrap().flush()
+        }) = flushed_speech
         {
             info!(
                 "Processing flushed speech segment: {} samples",
@@ -658,28 +669,33 @@ impl Pipeline {
             let segment_start = Instant::now();
             let vad_latency = segment_start.elapsed().as_millis() as f64;
 
-            // Process through STT (same pattern as start_recording)
+            // Process through STT - CRITICAL: Release lock immediately after use
+            // The STT inference can take 50-500ms, but we release the lock right after
             let stt_start = Instant::now();
-            let mut stt_lock = match self.stt.lock() {
-                Ok(s) => s,
-                Err(e) => {
-                    eprintln!("STT lock error during flush: {}", e);
-                    info!("Recording stopped");
-                    return Ok(());
-                }
-            };
+            let (text, stt_latency, is_0_6b) = {
+                let mut stt_lock = match self.stt.lock() {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("STT lock error during flush: {}", e);
+                        info!("Recording stopped");
+                        return Ok(());
+                    }
+                };
 
-            let result = stt_lock.recognize(&speech_samples).unwrap_or_else(|e| {
-                eprintln!("STT transcribe error during flush: {}", e);
-                swictation_stt::RecognitionResult {
-                    text: String::new(),
-                    confidence: 0.0,
-                    processing_time_ms: 0.0,
-                }
-            });
-            let text = result.text;
-            let stt_latency = stt_start.elapsed().as_millis() as f64;
-            let is_0_6b = stt_lock.model_size() == "0.6B";
+                let result = stt_lock.recognize(&speech_samples).unwrap_or_else(|e| {
+                    eprintln!("STT transcribe error during flush: {}", e);
+                    swictation_stt::RecognitionResult {
+                        text: String::new(),
+                        confidence: 0.0,
+                        processing_time_ms: 0.0,
+                    }
+                });
+                let text = result.text;
+                let stt_latency = stt_start.elapsed().as_millis() as f64;
+                let is_0_6b = stt_lock.model_size() == "0.6B";
+                (text, stt_latency, is_0_6b)
+            };
+            // stt_lock released here - BEFORE any .await calls
 
             if !text.is_empty() {
                 // Transform voice commands → symbols (Midstream)
