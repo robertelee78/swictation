@@ -1,12 +1,14 @@
 [workspace]
 members = [
+    "swictation-paths",
     "swictation-audio",
     "swictation-stt",
     "swictation-vad",
     "swictation-daemon",
     "swictation-metrics",
     "swictation-broadcaster",
-    "swictation-context-learning", "swictation-wasm-utils",
+    "swictation-context-learning",
+    "swictation-wasm-utils",
 ]
 resolver = "2"
 

@@ -13,6 +13,9 @@ edition = "2021"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+# Internal crates
+swictation-paths = { path = "../../rust-crates/swictation-paths" }
+
 # Tauri core
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-shell = "2"

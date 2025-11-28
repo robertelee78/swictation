@@ -1,0 +1,17 @@
+[package]
+name = "swictation-paths"
+version = "0.1.0"
+edition = "2021"
+description = "Cross-platform path utilities for Swictation"
+license = "Apache-2.0"
+repository = "https://github.com/agidreams/swictation"
+
+[dependencies]
+dirs = "5.0"
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+[features]
+default = []
+# Future: Named pipe support for Windows
+windows-pipes = []

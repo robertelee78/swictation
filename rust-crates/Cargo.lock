@@ -2919,6 +2919,7 @@ dependencies = [
  "swictation-broadcaster",
  "swictation-context-learning",
  "swictation-metrics",
+ "swictation-paths",
  "swictation-stt",
  "swictation-vad",
  "sysinfo",
@@ -2952,6 +2953,15 @@ dependencies = [
  "tracing",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+]
+
+[[package]]
+name = "swictation-paths"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dirs",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
