@@ -148,8 +148,12 @@ pub fn get_models_dir() -> Result<PathBuf> {
     let models_dir = data_dir.join("models");
 
     if !models_dir.exists() {
-        fs::create_dir_all(&models_dir)
-            .with_context(|| format!("Failed to create models directory: {}", models_dir.display()))?;
+        fs::create_dir_all(&models_dir).with_context(|| {
+            format!(
+                "Failed to create models directory: {}",
+                models_dir.display()
+            )
+        })?;
     }
 
     Ok(models_dir)
@@ -169,8 +173,9 @@ pub fn get_logs_dir() -> Result<PathBuf> {
         let logs_dir = home.join("Library").join("Logs").join(APP_NAME);
 
         if !logs_dir.exists() {
-            fs::create_dir_all(&logs_dir)
-                .with_context(|| format!("Failed to create logs directory: {}", logs_dir.display()))?;
+            fs::create_dir_all(&logs_dir).with_context(|| {
+                format!("Failed to create logs directory: {}", logs_dir.display())
+            })?;
         }
 
         Ok(logs_dir)
@@ -183,8 +188,9 @@ pub fn get_logs_dir() -> Result<PathBuf> {
         let logs_dir = data_dir.join("logs");
 
         if !logs_dir.exists() {
-            fs::create_dir_all(&logs_dir)
-                .with_context(|| format!("Failed to create logs directory: {}", logs_dir.display()))?;
+            fs::create_dir_all(&logs_dir).with_context(|| {
+                format!("Failed to create logs directory: {}", logs_dir.display())
+            })?;
         }
 
         Ok(logs_dir)
@@ -204,8 +210,12 @@ pub fn get_config_dir() -> Result<PathBuf> {
         let config_dir = config_base.join(APP_NAME);
 
         if !config_dir.exists() {
-            fs::create_dir_all(&config_dir)
-                .with_context(|| format!("Failed to create config directory: {}", config_dir.display()))?;
+            fs::create_dir_all(&config_dir).with_context(|| {
+                format!(
+                    "Failed to create config directory: {}",
+                    config_dir.display()
+                )
+            })?;
 
             // Secure permissions
             use std::os::unix::fs::PermissionsExt;
@@ -232,8 +242,9 @@ pub fn get_db_dir() -> Result<PathBuf> {
     let db_dir = data_dir.join("db");
 
     if !db_dir.exists() {
-        fs::create_dir_all(&db_dir)
-            .with_context(|| format!("Failed to create database directory: {}", db_dir.display()))?;
+        fs::create_dir_all(&db_dir).with_context(|| {
+            format!("Failed to create database directory: {}", db_dir.display())
+        })?;
     }
 
     Ok(db_dir)
@@ -248,8 +259,9 @@ pub fn get_gpu_libs_dir() -> Result<PathBuf> {
     let gpu_dir = data_dir.join("gpu-libs");
 
     if !gpu_dir.exists() {
-        fs::create_dir_all(&gpu_dir)
-            .with_context(|| format!("Failed to create GPU libs directory: {}", gpu_dir.display()))?;
+        fs::create_dir_all(&gpu_dir).with_context(|| {
+            format!("Failed to create GPU libs directory: {}", gpu_dir.display())
+        })?;
     }
 
     Ok(gpu_dir)
@@ -268,8 +280,12 @@ pub fn secure_socket_permissions(socket_path: &PathBuf) -> Result<()> {
 
     if socket_path.exists() {
         let perms = fs::Permissions::from_mode(0o600);
-        fs::set_permissions(socket_path, perms)
-            .with_context(|| format!("Failed to set socket permissions: {}", socket_path.display()))?;
+        fs::set_permissions(socket_path, perms).with_context(|| {
+            format!(
+                "Failed to set socket permissions: {}",
+                socket_path.display()
+            )
+        })?;
     }
 
     Ok(())

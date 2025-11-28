@@ -4,18 +4,12 @@
 //! This module provides backward compatibility for existing daemon code.
 
 // Re-export the functions actually used by the daemon
-pub use swictation_paths::{
-    get_ipc_socket_path,
-    get_metrics_socket_path,
-};
+pub use swictation_paths::{get_ipc_socket_path, get_metrics_socket_path};
 
 // Re-export additional utilities for potential future use and API consistency
 // These are currently unused in production code but used in tests
 #[allow(unused_imports)]
-pub use swictation_paths::{
-    get_socket_dir,
-    secure_socket_permissions,
-};
+pub use swictation_paths::{get_socket_dir, secure_socket_permissions};
 
 #[cfg(test)]
 mod tests {
