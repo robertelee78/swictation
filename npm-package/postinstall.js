@@ -1055,8 +1055,27 @@ async function downloadONNXRuntimeCoreML() {
 function detectOrtLibrary() {
   log('cyan', '\n🔍 Detecting ONNX Runtime library path...');
 
-  // CRITICAL: Check npm package library FIRST (GPU-enabled, bundled with package)
-  // This is the bundled library with CUDA support
+  // PRIORITY 1: Check platform package library (new architecture)
+  // Platform packages (@agidreams/linux-x64, @agidreams/darwin-arm64) include GPU-enabled ORT
+  try {
+    const { resolveBinaryPaths, isPlatformPackageInstalled } = require('./src/resolve-binary');
+    if (isPlatformPackageInstalled()) {
+      const binaryPaths = resolveBinaryPaths();
+      const isMacOS = process.platform === 'darwin';
+      const ortFileName = isMacOS ? 'libonnxruntime.dylib' : 'libonnxruntime.so';
+      const platformOrtLib = path.join(binaryPaths.libDir, ortFileName);
+
+      if (fs.existsSync(platformOrtLib)) {
+        log('green', `✓ Found ONNX Runtime (platform package): ${platformOrtLib}`);
+        log('cyan', `  Using GPU-enabled library from ${binaryPaths.packageName}`);
+        return platformOrtLib;
+      }
+    }
+  } catch (err) {
+    // Platform package not installed yet - continue to fallbacks
+  }
+
+  // PRIORITY 2: Check legacy bundled library path (deprecated, for backwards compatibility)
   const npmOrtLib = path.join(__dirname, 'lib', 'native', 'libonnxruntime.so');
   if (fs.existsSync(npmOrtLib)) {
     log('green', `✓ Found ONNX Runtime (bundled): ${npmOrtLib}`);
@@ -1064,9 +1083,8 @@ function detectOrtLibrary() {
     return npmOrtLib;
   }
 
-  log('yellow', `⚠️  Warning: GPU-enabled ONNX Runtime not found at ${npmOrtLib}`);
-  log('yellow', '   Falling back to system Python installation (may be CPU-only)');
-
+  // PRIORITY 3: Fall back to Python installation (usually CPU-only)
+  log('yellow', '⚠️  Platform package ORT not found - checking Python fallback...');
 
   try {
     // Try to find ONNX Runtime through Python (fallback, usually CPU-only)

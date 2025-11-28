@@ -147,10 +147,18 @@ impl Daemon {
                 // Locks released here before broadcast
 
                 // Phase 4: Broadcast (no locks held - prevents deadlock with metrics updater)
-                self.broadcaster.start_session(sid).await;
-                self.broadcaster
-                    .broadcast_state_change(swictation_metrics::DaemonState::Recording)
-                    .await;
+                // CRITICAL: Spawn broadcasts to prevent blocking IPC responses
+                // Broadcasting to UI clients can block if clients are slow/disconnected
+                // By spawning, we return immediately and let broadcasts happen async
+                {
+                    let broadcaster = Arc::clone(&self.broadcaster);
+                    tokio::spawn(async move {
+                        broadcaster.start_session(sid).await;
+                        broadcaster
+                            .broadcast_state_change(swictation_metrics::DaemonState::Recording)
+                            .await;
+                    });
+                }
 
                 Ok(format!("Recording started (Session #{})", sid))
             }
@@ -184,12 +192,19 @@ impl Daemon {
                 // All locks released before broadcast
 
                 // Phase 4: Broadcast (no locks held)
-                if let Some(sid) = sid {
-                    self.broadcaster.end_session(sid).await;
+                // CRITICAL: Spawn broadcasts to prevent blocking IPC responses
+                // Same rationale as start_recording - avoid blocking on slow clients
+                {
+                    let broadcaster = Arc::clone(&self.broadcaster);
+                    tokio::spawn(async move {
+                        if let Some(sid) = sid {
+                            broadcaster.end_session(sid).await;
+                        }
+                        broadcaster
+                            .broadcast_state_change(swictation_metrics::DaemonState::Idle)
+                            .await;
+                    });
                 }
-                self.broadcaster
-                    .broadcast_state_change(swictation_metrics::DaemonState::Idle)
-                    .await;
 
                 Ok(format!(
                     "Recording stopped ({} words, {:.1} WPM)",
@@ -636,7 +651,6 @@ async fn main() -> Result<()> {
 
             // IPC server (secondary, for CLI/scripts)
             Ok((stream, daemon)) = ipc_server.accept() => {
-                // Handle connection inline (no spawn needed)
                 if let Err(e) = handle_ipc_connection(stream, daemon).await {
                     error!("IPC connection error: {}", e);
                 }
