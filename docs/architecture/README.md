@@ -9,12 +9,22 @@ This directory contains comprehensive architecture documentation for the Swictat
 ```
 architecture/
 ├── README.md                                    ← You are here
-├── SOCKET_ARCHITECTURE_SUMMARY.md              ← Quick reference for socket system
-├── tauri-socket-architecture-analysis.md       ← Detailed technical analysis
+│
+├── Cross-Platform Architecture (NEW - 2025-11-28)
+│   ├── ARCHITECTURE_SUMMARY.md                 ← Executive summary
+│   ├── cross-platform-abstraction-design.md    ← Complete design
+│   ├── path-abstraction-implementation.md      ← Ready-to-code implementation
+│   └── ARCHITECTURE_DIAGRAM.md                 ← Visual diagrams
+│
+├── Socket Architecture (Existing)
+│   ├── SOCKET_ARCHITECTURE_SUMMARY.md          ← Quick reference
+│   └── tauri-socket-architecture-analysis.md   ← Detailed analysis
+│
 ├── adr/                                        ← Architecture Decision Records
 │   ├── ADR-001-*.md                           (Future ADRs)
 │   ├── ADR-002-*.md                           (Future ADRs)
 │   └── ADR-003-remove-legacy-socket-implementation.md
+│
 └── diagrams/
     └── tauri-socket-flow.md                   ← Visual diagrams (Mermaid)
 ```
@@ -23,27 +33,61 @@ architecture/
 
 ## 🚀 Quick Start
 
-### I want to understand the socket architecture
+### NEW: Cross-Platform Architecture (Linux/macOS/Windows Support)
+
+**I want to implement cross-platform support:**
+**Start Here:** [`ARCHITECTURE_SUMMARY.md`](./ARCHITECTURE_SUMMARY.md) 📋
+- Executive summary
+- Component status matrix
+- Implementation roadmap
+- Quick reference guide
+
+**I need the complete design:**
+**Read:** [`cross-platform-abstraction-design.md`](./cross-platform-abstraction-design.md) 📐
+- All five abstraction modules
+- API specifications
+- Testing strategy
+- 8-week implementation plan
+
+**I'm ready to code:**
+**Code:** [`path-abstraction-implementation.md`](./path-abstraction-implementation.md) 💻
+- Complete `swictation-paths` crate
+- Production-ready Rust code
+- Platform-specific modules (Linux, macOS, Windows)
+- Migration guide
+
+**I want visual architecture diagrams:**
+**View:** [`ARCHITECTURE_DIAGRAM.md`](./ARCHITECTURE_DIAGRAM.md) 📊
+- System architecture
+- Data flow diagrams
+- Module dependencies
+- Platform-specific flows
+
+---
+
+### Socket Architecture (Existing)
+
+**I want to understand the socket architecture:**
 **Read:** [`SOCKET_ARCHITECTURE_SUMMARY.md`](./SOCKET_ARCHITECTURE_SUMMARY.md)
 - Executive summary with quick answers
 - Architecture diagrams
 - Recommendations
 
-### I need detailed technical analysis
+**I need detailed technical analysis:**
 **Read:** [`tauri-socket-architecture-analysis.md`](./tauri-socket-architecture-analysis.md)
 - Code walkthrough
 - Bug analysis
 - API surface review
 - Design intent
 
-### I want to see visual diagrams
+**I want to see visual diagrams:**
 **Read:** [`diagrams/tauri-socket-flow.md`](./diagrams/tauri-socket-flow.md)
 - Component diagrams
 - Sequence diagrams
 - Data flow diagrams
 - State machines
 
-### I need to understand architectural decisions
+**I need to understand architectural decisions:**
 **Read:** [`adr/ADR-003-remove-legacy-socket-implementation.md`](./adr/ADR-003-remove-legacy-socket-implementation.md)
 - Formal decision record
 - Options analysis
