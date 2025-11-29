@@ -356,9 +356,11 @@ mod tests {
     /// Test has_microphone_permission returns a boolean without crashing.
     #[test]
     fn test_has_microphone_permission_no_crash() {
+        // This should not crash, even without entitlements
         let result = has_microphone_permission();
         println!("Has microphone permission: {}", result);
-        // Just verify it returns a valid bool (doesn't crash)
-        assert!(result == true || result == false);
+        // The function executed successfully if we get here
+        // Result depends on system state (true if authorized, false otherwise)
+        drop(result); // Silence unused warning while proving the call succeeded
     }
 }
