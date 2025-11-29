@@ -18,14 +18,8 @@
 //! any audio capture operations.
 
 use std::os::raw::c_void;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc;
 use std::time::Duration;
 use tracing::{debug, info, warn};
-
-// AVFoundation media type for audio
-// This is the string "soun" (audio) used by AVCaptureDevice
-const AV_MEDIA_TYPE_AUDIO: &str = "soun";
 
 /// AVAuthorizationStatus enum values from AVFoundation
 #[repr(i32)]
@@ -93,7 +87,10 @@ pub fn check_microphone_authorization_status() -> AVAuthorizationStatus {
             objc_msgSend(nsstring_class, string_sel, media_type_str.as_ptr());
 
         // Call [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio]
-        let status: i32 = std::mem::transmute(objc_msgSend(avcapturedevice, sel, media_type));
+        // The result is an NSInteger (i64 on 64-bit), returned in the pointer.
+        // We cast through isize to handle the pointer-to-integer conversion safely.
+        let status_ptr = objc_msgSend(avcapturedevice, sel, media_type);
+        let status: i32 = (status_ptr as isize) as i32;
 
         debug!("Microphone authorization status: {:?}", status);
         AVAuthorizationStatus::from(status)
@@ -140,9 +137,6 @@ pub fn request_microphone_permission() -> bool {
     }
 
     // Request permission - this shows the system dialog
-    let (tx, rx) = mpsc::channel();
-    let granted = AtomicBool::new(false);
-
     unsafe {
         // Get AVCaptureDevice class
         let class_name = b"AVCaptureDevice\0";
