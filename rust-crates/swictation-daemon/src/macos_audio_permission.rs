@@ -17,6 +17,7 @@
 //! Call `request_microphone_permission()` at daemon startup, BEFORE attempting
 //! any audio capture operations.
 
+use std::ffi::CStr;
 use std::os::raw::c_void;
 use std::time::Duration;
 use tracing::{debug, info, warn};
@@ -61,30 +62,34 @@ extern "C" {
     fn objc_msgSend(obj: *mut c_void, sel: *mut c_void, ...) -> *mut c_void;
 }
 
+// Helper to convert CStr to *const i8
+fn cstr_ptr(s: &CStr) -> *const i8 {
+    s.as_ptr()
+}
+
 /// Check the current microphone authorization status
 ///
 /// Returns the current permission state without triggering a dialog.
 pub fn check_microphone_authorization_status() -> AVAuthorizationStatus {
     unsafe {
         // Get AVCaptureDevice class
-        let class_name = b"AVCaptureDevice\0";
-        let avcapturedevice = objc_getClass(class_name.as_ptr() as *const i8);
+        let class_name = c"AVCaptureDevice";
+        let avcapturedevice = objc_getClass(cstr_ptr(class_name));
         if avcapturedevice.is_null() {
             warn!("Failed to get AVCaptureDevice class");
             return AVAuthorizationStatus::NotDetermined;
         }
 
         // Get selector for authorizationStatusForMediaType:
-        let sel_name = b"authorizationStatusForMediaType:\0";
-        let sel = sel_registerName(sel_name.as_ptr() as *const i8);
+        let sel_name = c"authorizationStatusForMediaType:";
+        let sel = sel_registerName(cstr_ptr(sel_name));
 
         // Create NSString for media type "soun" (audio)
-        let nsstring_class_name = b"NSString\0";
-        let nsstring_class = objc_getClass(nsstring_class_name.as_ptr() as *const i8);
-        let string_sel = sel_registerName(b"stringWithUTF8String:\0".as_ptr() as *const i8);
-        let media_type_str = b"soun\0";
+        let nsstring_class = objc_getClass(cstr_ptr(c"NSString"));
+        let string_sel = sel_registerName(cstr_ptr(c"stringWithUTF8String:"));
+        let media_type_str = c"soun";
         let media_type: *mut c_void =
-            objc_msgSend(nsstring_class, string_sel, media_type_str.as_ptr());
+            objc_msgSend(nsstring_class, string_sel, cstr_ptr(media_type_str));
 
         // Call [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio]
         // The result is an NSInteger (i64 on 64-bit), returned in the pointer.
@@ -139,24 +144,21 @@ pub fn request_microphone_permission() -> bool {
     // Request permission - this shows the system dialog
     unsafe {
         // Get AVCaptureDevice class
-        let class_name = b"AVCaptureDevice\0";
-        let avcapturedevice = objc_getClass(class_name.as_ptr() as *const i8);
+        let avcapturedevice = objc_getClass(cstr_ptr(c"AVCaptureDevice"));
         if avcapturedevice.is_null() {
             warn!("Failed to get AVCaptureDevice class for permission request");
             return false;
         }
 
         // Get selector for requestAccessForMediaType:completionHandler:
-        let sel_name = b"requestAccessForMediaType:completionHandler:\0";
-        let sel = sel_registerName(sel_name.as_ptr() as *const i8);
+        // Note: We define but don't use this selector directly since we use
+        // an alternative approach via AVCaptureSession to trigger the dialog.
+        let _sel = sel_registerName(cstr_ptr(c"requestAccessForMediaType:completionHandler:"));
 
         // Create NSString for media type "soun" (audio)
-        let nsstring_class_name = b"NSString\0";
-        let nsstring_class = objc_getClass(nsstring_class_name.as_ptr() as *const i8);
-        let string_sel = sel_registerName(b"stringWithUTF8String:\0".as_ptr() as *const i8);
-        let media_type_str = b"soun\0";
-        let media_type: *mut c_void =
-            objc_msgSend(nsstring_class, string_sel, media_type_str.as_ptr());
+        let nsstring_class = objc_getClass(cstr_ptr(c"NSString"));
+        let string_sel = sel_registerName(cstr_ptr(c"stringWithUTF8String:"));
+        let media_type: *mut c_void = objc_msgSend(nsstring_class, string_sel, cstr_ptr(c"soun"));
 
         // Create a block for the completion handler
         // This is complex because Objective-C blocks have specific ABI requirements.
@@ -182,10 +184,9 @@ pub fn request_microphone_permission() -> bool {
         // First, trigger the request through a different mechanism
         // by attempting to create an AVCaptureSession - this triggers the dialog
 
-        let session_class_name = b"AVCaptureSession\0";
-        let session_class = objc_getClass(session_class_name.as_ptr() as *const i8);
-        let alloc_sel = sel_registerName(b"alloc\0".as_ptr() as *const i8);
-        let init_sel = sel_registerName(b"init\0".as_ptr() as *const i8);
+        let session_class = objc_getClass(cstr_ptr(c"AVCaptureSession"));
+        let alloc_sel = sel_registerName(cstr_ptr(c"alloc"));
+        let init_sel = sel_registerName(cstr_ptr(c"init"));
 
         if !session_class.is_null() {
             // Create an AVCaptureSession - this triggers the permission dialog
@@ -194,25 +195,20 @@ pub fn request_microphone_permission() -> bool {
 
             if !session.is_null() {
                 // Try to add an audio input device - this triggers the permission request
-                let device_sel =
-                    sel_registerName(b"defaultDeviceWithMediaType:\0".as_ptr() as *const i8);
+                let device_sel = sel_registerName(cstr_ptr(c"defaultDeviceWithMediaType:"));
                 let audio_device = objc_msgSend(avcapturedevice, device_sel, media_type);
 
                 if !audio_device.is_null() {
                     // Create device input
-                    let input_class_name = b"AVCaptureDeviceInput\0";
-                    let input_class = objc_getClass(input_class_name.as_ptr() as *const i8);
-                    let input_sel =
-                        sel_registerName(b"deviceInputWithDevice:error:\0".as_ptr() as *const i8);
+                    let input_class = objc_getClass(cstr_ptr(c"AVCaptureDeviceInput"));
+                    let input_sel = sel_registerName(cstr_ptr(c"deviceInputWithDevice:error:"));
 
                     // Try to create input - this is what triggers the permission dialog
                     let _input = objc_msgSend(input_class, input_sel, audio_device, nil);
                 }
 
-                // Release the session
-                let release_sel = sel_registerName(b"release\0".as_ptr() as *const i8);
-                // Note: Modern Objective-C uses ARC, so this may not be needed
-                // objc_msgSend(session, release_sel);
+                // Note: Modern Objective-C uses ARC, so explicit release is not needed
+                // and would cause issues with ARC-managed objects.
             }
         }
     }
@@ -260,6 +256,7 @@ pub fn request_microphone_permission() -> bool {
 /// Check if microphone permission is currently granted
 ///
 /// Returns true only if authorization status is Authorized.
+#[allow(dead_code)]
 pub fn has_microphone_permission() -> bool {
     matches!(
         check_microphone_authorization_status(),
