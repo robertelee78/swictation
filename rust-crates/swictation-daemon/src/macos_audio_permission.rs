@@ -208,9 +208,8 @@ pub fn request_microphone_permission() -> bool {
                     // Create device input
                     let input_class_name = b"AVCaptureDeviceInput\0";
                     let input_class = objc_getClass(input_class_name.as_ptr() as *const i8);
-                    let input_sel = sel_registerName(
-                        b"deviceInputWithDevice:error:\0".as_ptr() as *const i8,
-                    );
+                    let input_sel =
+                        sel_registerName(b"deviceInputWithDevice:error:\0".as_ptr() as *const i8);
 
                     // Try to create input - this is what triggers the permission dialog
                     let _input = objc_msgSend(input_class, input_sel, audio_device, nil);
