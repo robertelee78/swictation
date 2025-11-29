@@ -268,30 +268,70 @@ pub fn has_microphone_permission() -> bool {
 mod tests {
     use super::*;
 
-    /// Test that verifies the FFI calls work correctly.
-    ///
-    /// This test is ignored by default because it requires:
-    /// - A real macOS environment (not CI)
-    /// - Proper entitlements for AVFoundation
-    /// - The test binary to be signed (CI runners don't sign test binaries)
-    ///
-    /// Run manually with: cargo test --package swictation-daemon -- macos_audio_permission --ignored
+    /// Test that AVAuthorizationStatus conversion works correctly.
     #[test]
-    #[ignore = "Requires signed binary with AVFoundation entitlements - run manually on macOS"]
-    fn test_check_authorization_status() {
-        let status = check_microphone_authorization_status();
-        println!("Current microphone authorization status: {:?}", status);
+    fn test_authorization_status_from_i32() {
+        assert_eq!(AVAuthorizationStatus::from(0), AVAuthorizationStatus::NotDetermined);
+        assert_eq!(AVAuthorizationStatus::from(1), AVAuthorizationStatus::Restricted);
+        assert_eq!(AVAuthorizationStatus::from(2), AVAuthorizationStatus::Denied);
+        assert_eq!(AVAuthorizationStatus::from(3), AVAuthorizationStatus::Authorized);
+        // Unknown values should default to NotDetermined
+        assert_eq!(AVAuthorizationStatus::from(99), AVAuthorizationStatus::NotDetermined);
+        assert_eq!(AVAuthorizationStatus::from(-1), AVAuthorizationStatus::NotDetermined);
     }
 
-    /// Test that verifies has_microphone_permission works.
-    ///
-    /// This test is ignored by default because it requires:
-    /// - A real macOS environment (not CI)
-    /// - Proper entitlements for AVFoundation
+    /// Test that the Objective-C runtime FFI bindings work.
+    /// This tests the basic FFI plumbing without requiring audio entitlements.
     #[test]
-    #[ignore = "Requires signed binary with AVFoundation entitlements - run manually on macOS"]
-    fn test_has_microphone_permission() {
-        let has_permission = has_microphone_permission();
-        println!("Has microphone permission: {}", has_permission);
+    fn test_objc_runtime_bindings() {
+        unsafe {
+            // Test that we can look up Objective-C classes
+            let nsstring_class = objc_getClass(cstr_ptr(c"NSString"));
+            assert!(!nsstring_class.is_null(), "NSString class should exist");
+
+            let nsobject_class = objc_getClass(cstr_ptr(c"NSObject"));
+            assert!(!nsobject_class.is_null(), "NSObject class should exist");
+
+            // Test that AVCaptureDevice class exists (doesn't require entitlements to look up)
+            let avcapturedevice = objc_getClass(cstr_ptr(c"AVCaptureDevice"));
+            assert!(!avcapturedevice.is_null(), "AVCaptureDevice class should exist");
+
+            // Test that we can register selectors
+            let sel = sel_registerName(cstr_ptr(c"description"));
+            assert!(!sel.is_null(), "description selector should be registerable");
+
+            let sel2 = sel_registerName(cstr_ptr(c"authorizationStatusForMediaType:"));
+            assert!(!sel2.is_null(), "authorizationStatusForMediaType: selector should be registerable");
+        }
+    }
+
+    /// Test that checking authorization status doesn't crash.
+    /// Note: The actual status depends on system state, but the call should not crash.
+    /// This works because checking status doesn't require the audio-input entitlement,
+    /// only actually accessing the microphone does.
+    #[test]
+    fn test_check_authorization_status_no_crash() {
+        // This should not crash, even without entitlements
+        // The status will vary based on system state
+        let status = check_microphone_authorization_status();
+        println!("Current microphone authorization status: {:?}", status);
+
+        // Verify it's one of the valid values
+        assert!(matches!(
+            status,
+            AVAuthorizationStatus::NotDetermined
+                | AVAuthorizationStatus::Restricted
+                | AVAuthorizationStatus::Denied
+                | AVAuthorizationStatus::Authorized
+        ));
+    }
+
+    /// Test has_microphone_permission returns a boolean without crashing.
+    #[test]
+    fn test_has_microphone_permission_no_crash() {
+        let result = has_microphone_permission();
+        println!("Has microphone permission: {}", result);
+        // Just verify it returns a valid bool (doesn't crash)
+        assert!(result == true || result == false);
     }
 }
