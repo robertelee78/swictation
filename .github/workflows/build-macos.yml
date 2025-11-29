@@ -127,12 +127,17 @@ jobs:
         echo "Checking for CoreML symbols in binary:"
         nm rust-crates/target/aarch64-apple-darwin/release/swictation-daemon | grep -i coreml | head -5 || echo "CoreML symbols not found (may be dynamically loaded)"
 
-    - name: Import Apple Developer certificate
-      if: ${{ secrets.APPLE_CERTIFICATE_BASE64 != '' }}
+    - name: Import Apple Developer certificate and sign daemon
       env:
         APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
         APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
       run: |
+        if [ -z "$APPLE_CERTIFICATE_BASE64" ]; then
+          echo "⚠️  APPLE_CERTIFICATE_BASE64 not set, skipping code signing"
+          exit 0
+        fi
+
         # Create temporary keychain
         KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
         KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
@@ -152,11 +157,7 @@ jobs:
         echo "✓ Developer certificate imported"
         security find-identity -v -p codesigning $KEYCHAIN_PATH
 
-    - name: Sign daemon binary
-      if: ${{ secrets.APPLE_SIGNING_IDENTITY != '' }}
-      env:
-        APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-      run: |
+        # Sign the daemon binary
         DAEMON_BIN="rust-crates/target/aarch64-apple-darwin/release/swictation-daemon"
 
         echo "Signing daemon with Developer ID..."
@@ -209,12 +210,17 @@ jobs:
         ls -lh tauri-ui/src-tauri/target/release/bundle/macos/ || echo "macOS bundle not found"
         ls -lh tauri-ui/src-tauri/target/release/bundle/dmg/ || echo "DMG not found"
 
-    - name: Import Apple Developer certificate
-      if: ${{ secrets.APPLE_CERTIFICATE_BASE64 != '' }}
+    - name: Import Apple Developer certificate and sign UI
       env:
         APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
         APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
       run: |
+        if [ -z "$APPLE_CERTIFICATE_BASE64" ]; then
+          echo "⚠️  APPLE_CERTIFICATE_BASE64 not set, skipping code signing"
+          exit 0
+        fi
+
         # Create temporary keychain
         KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
         KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
@@ -234,11 +240,7 @@ jobs:
         echo "✓ Developer certificate imported"
         security find-identity -v -p codesigning $KEYCHAIN_PATH
 
-    - name: Sign UI binary
-      if: ${{ secrets.APPLE_SIGNING_IDENTITY != '' }}
-      env:
-        APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-      run: |
+        # Sign the UI binary
         UI_BIN="tauri-ui/src-tauri/target/release/swictation-ui"
 
         echo "Signing UI with Developer ID..."
