@@ -271,13 +271,31 @@ mod tests {
     /// Test that AVAuthorizationStatus conversion works correctly.
     #[test]
     fn test_authorization_status_from_i32() {
-        assert_eq!(AVAuthorizationStatus::from(0), AVAuthorizationStatus::NotDetermined);
-        assert_eq!(AVAuthorizationStatus::from(1), AVAuthorizationStatus::Restricted);
-        assert_eq!(AVAuthorizationStatus::from(2), AVAuthorizationStatus::Denied);
-        assert_eq!(AVAuthorizationStatus::from(3), AVAuthorizationStatus::Authorized);
+        assert_eq!(
+            AVAuthorizationStatus::from(0),
+            AVAuthorizationStatus::NotDetermined
+        );
+        assert_eq!(
+            AVAuthorizationStatus::from(1),
+            AVAuthorizationStatus::Restricted
+        );
+        assert_eq!(
+            AVAuthorizationStatus::from(2),
+            AVAuthorizationStatus::Denied
+        );
+        assert_eq!(
+            AVAuthorizationStatus::from(3),
+            AVAuthorizationStatus::Authorized
+        );
         // Unknown values should default to NotDetermined
-        assert_eq!(AVAuthorizationStatus::from(99), AVAuthorizationStatus::NotDetermined);
-        assert_eq!(AVAuthorizationStatus::from(-1), AVAuthorizationStatus::NotDetermined);
+        assert_eq!(
+            AVAuthorizationStatus::from(99),
+            AVAuthorizationStatus::NotDetermined
+        );
+        assert_eq!(
+            AVAuthorizationStatus::from(-1),
+            AVAuthorizationStatus::NotDetermined
+        );
     }
 
     /// Test that the Objective-C runtime FFI bindings work.
@@ -294,14 +312,23 @@ mod tests {
 
             // Test that AVCaptureDevice class exists (doesn't require entitlements to look up)
             let avcapturedevice = objc_getClass(cstr_ptr(c"AVCaptureDevice"));
-            assert!(!avcapturedevice.is_null(), "AVCaptureDevice class should exist");
+            assert!(
+                !avcapturedevice.is_null(),
+                "AVCaptureDevice class should exist"
+            );
 
             // Test that we can register selectors
             let sel = sel_registerName(cstr_ptr(c"description"));
-            assert!(!sel.is_null(), "description selector should be registerable");
+            assert!(
+                !sel.is_null(),
+                "description selector should be registerable"
+            );
 
             let sel2 = sel_registerName(cstr_ptr(c"authorizationStatusForMediaType:"));
-            assert!(!sel2.is_null(), "authorizationStatusForMediaType: selector should be registerable");
+            assert!(
+                !sel2.is_null(),
+                "authorizationStatusForMediaType: selector should be registerable"
+            );
         }
     }
 
