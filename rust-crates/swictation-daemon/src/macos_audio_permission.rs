@@ -51,7 +51,14 @@ impl From<i32> for AVAuthorizationStatus {
 // FFI declarations for AVFoundation permission APIs
 //
 // These use Objective-C runtime to call AVCaptureDevice class methods.
-// We use the objc crate for safe Objective-C interop.
+//
+// IMPORTANT: objc_msgSend is NOT a variadic function! It's an assembly trampoline
+// that jumps directly to the method implementation. On ARM64, variadic functions
+// use a completely different calling convention (stack) vs regular functions
+// (registers x0-x7). Declaring it with `...` causes SIGSEGV crashes.
+//
+// The correct approach is to declare it without arguments and use mem::transmute
+// to cast it to the exact function signature needed for each call.
 #[link(name = "AVFoundation", kind = "framework")]
 extern "C" {}
 
@@ -59,12 +66,57 @@ extern "C" {}
 extern "C" {
     fn objc_getClass(name: *const i8) -> *mut c_void;
     fn sel_registerName(name: *const i8) -> *mut c_void;
-    fn objc_msgSend(obj: *mut c_void, sel: *mut c_void, ...) -> *mut c_void;
+    // objc_msgSend - declared without args, cast to exact signature before each call
+    fn objc_msgSend();
 }
+
+// Type aliases for objc_msgSend function signatures used in this module
+type MsgSendNoArgs = unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void;
+type MsgSendOneArg = unsafe extern "C" fn(*mut c_void, *mut c_void, *const i8) -> *mut c_void;
+type MsgSendOneObjArg = unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> *mut c_void;
+type MsgSendTwoObjArgs =
+    unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void, *mut c_void) -> *mut c_void;
 
 // Helper to convert CStr to *const i8
 fn cstr_ptr(s: &CStr) -> *const i8 {
     s.as_ptr()
+}
+
+/// Helper to call objc_msgSend with no additional arguments
+/// Example: [obj init], [Class alloc]
+#[inline]
+unsafe fn msg_send_no_args(obj: *mut c_void, sel: *mut c_void) -> *mut c_void {
+    let func: MsgSendNoArgs = std::mem::transmute(objc_msgSend as *const ());
+    func(obj, sel)
+}
+
+/// Helper to call objc_msgSend with one C string argument
+/// Example: [NSString stringWithUTF8String:"foo"]
+#[inline]
+unsafe fn msg_send_str_arg(obj: *mut c_void, sel: *mut c_void, arg: *const i8) -> *mut c_void {
+    let func: MsgSendOneArg = std::mem::transmute(objc_msgSend as *const ());
+    func(obj, sel, arg)
+}
+
+/// Helper to call objc_msgSend with one object argument
+/// Example: [AVCaptureDevice authorizationStatusForMediaType:mediaType]
+#[inline]
+unsafe fn msg_send_obj_arg(obj: *mut c_void, sel: *mut c_void, arg: *mut c_void) -> *mut c_void {
+    let func: MsgSendOneObjArg = std::mem::transmute(objc_msgSend as *const ());
+    func(obj, sel, arg)
+}
+
+/// Helper to call objc_msgSend with two object arguments
+/// Example: [AVCaptureDeviceInput deviceInputWithDevice:device error:nil]
+#[inline]
+unsafe fn msg_send_two_obj_args(
+    obj: *mut c_void,
+    sel: *mut c_void,
+    arg1: *mut c_void,
+    arg2: *mut c_void,
+) -> *mut c_void {
+    let func: MsgSendTwoObjArgs = std::mem::transmute(objc_msgSend as *const ());
+    func(obj, sel, arg1, arg2)
 }
 
 /// Check the current microphone authorization status
@@ -89,12 +141,12 @@ pub fn check_microphone_authorization_status() -> AVAuthorizationStatus {
         let string_sel = sel_registerName(cstr_ptr(c"stringWithUTF8String:"));
         let media_type_str = c"soun";
         let media_type: *mut c_void =
-            objc_msgSend(nsstring_class, string_sel, cstr_ptr(media_type_str));
+            msg_send_str_arg(nsstring_class, string_sel, cstr_ptr(media_type_str));
 
         // Call [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio]
         // The result is an NSInteger (i64 on 64-bit), returned in the pointer.
         // We cast through isize to handle the pointer-to-integer conversion safely.
-        let status_ptr = objc_msgSend(avcapturedevice, sel, media_type);
+        let status_ptr = msg_send_obj_arg(avcapturedevice, sel, media_type);
         let status: i32 = (status_ptr as isize) as i32;
 
         debug!("Microphone authorization status: {:?}", status);
@@ -158,7 +210,8 @@ pub fn request_microphone_permission() -> bool {
         // Create NSString for media type "soun" (audio)
         let nsstring_class = objc_getClass(cstr_ptr(c"NSString"));
         let string_sel = sel_registerName(cstr_ptr(c"stringWithUTF8String:"));
-        let media_type: *mut c_void = objc_msgSend(nsstring_class, string_sel, cstr_ptr(c"soun"));
+        let media_type: *mut c_void =
+            msg_send_str_arg(nsstring_class, string_sel, cstr_ptr(c"soun"));
 
         // Create a block for the completion handler
         // This is complex because Objective-C blocks have specific ABI requirements.
@@ -190,13 +243,13 @@ pub fn request_microphone_permission() -> bool {
 
         if !session_class.is_null() {
             // Create an AVCaptureSession - this triggers the permission dialog
-            let session = objc_msgSend(session_class, alloc_sel);
-            let session = objc_msgSend(session, init_sel);
+            let session = msg_send_no_args(session_class, alloc_sel);
+            let session = msg_send_no_args(session, init_sel);
 
             if !session.is_null() {
                 // Try to add an audio input device - this triggers the permission request
                 let device_sel = sel_registerName(cstr_ptr(c"defaultDeviceWithMediaType:"));
-                let audio_device = objc_msgSend(avcapturedevice, device_sel, media_type);
+                let audio_device = msg_send_obj_arg(avcapturedevice, device_sel, media_type);
 
                 if !audio_device.is_null() {
                     // Create device input
@@ -204,7 +257,7 @@ pub fn request_microphone_permission() -> bool {
                     let input_sel = sel_registerName(cstr_ptr(c"deviceInputWithDevice:error:"));
 
                     // Try to create input - this is what triggers the permission dialog
-                    let _input = objc_msgSend(input_class, input_sel, audio_device, nil);
+                    let _input = msg_send_two_obj_args(input_class, input_sel, audio_device, nil);
                 }
 
                 // Note: Modern Objective-C uses ARC, so explicit release is not needed
@@ -300,6 +353,9 @@ mod tests {
 
     /// Test that the Objective-C runtime FFI bindings work.
     /// This tests the basic FFI plumbing without requiring audio entitlements.
+    ///
+    /// Tests objc_getClass and sel_registerName which should work on any macOS,
+    /// including CI runners (they don't require special entitlements).
     #[test]
     fn test_objc_runtime_bindings() {
         unsafe {
@@ -336,6 +392,8 @@ mod tests {
     /// Note: The actual status depends on system state, but the call should not crash.
     /// This works because checking status doesn't require the audio-input entitlement,
     /// only actually accessing the microphone does.
+    ///
+    /// Uses properly typed objc_msgSend helpers to avoid ARM64 varargs ABI issues.
     #[test]
     fn test_check_authorization_status_no_crash() {
         // This should not crash, even without entitlements
@@ -354,6 +412,8 @@ mod tests {
     }
 
     /// Test has_microphone_permission returns a boolean without crashing.
+    ///
+    /// Uses properly typed objc_msgSend helpers to avoid ARM64 varargs ABI issues.
     #[test]
     fn test_has_microphone_permission_no_crash() {
         // This should not crash, even without entitlements
