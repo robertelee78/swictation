@@ -1608,22 +1608,64 @@ function generateLaunchdServices(ortLibPath) {
       // Wrapper script goes in main package bin/ directory, executes daemon from platform package
       const mainPackageDir = __dirname; // Main swictation package directory
       const wrapperScriptPath = path.join(mainPackageDir, 'bin', 'swictation-daemon-launcher');
-      const wrapperScript = `#!/bin/bash
-# Wrapper script for swictation-daemon on macOS
-# Required because SIP strips DYLD_* env vars from launchd processes
-#
-# This script sets the necessary environment variables for ONNX Runtime
-# CoreML acceleration before launching the daemon binary.
-
-# Set library path for ONNX Runtime dylib (required for CoreML GPU acceleration)
-export DYLD_LIBRARY_PATH="${dylibPath}:\${DYLD_LIBRARY_PATH:-}"
-
-# Set explicit ONNX Runtime dylib path (critical for model loading)
-export ORT_DYLIB_PATH="${ortDylibPath}"
-
-# Execute the actual daemon binary
-exec "${daemonBinaryPath}" "$@"
-`;
+      // CRITICAL: Use string concatenation to avoid JavaScript template literal
+      // interpolation of shell variables. Shell variables like ${VAR} must be
+      // preserved in the output, not replaced with JavaScript values at write time.
+      const wrapperScript = '#!/bin/bash\n' +
+'# Wrapper script for swictation-daemon on macOS\n' +
+'# Required because SIP strips DYLD_* env vars from launchd processes\n' +
+'#\n' +
+'# This script sets the necessary environment variables for ONNX Runtime\n' +
+'# CoreML acceleration before launching the daemon binary.\n' +
+'#\n' +
+'# IMPORTANT: Paths are resolved at runtime using SCRIPT_DIR to handle\n' +
+'# npm reinstalls and path changes gracefully.\n' +
+'\n' +
+'# Resolve the directory where this script is located\n' +
+'SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"\n' +
+'PACKAGE_DIR="$(dirname "$SCRIPT_DIR")"\n' +
+'\n' +
+'# Platform package lib directory (for ONNX Runtime dylib)\n' +
+'# Try multiple locations in priority order:\n' +
+'# 1. Platform package from optionalDependencies (@agidreams/darwin-arm64)\n' +
+'# 2. Local lib/ directory in main package\n' +
+'find_onnx_lib() {\n' +
+'    # Check platform package first (preferred - has signed dylib)\n' +
+'    local platform_lib="$PACKAGE_DIR/../@agidreams/darwin-arm64/lib"\n' +
+'    if [ -f "$platform_lib/libonnxruntime.dylib" ]; then\n' +
+'        echo "$platform_lib"\n' +
+'        return\n' +
+'    fi\n' +
+'    \n' +
+'    # Check main package lib directory\n' +
+'    local main_lib="$PACKAGE_DIR/lib"\n' +
+'    if [ -f "$main_lib/libonnxruntime.dylib" ]; then\n' +
+'        echo "$main_lib"\n' +
+'        return\n' +
+'    fi\n' +
+'    \n' +
+'    # Fallback to explicit path from install time (may be stale)\n' +
+'    echo "' + dylibPath + '"\n' +
+'}\n' +
+'\n' +
+'# Resolve library path at runtime\n' +
+'LIB_DIR="$(find_onnx_lib)"\n' +
+'\n' +
+'# Set library path for ONNX Runtime dylib (required for CoreML GPU acceleration)\n' +
+'export DYLD_LIBRARY_PATH="$LIB_DIR:${DYLD_LIBRARY_PATH:-}"\n' +
+'\n' +
+'# Set explicit ONNX Runtime dylib path (critical for model loading)\n' +
+'export ORT_DYLIB_PATH="$LIB_DIR/libonnxruntime.dylib"\n' +
+'\n' +
+'# Find the daemon binary (prefer platform package)\n' +
+'DAEMON_BIN="$PACKAGE_DIR/../@agidreams/darwin-arm64/bin/swictation-daemon"\n' +
+'if [ ! -x "$DAEMON_BIN" ]; then\n' +
+'    # Fallback to explicit path from install time\n' +
+'    DAEMON_BIN="' + daemonBinaryPath + '"\n' +
+'fi\n' +
+'\n' +
+'# Execute the actual daemon binary\n' +
+'exec "$DAEMON_BIN" "$@"\n';
 
       // Write the wrapper script
       fs.writeFileSync(wrapperScriptPath, wrapperScript);

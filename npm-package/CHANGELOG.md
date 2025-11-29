@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.7.25] - 2025-11-29
+
+### Fixed - macOS Permission Handling & Path Resolution
+This release fixes the fundamental issues causing repeated permission prompts and library loading failures.
+
+- **Microphone Permission at Startup** - Daemon now requests microphone permission immediately
+  - `macos_audio_permission` module now enabled and called at daemon startup
+  - Shows system permission dialog for microphone access BEFORE audio capture
+  - Clear user guidance if permission denied or restricted
+  - Single permission prompt approach - request once, works forever
+
+- **Runtime Path Resolution** - Wrapper script no longer hardcodes paths
+  - Previously: JavaScript template literals caused paths to be hardcoded at install time
+  - Now: Paths resolved at runtime using `SCRIPT_DIR` and `PACKAGE_DIR`
+  - Gracefully handles npm reinstalls and path changes
+  - Falls back to install-time paths only as last resort
+
+- **Entitlements for Signed Binaries** - Proper entitlements for hardened runtime
+  - Added `daemon.entitlements` with `com.apple.security.device.audio-input`
+  - Added entitlements for library loading and JIT (needed by ONNX Runtime/CoreML)
+  - CI now signs binaries WITH entitlements file
+  - Enables microphone permission dialog for Developer ID signed apps
+
+- **UI Entitlements** - Added entitlements for Tauri UI
+  - Proper entitlements for WebView and library loading
+  - Consistent signing with hardened runtime
+
+### Installation
+```bash
+npm install -g swictation@0.7.25
+```
+
+### Platforms
+- macOS ARM64 (Apple Silicon) - `@agidreams/darwin-arm64` (Full Developer ID signing + entitlements)
+- Linux x86_64 (NVIDIA CUDA/CPU) - `@agidreams/linux-x64`
+
+---
+
 ## [0.7.24] - 2025-11-29
 
 ### Fixed - macOS Hardened Runtime Library Loading

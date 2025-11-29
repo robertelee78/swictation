@@ -198,14 +198,18 @@ jobs:
         echo "✓ Developer certificate imported"
         security find-identity -v -p codesigning $KEYCHAIN_PATH
 
-        # Sign the daemon binary
+        # Sign the daemon binary with entitlements
         DAEMON_BIN="rust-crates/target/aarch64-apple-darwin/release/swictation-daemon"
+        ENTITLEMENTS="rust-crates/swictation-daemon/entitlements/daemon.entitlements"
 
-        echo "Signing daemon with Developer ID..."
-        codesign -s "$APPLE_SIGNING_IDENTITY" -f --options runtime "$DAEMON_BIN"
+        echo "Signing daemon with Developer ID and entitlements..."
+        echo "Entitlements file: $ENTITLEMENTS"
+        cat "$ENTITLEMENTS"
 
-        echo "✓ Daemon signed"
-        codesign -dv "$DAEMON_BIN" 2>&1 | head -10
+        codesign -s "$APPLE_SIGNING_IDENTITY" -f --options runtime --entitlements "$ENTITLEMENTS" "$DAEMON_BIN"
+
+        echo "✓ Daemon signed with entitlements"
+        codesign -dv --entitlements - "$DAEMON_BIN" 2>&1 | head -20
 
     - name: Upload daemon artifact
       uses: actions/upload-artifact@v4
@@ -288,14 +292,18 @@ jobs:
         echo "✓ Developer certificate imported"
         security find-identity -v -p codesigning $KEYCHAIN_PATH
 
-        # Sign the UI binary
+        # Sign the UI binary with entitlements
         UI_BIN="tauri-ui/src-tauri/target/release/swictation-ui"
+        ENTITLEMENTS="tauri-ui/src-tauri/entitlements/ui.entitlements"
 
-        echo "Signing UI with Developer ID..."
-        codesign -s "$APPLE_SIGNING_IDENTITY" -f --options runtime "$UI_BIN"
+        echo "Signing UI with Developer ID and entitlements..."
+        echo "Entitlements file: $ENTITLEMENTS"
+        cat "$ENTITLEMENTS"
 
-        echo "✓ UI signed"
-        codesign -dv "$UI_BIN" 2>&1 | head -10
+        codesign -s "$APPLE_SIGNING_IDENTITY" -f --options runtime --entitlements "$ENTITLEMENTS" "$UI_BIN"
+
+        echo "✓ UI signed with entitlements"
+        codesign -dv --entitlements - "$UI_BIN" 2>&1 | head -20
 
     - name: Upload UI binary artifact
       uses: actions/upload-artifact@v4

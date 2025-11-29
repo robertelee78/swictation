@@ -20,6 +20,10 @@ mod version;
 #[cfg(target_os = "macos")]
 mod macos_text_inject;
 
+// macOS microphone permission module (conditional compilation)
+#[cfg(target_os = "macos")]
+mod macos_audio_permission;
+
 use anyhow::{Context, Result};
 use clap::Parser;
 use std::path::PathBuf;
@@ -274,9 +278,20 @@ async fn main() -> Result<()> {
     // This provides better UX by prompting users immediately rather than failing silently
     #[cfg(target_os = "macos")]
     {
+        use crate::macos_audio_permission::request_microphone_permission;
         use crate::macos_text_inject::MacOSTextInjector;
 
         info!("🔐 Checking macOS permissions...");
+
+        // Request Microphone permission FIRST (shows system dialog)
+        // This is critical - without this, audio capture silently fails
+        if !request_microphone_permission() {
+            warn!("⚠️  Microphone permission not yet granted");
+            warn!("   Please enable in: System Settings → Privacy & Security → Microphone");
+            warn!("   The daemon will continue, but voice dictation will not work until permission is granted");
+        } else {
+            info!("✅ Microphone permission granted");
+        }
 
         // Request Accessibility permission with system dialog
         // This will show a dialog guiding the user to System Settings if not granted
@@ -287,9 +302,6 @@ async fn main() -> Result<()> {
         } else {
             info!("✅ Accessibility permission granted");
         }
-
-        // Note: Microphone permissions are requested by the audio capture subsystem
-        // using AVCaptureDevice.requestAccess() when audio recording starts
     }
 
     // Load configuration
