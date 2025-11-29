@@ -960,7 +960,7 @@ async function downloadGPULibraries() {
  * CoreML is Apple's GPU acceleration framework for neural networks
  */
 async function downloadONNXRuntimeCoreML() {
-  log('cyan', '\n📦 Downloading ONNX Runtime CoreML library for macOS...');
+  log('cyan', '\n📦 Setting up ONNX Runtime CoreML library for macOS...');
 
   // Version info - must match build-macos-release.sh expectations
   // NOTE: Using 1.22.0 due to ORT 1.23.x regression with external data + CoreML
@@ -981,6 +981,35 @@ async function downloadONNXRuntimeCoreML() {
       log('green', `  ✓ ONNX Runtime CoreML dylib already present`);
       log('cyan', `    Location: ${targetDylibPath}`);
       log('cyan', `    Skipping download`);
+      return;
+    }
+
+    // Check for pre-signed library from platform package (CI-signed with Developer ID)
+    // This is critical for macOS hardened runtime compatibility
+    const platformPkgLib = path.join(__dirname, 'node_modules', '@agidreams', 'darwin-arm64', 'lib', 'libonnxruntime.dylib');
+    if (fs.existsSync(platformPkgLib)) {
+      log('green', `  ✓ Found Developer ID signed ONNX Runtime from platform package`);
+      log('cyan', `    Source: ${platformPkgLib}`);
+
+      // Create target directory if needed
+      if (!fs.existsSync(nativeDir)) {
+        fs.mkdirSync(nativeDir, { recursive: true });
+      }
+
+      // Copy the pre-signed library
+      fs.copyFileSync(platformPkgLib, targetDylibPath);
+      log('green', `  ✓ Copied signed library to ${targetDylibPath}`);
+
+      // Verify signature (informational)
+      try {
+        const sigInfo = execSync(`codesign -dv "${targetDylibPath}" 2>&1 | head -5`, { encoding: 'utf8' });
+        if (sigInfo.includes('TeamIdentifier')) {
+          log('green', `  ✓ Library has valid Developer ID signature`);
+        }
+      } catch (err) {
+        // Signature check is informational only
+      }
+
       return;
     }
 

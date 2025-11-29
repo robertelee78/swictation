@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.7.24] - 2025-11-29
+
+### Fixed - macOS Hardened Runtime Library Loading
+This release fixes the ONNX Runtime library loading issue with hardened runtime.
+
+- **Developer ID Signed ONNX Runtime Library** - Library now has matching Team ID
+  - `libonnxruntime.dylib` signed with same Developer ID as daemon
+  - Fixes "different Team IDs" error when loading library with hardened runtime
+  - All dylibs in platform package are now signed in CI
+
+- **Library Resolution Priority** - postinstall prefers signed platform library
+  - First checks `@agidreams/darwin-arm64/lib/` for pre-signed library
+  - Falls back to download only if platform library not found
+  - Ensures hardened runtime compatibility out of the box
+
+### Installation
+```bash
+npm install -g swictation@0.7.24
+```
+
+### Platforms
+- macOS ARM64 (Apple Silicon) - `@agidreams/darwin-arm64` (Full Developer ID signing)
+- Linux x86_64 (NVIDIA CUDA/CPU) - `@agidreams/linux-x64`
+
+---
+
 ## [0.7.23] - 2025-11-29
 
 ### Added - macOS Developer ID Code Signing

@@ -109,6 +109,47 @@ jobs:
         echo "✓ ONNX Runtime libraries copied to platform package"
         ls -lh npm-package/packages/darwin-arm64/lib/
 
+    - name: Sign ONNX Runtime library with Developer ID
+      env:
+        APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+        APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      run: |
+        if [ -z "$APPLE_CERTIFICATE_BASE64" ]; then
+          echo "⚠️  APPLE_CERTIFICATE_BASE64 not set, skipping library signing"
+          exit 0
+        fi
+
+        # Create temporary keychain for library signing
+        KEYCHAIN_PATH=$RUNNER_TEMP/lib-signing.keychain-db
+        KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
+
+        security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+        security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+        security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+        # Import certificate
+        echo "$APPLE_CERTIFICATE_BASE64" | base64 --decode > $RUNNER_TEMP/certificate.p12
+        security import $RUNNER_TEMP/certificate.p12 -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+        security list-keychain -d user -s $KEYCHAIN_PATH
+
+        # Allow codesign to access the keychain
+        security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+        echo "✓ Developer certificate imported for library signing"
+
+        # Sign all dylib files in the platform package
+        for dylib in npm-package/packages/darwin-arm64/lib/*.dylib; do
+          if [ -f "$dylib" ]; then
+            echo "Signing $dylib with Developer ID..."
+            codesign -s "$APPLE_SIGNING_IDENTITY" -f "$dylib"
+            echo "✓ Signed: $(basename $dylib)"
+            codesign -dv "$dylib" 2>&1 | head -5
+          fi
+        done
+
+        echo "✓ All ONNX Runtime libraries signed"
+
     - name: Build daemon (release)
       working-directory: rust-crates
       run: |
@@ -171,6 +212,13 @@ jobs:
       with:
         name: swictation-daemon-macos-arm64
         path: rust-crates/target/aarch64-apple-darwin/release/swictation-daemon
+        retention-days: 7
+
+    - name: Upload signed ONNX Runtime libraries
+      uses: actions/upload-artifact@v4
+      with:
+        name: onnxruntime-macos-arm64-signed
+        path: npm-package/packages/darwin-arm64/lib/*.dylib
         retention-days: 7
 
   build-tauri-macos:
@@ -327,6 +375,12 @@ jobs:
         name: swictation-ui-macos-arm64
         path: ./artifacts/ui
 
+    - name: Download signed ONNX Runtime libraries
+      uses: actions/download-artifact@v4
+      with:
+        name: onnxruntime-macos-arm64-signed
+        path: ./artifacts/onnxruntime
+
     - name: Install npm package dependencies
       working-directory: npm-package
       run: npm ci
@@ -353,6 +407,24 @@ jobs:
           echo "ERROR: UI binary not found in artifacts!"
           ls -la ./artifacts/ui/ || echo "UI artifacts directory not found"
           exit 1
+        fi
+
+        # Copy signed ONNX Runtime libraries
+        mkdir -p npm-package/packages/darwin-arm64/lib
+        if [ -d ./artifacts/onnxruntime ]; then
+          cp ./artifacts/onnxruntime/*.dylib npm-package/packages/darwin-arm64/lib/ 2>/dev/null || true
+          echo "ONNX Runtime libraries copied:"
+          ls -lh npm-package/packages/darwin-arm64/lib/ || echo "No libraries found"
+
+          # Verify signatures
+          for dylib in npm-package/packages/darwin-arm64/lib/*.dylib; do
+            if [ -f "$dylib" ]; then
+              echo "Signature for $(basename $dylib):"
+              codesign -dv "$dylib" 2>&1 | head -3
+            fi
+          done
+        else
+          echo "⚠️  ONNX Runtime artifacts not found, will be downloaded during postinstall"
         fi
 
     - name: Verify binaries
