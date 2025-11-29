@@ -361,6 +361,6 @@ mod tests {
         println!("Has microphone permission: {}", result);
         // The function executed successfully if we get here
         // Result depends on system state (true if authorized, false otherwise)
-        drop(result); // Silence unused warning while proving the call succeeded
+        let _ = result; // Silence unused warning while proving the call succeeded
     }
 }
