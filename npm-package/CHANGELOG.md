@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.7.23] - 2025-11-29
+
+### Added - macOS Developer ID Code Signing
+This release adds proper code signing for macOS binaries, solving the repeated permission prompt issue.
+
+- **Developer ID Application Signing** - All macOS binaries are now signed with Apple Developer ID
+  - Daemon and UI signed with "Developer ID Application: ROBERT E LEE"
+  - Hardened runtime enabled for Gatekeeper compatibility
+  - Stable identity in macOS TCC (Transparency, Consent, and Control) database
+
+### Fixed - macOS Permission Prompts
+- **One-time permission grant** - Accessibility permission now persists across updates
+  - No more repeated "swictation-daemon would like to control this computer" prompts
+  - Single permission grant covers all future versions
+  - Clean permission dialogs showing developer identity
+
+### Infrastructure
+- **CI/CD Code Signing** - Automated signing in GitHub Actions
+  - Certificate imported into temporary keychain during build
+  - Both daemon and UI signed automatically
+  - Secrets-based configuration for security
+
+### Installation
+```bash
+npm install -g swictation@0.7.23
+```
+
+### Platforms
+- macOS ARM64 (Apple Silicon) - `@agidreams/darwin-arm64` (Developer ID signed)
+- Linux x86_64 (NVIDIA CUDA/CPU) - `@agidreams/linux-x64`
+
+---
+
+## [0.7.22] - 2025-11-28
+
+### Fixed
+- **IPC Response Handling** - Fixed toggle hang on macOS by spawning response writes
+- **Cross-platform Paths** - Added `swictation-paths` crate for unified path handling
+
+---
+
 ## [0.7.21] - 2025-11-27
 
 ### Fixed - macOS Support
