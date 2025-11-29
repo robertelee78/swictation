@@ -268,14 +268,28 @@ pub fn has_microphone_permission() -> bool {
 mod tests {
     use super::*;
 
+    /// Test that verifies the FFI calls work correctly.
+    ///
+    /// This test is ignored by default because it requires:
+    /// - A real macOS environment (not CI)
+    /// - Proper entitlements for AVFoundation
+    /// - The test binary to be signed (CI runners don't sign test binaries)
+    ///
+    /// Run manually with: cargo test --package swictation-daemon -- macos_audio_permission --ignored
     #[test]
+    #[ignore = "Requires signed binary with AVFoundation entitlements - run manually on macOS"]
     fn test_check_authorization_status() {
-        // This test verifies the FFI calls don't crash
         let status = check_microphone_authorization_status();
         println!("Current microphone authorization status: {:?}", status);
     }
 
+    /// Test that verifies has_microphone_permission works.
+    ///
+    /// This test is ignored by default because it requires:
+    /// - A real macOS environment (not CI)
+    /// - Proper entitlements for AVFoundation
     #[test]
+    #[ignore = "Requires signed binary with AVFoundation entitlements - run manually on macOS"]
     fn test_has_microphone_permission() {
         let has_permission = has_microphone_permission();
         println!("Has microphone permission: {}", has_permission);
