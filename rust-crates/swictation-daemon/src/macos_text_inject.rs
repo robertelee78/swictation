@@ -207,7 +207,7 @@ impl MacOSTextInjector {
 
             if actually_works {
                 info!("Accessibility permissions validated and working");
-                return true;
+                true
             } else {
                 // This is the problematic case: API says trusted but it doesn't actually work
                 // The binary has changed and the old permission doesn't apply
@@ -226,14 +226,14 @@ impl MacOSTextInjector {
                 // Try to open System Settings to the Accessibility pane
                 Self::open_accessibility_settings();
 
-                return false;
+                false
             }
         } else {
             info!("Accessibility permissions not yet granted - system dialog shown");
             info!(
                 "User must enable toggle in: System Settings > Privacy & Security > Accessibility"
             );
-            return false;
+            false
         }
     }
 
