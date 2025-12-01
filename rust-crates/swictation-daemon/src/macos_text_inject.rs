@@ -71,13 +71,13 @@ extern "C" {
     /// This is a reliable way to validate actual accessibility permission
     /// (unlike AXIsProcessTrusted which can return stale cached values).
     fn CGEventTapCreate(
-        tap: u32,                        // CGEventTapLocation
-        place: u32,                      // CGEventTapPlacement
-        options: u32,                    // CGEventTapOptions
-        events_of_interest: u64,         // CGEventMask
-        callback: *const c_void,         // CGEventTapCallBack
-        user_info: *mut c_void,          // void*
-    ) -> *mut c_void;                    // CGEventTapRef (CFMachPortRef)
+        tap: u32,                // CGEventTapLocation
+        place: u32,              // CGEventTapPlacement
+        options: u32,            // CGEventTapOptions
+        events_of_interest: u64, // CGEventMask
+        callback: *const c_void, // CGEventTapCallBack
+        user_info: *mut c_void,  // void*
+    ) -> *mut c_void; // CGEventTapRef (CFMachPortRef)
 
     /// Release a Core Foundation object
     fn CFRelease(cf: *mut c_void);
@@ -150,17 +150,19 @@ impl MacOSTextInjector {
             // CGEventTapOptions: kCGEventTapOptionListenOnly = 1 (don't modify events)
             // CGEventMask: just listen for key events (1 << 10 for keyDown)
             let tap = CGEventTapCreate(
-                0,                          // kCGHIDEventTap
-                0,                          // kCGHeadInsertEventTap
-                1,                          // kCGEventTapOptionListenOnly (passive)
-                1 << 10,                    // kCGEventKeyDown
-                std::ptr::null(),           // No callback needed for validation
-                std::ptr::null_mut(),       // No user info
+                0,                    // kCGHIDEventTap
+                0,                    // kCGHeadInsertEventTap
+                1,                    // kCGEventTapOptionListenOnly (passive)
+                1 << 10,              // kCGEventKeyDown
+                std::ptr::null(),     // No callback needed for validation
+                std::ptr::null_mut(), // No user info
             );
 
             if tap.is_null() {
                 // CGEventTapCreate failed - no accessibility permission
-                debug!("CGEventTapCreate returned NULL - accessibility not granted for this binary");
+                debug!(
+                    "CGEventTapCreate returned NULL - accessibility not granted for this binary"
+                );
                 false
             } else {
                 // Successfully created tap - permission is valid
