@@ -60,6 +60,29 @@ extern "C" {
     fn AXIsProcessTrustedWithOptions(options: *const c_void) -> bool;
 }
 
+// FFI for CGEventPost validation
+//
+// CGEventPost returns void, but we can validate accessibility by attempting
+// to create a CGEventTap - this WILL fail if accessibility is not granted.
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    /// Create an event tap to monitor events.
+    /// Returns NULL if the process doesn't have accessibility permission.
+    /// This is a reliable way to validate actual accessibility permission
+    /// (unlike AXIsProcessTrusted which can return stale cached values).
+    fn CGEventTapCreate(
+        tap: u32,                        // CGEventTapLocation
+        place: u32,                      // CGEventTapPlacement
+        options: u32,                    // CGEventTapOptions
+        events_of_interest: u64,         // CGEventMask
+        callback: *const c_void,         // CGEventTapCallBack
+        user_info: *mut c_void,          // void*
+    ) -> *mut c_void;                    // CGEventTapRef (CFMachPortRef)
+
+    /// Release a Core Foundation object
+    fn CFRelease(cf: *mut c_void);
+}
+
 /// Key for the prompt option in AXIsProcessTrustedWithOptions
 /// When set to true, shows system dialog for granting accessibility
 static KAXTRUSTED_CHECK_OPTION_PROMPT: &str = "AXTrustedCheckOptionPrompt";
@@ -111,44 +134,123 @@ impl MacOSTextInjector {
         unsafe { AXIsProcessTrusted() }
     }
 
+    /// Validate that accessibility permission is ACTUALLY working
+    ///
+    /// This function attempts to create a CGEventTap, which requires real
+    /// accessibility permission. Unlike AXIsProcessTrusted() which can return
+    /// stale cached values, CGEventTapCreate will fail (return NULL) if the
+    /// current binary doesn't have actual accessibility permission.
+    ///
+    /// This is critical for detecting when a binary has been updated and
+    /// the old cached permission no longer applies.
+    pub fn validate_accessibility_permission() -> bool {
+        unsafe {
+            // CGEventTapLocation: kCGHIDEventTap = 0
+            // CGEventTapPlacement: kCGHeadInsertEventTap = 0
+            // CGEventTapOptions: kCGEventTapOptionListenOnly = 1 (don't modify events)
+            // CGEventMask: just listen for key events (1 << 10 for keyDown)
+            let tap = CGEventTapCreate(
+                0,                          // kCGHIDEventTap
+                0,                          // kCGHeadInsertEventTap
+                1,                          // kCGEventTapOptionListenOnly (passive)
+                1 << 10,                    // kCGEventKeyDown
+                std::ptr::null(),           // No callback needed for validation
+                std::ptr::null_mut(),       // No user info
+            );
+
+            if tap.is_null() {
+                // CGEventTapCreate failed - no accessibility permission
+                debug!("CGEventTapCreate returned NULL - accessibility not granted for this binary");
+                false
+            } else {
+                // Successfully created tap - permission is valid
+                // Clean up immediately
+                CFRelease(tap);
+                debug!("CGEventTapCreate succeeded - accessibility permission validated");
+                true
+            }
+        }
+    }
+
     /// Request Accessibility permissions with a system dialog
     ///
     /// This function will:
-    /// 1. Check if permissions are already granted
+    /// 1. Check if permissions are already granted (using both API and validation)
     /// 2. If not, display a system dialog prompting the user
     /// 3. The dialog shows "Open System Settings" and "Deny" buttons
     ///
-    /// Returns true if permissions are already granted, false otherwise.
-    /// Note: Even after the dialog is shown, the user must manually enable
-    /// the toggle in System Settings > Privacy & Security > Accessibility.
+    /// Returns true if permissions are actually working, false otherwise.
     ///
-    /// This provides better UX than silently failing - the user sees the
-    /// permission request immediately on first run.
+    /// IMPORTANT: This function validates that permissions actually work by
+    /// attempting to create a CGEventTap. This catches the case where
+    /// AXIsProcessTrusted returns true (stale cached value) but the current
+    /// binary doesn't actually have permission (e.g., after an update).
     pub fn request_accessibility_permissions() -> bool {
         info!("Checking Accessibility permissions with prompt...");
 
-        // Create options dictionary with prompt = true
+        // First check the API result
         let key = CFString::new(KAXTRUSTED_CHECK_OPTION_PROMPT);
         let value = CFBoolean::true_value();
-
-        // Build the CFDictionary with the prompt option
         let options = CFDictionary::from_CFType_pairs(&[(key.as_CFType(), value.as_CFType())]);
 
-        // Call the API with options - this will show the system dialog if needed
-        let is_trusted = unsafe {
+        let api_says_trusted = unsafe {
             AXIsProcessTrustedWithOptions(options.as_concrete_TypeRef() as *const c_void)
         };
 
-        if is_trusted {
-            info!("Accessibility permissions already granted");
+        if api_says_trusted {
+            // API says we're trusted, but let's VALIDATE this actually works
+            // This catches stale cached permissions after binary updates
+            info!("API reports accessibility granted, validating...");
+            let actually_works = Self::validate_accessibility_permission();
+
+            if actually_works {
+                info!("Accessibility permissions validated and working");
+                return true;
+            } else {
+                // This is the problematic case: API says trusted but it doesn't actually work
+                // The binary has changed and the old permission doesn't apply
+                warn!("⚠️  Accessibility permission is STALE (binary changed)");
+                warn!("   macOS cached an old permission that no longer applies");
+                warn!("   Please re-grant permission in System Settings:");
+                warn!("   1. Open: System Settings → Privacy & Security → Accessibility");
+                warn!("   2. Find 'swictation-daemon' in the list");
+                warn!("   3. Toggle it OFF, then back ON");
+                warn!("   4. Restart swictation");
+
+                // Show the system dialog again to guide the user
+                // Note: This won't help because macOS thinks permission is already granted
+                // We need to open System Settings directly
+
+                // Try to open System Settings to the Accessibility pane
+                Self::open_accessibility_settings();
+
+                return false;
+            }
         } else {
             info!("Accessibility permissions not yet granted - system dialog shown");
             info!(
                 "User must enable toggle in: System Settings > Privacy & Security > Accessibility"
             );
+            return false;
         }
+    }
 
-        is_trusted
+    /// Open System Settings to the Accessibility pane
+    ///
+    /// This is helpful when permissions are stale and the user needs to
+    /// manually re-toggle the permission.
+    fn open_accessibility_settings() {
+        info!("Opening System Settings → Accessibility...");
+
+        // Use NSWorkspace to open the Accessibility preferences pane
+        // URL: x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility
+        let url = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility";
+
+        // Use open command as a simple cross-version compatible approach
+        if let Err(e) = std::process::Command::new("open").arg(url).spawn() {
+            warn!("Failed to open System Settings: {}", e);
+            warn!("Please manually open: System Settings → Privacy & Security → Accessibility");
+        }
     }
 
     /// Inject text into the active window, handling <KEY:...> markers
@@ -423,7 +525,25 @@ mod tests {
         // This test just verifies the function can be called
         // Actual permission state depends on system configuration
         let has_permission = MacOSTextInjector::check_accessibility_permissions();
-        println!("Accessibility permission: {}", has_permission);
+        println!("Accessibility permission (API): {}", has_permission);
+    }
+
+    #[test]
+    fn test_permission_validation() {
+        // Test that the validation function works
+        // This actually validates permission via CGEventTap
+        let validated = MacOSTextInjector::validate_accessibility_permission();
+        let api_says = MacOSTextInjector::check_accessibility_permissions();
+        println!(
+            "Accessibility permission - API: {}, Validated: {}",
+            api_says, validated
+        );
+
+        // If API says yes but validation says no, we have stale permissions
+        if api_says && !validated {
+            println!("⚠️  STALE PERMISSION DETECTED: API reports granted but validation failed");
+            println!("    This means the binary has changed and needs re-authorization");
+        }
     }
 
     #[test]
