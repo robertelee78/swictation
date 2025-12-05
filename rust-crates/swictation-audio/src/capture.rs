@@ -180,6 +180,14 @@ impl AudioCapture {
 
             // Check if device supports our desired format
             if let Ok(config) = device.default_input_config() {
+                // HIGHEST PRIORITY on Linux: PipeWire/PulseAudio
+                // These use the system's configured default source, which respects
+                // user audio settings and sees devices that raw ALSA may miss
+                #[cfg(target_os = "linux")]
+                if name == "pipewire" || name == "pulse" || name == "default" {
+                    score += 100; // Strongly prefer system audio server
+                }
+
                 // Prefer devices that support standard sample rates
                 if config.sample_rate().0 == 44100 || config.sample_rate().0 == 48000 {
                     score += 10;
@@ -190,14 +198,19 @@ impl AudioCapture {
                     score += 5;
                 }
 
-                // On Linux, prefer "plughw" devices for better compatibility
-                #[cfg(target_os = "linux")]
-                if name.contains("plughw") {
-                    score += 20;
+                // Webcam/camera devices (commonly used for dictation)
+                if name.to_lowercase().contains("camera") {
+                    score += 50;
                 }
 
                 // Prefer USB devices (often external mics)
-                if name.to_lowercase().contains("usb") || name.to_lowercase().contains("camera") {
+                if name.to_lowercase().contains("usb") {
+                    score += 25;
+                }
+
+                // On Linux, prefer "plughw" devices for better compatibility
+                #[cfg(target_os = "linux")]
+                if name.contains("plughw") {
                     score += 15;
                 }
 
