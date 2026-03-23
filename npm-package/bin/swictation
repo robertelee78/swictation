@@ -173,7 +173,7 @@ async function handleStart() {
           console.error(chalk.red('LaunchAgent not found. Run: swictation setup'));
           process.exit(1);
         }
-        execSync(`launchctl load "${plistPath}"`);
+        execSync(`launchctl bootstrap gui/$(id -u) "${plistPath}" 2>/dev/null || launchctl load "${plistPath}"`);
         execSync('launchctl start com.swictation.daemon');
         console.log(chalk.green('✓ Daemon started'));
       }
@@ -189,7 +189,7 @@ async function handleStart() {
       if (isMacOS) {
         const uiPlistPath = path.join(launchAgentsDir, 'com.swictation.ui.plist');
         if (fs.existsSync(uiPlistPath)) {
-          execSync(`launchctl load "${uiPlistPath}"`);
+          execSync(`launchctl bootstrap gui/$(id -u) "${uiPlistPath}" 2>/dev/null || launchctl load "${uiPlistPath}"`);
           execSync('launchctl start com.swictation.ui');
         } else {
           // Fall back to direct spawn if plist doesn't exist
@@ -226,7 +226,7 @@ async function handleStop() {
         execSync('launchctl stop com.swictation.ui');
         const uiPlistPath = path.join(launchAgentsDir, 'com.swictation.ui.plist');
         if (fs.existsSync(uiPlistPath)) {
-          execSync(`launchctl unload "${uiPlistPath}"`);
+          execSync(`launchctl bootout gui/$(id -u) com.swictation.ui 2>/dev/null || launchctl unload "${uiPlistPath}"`);
         }
       } catch (err) {
         // UI might not be running
@@ -236,7 +236,7 @@ async function handleStop() {
       execSync('launchctl stop com.swictation.daemon');
       const daemonPlistPath = path.join(launchAgentsDir, 'com.swictation.daemon.plist');
       if (fs.existsSync(daemonPlistPath)) {
-        execSync(`launchctl unload "${daemonPlistPath}"`);
+        execSync(`launchctl bootout gui/$(id -u) com.swictation.daemon 2>/dev/null || launchctl unload "${daemonPlistPath}"`);
       }
       console.log(chalk.green('✓ Daemon stopped'));
     }
@@ -384,7 +384,7 @@ async function handleSetup() {
         console.log(chalk.green('✓ Auto-start enabled'));
       } else if (isMacOS) {
         const daemonPlist = path.join(launchAgentsDir, 'com.swictation.daemon.plist');
-        execSync(`launchctl load "${daemonPlist}"`);
+        execSync(`launchctl bootstrap gui/$(id -u) "${daemonPlist}" 2>/dev/null || launchctl load "${daemonPlist}"`);
         console.log(chalk.green('✓ Auto-start enabled (plist loaded)'));
       }
     } catch (err) {

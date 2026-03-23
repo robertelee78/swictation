@@ -157,7 +157,7 @@ impl Pipeline {
             // AUTO MODE: VRAM-based adaptive selection
             info!("STT model selection: auto (VRAM-based)");
             info!("Detecting GPU memory for adaptive model selection...");
-            let vram_mb = get_gpu_memory_mb().map(|(total, _free)| total);
+            let vram_mb = get_gpu_memory_mb().map(|(_total, available)| available);
 
             if let Some(vram) = vram_mb {
                 info!("Detected GPU with {}MB VRAM", vram);

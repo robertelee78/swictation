@@ -14,8 +14,11 @@ path = "src/lib.rs"
 crate-type = ["rlib"]
 
 [dependencies]
-# Direct ONNX Runtime for Silero VAD (modern CUDA support)
-ort = { version = "2.0.0-rc.10", features = ["cuda", "half"] }
+# Direct ONNX Runtime for Silero VAD
+# load-dynamic: find ORT shared lib at runtime (matches swictation-stt)
+# half: f16 tensor support
+# coreml: CoreML execution provider types for macOS/Apple Silicon
+ort = { version = "2.0.0-rc.10", features = ["load-dynamic", "half", "coreml"] }
 
 # Tensor operations for ONNX
 ndarray = "0.16"

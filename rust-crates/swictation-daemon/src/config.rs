@@ -43,20 +43,28 @@ fn get_default_vad_model_path() -> PathBuf {
 /// Hotkey configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HotkeyConfig {
-    /// Toggle hotkey (default: "Super+Shift+D" for Dictation)
+    /// Toggle hotkey (default: "Cmd+Shift+D" on macOS, "Super+Shift+D" on Linux)
     /// User-configurable via UI settings
     pub toggle: String,
 
-    /// Push-to-talk hotkey (default: "Super+Space")
+    /// Push-to-talk hotkey (default: "Cmd+Space" on macOS, "Super+Space" on Linux)
     /// User-configurable via UI settings
     pub push_to_talk: String,
 }
 
 impl Default for HotkeyConfig {
     fn default() -> Self {
+        // On macOS, "Super" maps to Command key (⌘)
+        // Use platform-appropriate naming for user-facing config
+        let (toggle, ptt) = if cfg!(target_os = "macos") {
+            ("Cmd+Shift+D".to_string(), "Cmd+Space".to_string())
+        } else {
+            ("Super+Shift+D".to_string(), "Super+Space".to_string())
+        };
+
         Self {
-            toggle: "Super+Shift+D".to_string(), // Windows/Super key + Shift + D (Dictation)
-            push_to_talk: "Super+Space".to_string(), // Windows/Super key + Space
+            toggle,
+            push_to_talk: ptt,
         }
     }
 }
@@ -186,7 +194,7 @@ impl DaemonConfig {
         } else if cfg!(target_os = "macos") {
             dirs::config_dir()
                 .unwrap_or_else(|| PathBuf::from("."))
-                .join("com.swictation.daemon")
+                .join("swictation")
         } else {
             dirs::config_dir()
                 .unwrap_or_else(|| PathBuf::from("."))

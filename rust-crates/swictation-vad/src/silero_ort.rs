@@ -4,11 +4,15 @@
 use crate::{Result, VadError};
 use ndarray::{Array2, Array3, ArrayView3};
 use ort::{
-    execution_providers::{CPUExecutionProvider, CUDAExecutionProvider},
+    execution_providers::CPUExecutionProvider,
     inputs,
     session::Session,
     value::Tensor,
 };
+#[cfg(not(target_os = "macos"))]
+use ort::execution_providers::CUDAExecutionProvider;
+#[cfg(target_os = "macos")]
+use ort::execution_providers::coreml::{CoreMLComputeUnits, CoreMLExecutionProvider};
 use std::sync::{Arc, Mutex};
 
 /// Silero VAD model using direct ONNX Runtime
@@ -48,76 +52,86 @@ impl SileroVadOrt {
         provider: Option<String>,
         debug: bool,
     ) -> Result<Self> {
-        // Build session with appropriate provider
-        let session = if let Some(ref prov) = provider {
-            if prov.contains("cuda") || prov.contains("CUDA") {
-                // Try CUDA provider
-                match Session::builder()
-                    .map_err(|e| {
-                        VadError::initialization(format!("Failed to create session builder: {}", e))
-                    })?
-                    .with_execution_providers([CUDAExecutionProvider::default().build()])
-                    .map_err(|e| {
-                        VadError::initialization(format!("Failed to set CUDA provider: {}", e))
-                    })?
-                    .commit_from_file(model_path)
-                {
-                    Ok(s) => {
-                        println!("Silero VAD: Using CUDA provider");
-                        s
-                    }
-                    Err(e) => {
-                        println!(
-                            "Silero VAD: CUDA not available ({}), falling back to CPU",
-                            e
-                        );
-                        Session::builder()
-                            .map_err(|e| {
-                                VadError::initialization(format!(
-                                    "Failed to create session builder: {}",
-                                    e
-                                ))
-                            })?
-                            .with_execution_providers([CPUExecutionProvider::default().build()])
-                            .map_err(|e| {
-                                VadError::initialization(format!(
-                                    "Failed to set CPU provider: {}",
-                                    e
-                                ))
-                            })?
-                            .commit_from_file(model_path)
-                            .map_err(|e| {
-                                VadError::initialization(format!(
-                                    "Failed to load model with CPU: {}",
-                                    e
-                                ))
-                            })?
-                    }
+        // Build session with appropriate execution provider
+        let mut session_builder = Session::builder()
+            .map_err(|e| {
+                VadError::initialization(format!("Failed to create session builder: {}", e))
+            })?;
+
+        // macOS: use CoreML for Apple Silicon acceleration
+        #[cfg(target_os = "macos")]
+        {
+            if let Some(ref prov) = provider {
+                if prov.contains("coreml") {
+                    session_builder = session_builder
+                        .with_execution_providers([
+                            CoreMLExecutionProvider::default()
+                                .with_compute_units(CoreMLComputeUnits::CPUAndNeuralEngine)
+                                .build(),
+                            CPUExecutionProvider::default().build(),
+                        ])
+                        .map_err(|e| {
+                            VadError::initialization(format!(
+                                "Failed to set CoreML execution providers: {}",
+                                e
+                            ))
+                        })?;
+                    println!("Silero VAD: Using CoreML provider (CPU + Neural Engine)");
+                } else {
+                    session_builder = session_builder
+                        .with_execution_providers([CPUExecutionProvider::default().build()])
+                        .map_err(|e| {
+                            VadError::initialization(format!("Failed to set CPU provider: {}", e))
+                        })?;
+                    println!("Silero VAD: Using CPU provider");
                 }
             } else {
-                Session::builder()
-                    .map_err(|e| {
-                        VadError::initialization(format!("Failed to create session builder: {}", e))
-                    })?
+                session_builder = session_builder
                     .with_execution_providers([CPUExecutionProvider::default().build()])
                     .map_err(|e| {
                         VadError::initialization(format!("Failed to set CPU provider: {}", e))
-                    })?
-                    .commit_from_file(model_path)
-                    .map_err(|e| VadError::initialization(format!("Failed to load model: {}", e)))?
+                    })?;
             }
-        } else {
-            Session::builder()
-                .map_err(|e| {
-                    VadError::initialization(format!("Failed to create session builder: {}", e))
-                })?
-                .with_execution_providers([CPUExecutionProvider::default().build()])
-                .map_err(|e| {
-                    VadError::initialization(format!("Failed to set CPU provider: {}", e))
-                })?
-                .commit_from_file(model_path)
-                .map_err(|e| VadError::initialization(format!("Failed to load model: {}", e)))?
-        };
+        }
+
+        // Linux/Windows: use CUDA if requested, with CPU fallback
+        #[cfg(not(target_os = "macos"))]
+        {
+            if let Some(ref prov) = provider {
+                if prov.contains("cuda") || prov.contains("CUDA") {
+                    session_builder = session_builder
+                        .with_execution_providers([
+                            CUDAExecutionProvider::default().build(),
+                            CPUExecutionProvider::default().build(),
+                        ])
+                        .map_err(|e| {
+                            VadError::initialization(format!(
+                                "Failed to set CUDA execution providers: {}",
+                                e
+                            ))
+                        })?;
+                    println!("Silero VAD: Using CUDA provider with CPU fallback");
+                } else {
+                    session_builder = session_builder
+                        .with_execution_providers([CPUExecutionProvider::default().build()])
+                        .map_err(|e| {
+                            VadError::initialization(format!("Failed to set CPU provider: {}", e))
+                        })?;
+                }
+            } else {
+                session_builder = session_builder
+                    .with_execution_providers([CPUExecutionProvider::default().build()])
+                    .map_err(|e| {
+                        VadError::initialization(format!("Failed to set CPU provider: {}", e))
+                    })?;
+            }
+        }
+
+        let session = session_builder
+            .commit_from_file(model_path)
+            .map_err(|e| {
+                VadError::initialization(format!("Failed to load model: {}", e))
+            })?;
 
         // Print model input/output names for debugging
         println!("=== ONNX Model Metadata ===");

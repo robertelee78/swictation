@@ -71,23 +71,12 @@ extern "C" {
 }
 
 // Type aliases for objc_msgSend function signatures used in this module
-type MsgSendNoArgs = unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void;
 type MsgSendOneArg = unsafe extern "C" fn(*mut c_void, *mut c_void, *const i8) -> *mut c_void;
 type MsgSendOneObjArg = unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> *mut c_void;
-type MsgSendTwoObjArgs =
-    unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void, *mut c_void) -> *mut c_void;
 
 // Helper to convert CStr to *const i8
 fn cstr_ptr(s: &CStr) -> *const i8 {
     s.as_ptr()
-}
-
-/// Helper to call objc_msgSend with no additional arguments
-/// Example: [obj init], [Class alloc]
-#[inline]
-unsafe fn msg_send_no_args(obj: *mut c_void, sel: *mut c_void) -> *mut c_void {
-    let func: MsgSendNoArgs = std::mem::transmute(objc_msgSend as *const ());
-    func(obj, sel)
 }
 
 /// Helper to call objc_msgSend with one C string argument
@@ -106,18 +95,6 @@ unsafe fn msg_send_obj_arg(obj: *mut c_void, sel: *mut c_void, arg: *mut c_void)
     func(obj, sel, arg)
 }
 
-/// Helper to call objc_msgSend with two object arguments
-/// Example: [AVCaptureDeviceInput deviceInputWithDevice:device error:nil]
-#[inline]
-unsafe fn msg_send_two_obj_args(
-    obj: *mut c_void,
-    sel: *mut c_void,
-    arg1: *mut c_void,
-    arg2: *mut c_void,
-) -> *mut c_void {
-    let func: MsgSendTwoObjArgs = std::mem::transmute(objc_msgSend as *const ());
-    func(obj, sel, arg1, arg2)
-}
 
 /// Check the current microphone authorization status
 ///
@@ -193,114 +170,71 @@ pub fn request_microphone_permission() -> bool {
         }
     }
 
-    // Request permission - this shows the system dialog
-    unsafe {
-        // Get AVCaptureDevice class
-        let avcapturedevice = objc_getClass(cstr_ptr(c"AVCaptureDevice"));
-        if avcapturedevice.is_null() {
-            warn!("Failed to get AVCaptureDevice class for permission request");
-            return false;
-        }
+    // Use Swift to call the proper API (avoids Objective-C block FFI complexity)
+    // AVCaptureDevice.requestAccess(for: .audio) triggers the system dialog
+    info!("Showing microphone permission dialog via Swift helper...");
 
-        // Get selector for requestAccessForMediaType:completionHandler:
-        // Note: We define but don't use this selector directly since we use
-        // an alternative approach via AVCaptureSession to trigger the dialog.
-        let _sel = sel_registerName(cstr_ptr(c"requestAccessForMediaType:completionHandler:"));
+    let swift_result = std::process::Command::new("swift")
+        .args([
+            "-e",
+            r#"
+import AVFoundation
+import Foundation
+let semaphore = DispatchSemaphore(value: 0)
+AVCaptureDevice.requestAccess(for: .audio) { granted in
+    if granted { print("granted") } else { print("denied") }
+    semaphore.signal()
+}
+semaphore.wait()
+"#,
+        ])
+        .output();
 
-        // Create NSString for media type "soun" (audio)
-        let nsstring_class = objc_getClass(cstr_ptr(c"NSString"));
-        let string_sel = sel_registerName(cstr_ptr(c"stringWithUTF8String:"));
-        let media_type: *mut c_void =
-            msg_send_str_arg(nsstring_class, string_sel, cstr_ptr(c"soun"));
-
-        // Create a block for the completion handler
-        // This is complex because Objective-C blocks have specific ABI requirements.
-        // For simplicity, we'll use a polling approach instead.
-
-        // Call [AVCaptureDevice requestAccessForMediaType:AVMediaTypeAudio completionHandler:nil]
-        // Then poll the status
-        info!("Showing microphone permission dialog...");
-
-        // Unfortunately, we can't easily pass a Rust closure as an Objective-C block.
-        // Instead, we'll trigger the request and then poll for the result.
-        // The user will see the dialog and we check the status after.
-
-        // Trigger the permission request (with nil handler - just shows dialog)
-        let nil: *mut c_void = std::ptr::null_mut();
-
-        // We need to use a different approach - directly invoke with block
-        // For now, let's use a simpler method: just check status after triggering
-
-        // This selector actually requires a block, so let's use a workaround:
-        // We can use NSRunLoop to process events while waiting
-
-        // First, trigger the request through a different mechanism
-        // by attempting to create an AVCaptureSession - this triggers the dialog
-
-        let session_class = objc_getClass(cstr_ptr(c"AVCaptureSession"));
-        let alloc_sel = sel_registerName(cstr_ptr(c"alloc"));
-        let init_sel = sel_registerName(cstr_ptr(c"init"));
-
-        if !session_class.is_null() {
-            // Create an AVCaptureSession - this triggers the permission dialog
-            let session = msg_send_no_args(session_class, alloc_sel);
-            let session = msg_send_no_args(session, init_sel);
-
-            if !session.is_null() {
-                // Try to add an audio input device - this triggers the permission request
-                let device_sel = sel_registerName(cstr_ptr(c"defaultDeviceWithMediaType:"));
-                let audio_device = msg_send_obj_arg(avcapturedevice, device_sel, media_type);
-
-                if !audio_device.is_null() {
-                    // Create device input
-                    let input_class = objc_getClass(cstr_ptr(c"AVCaptureDeviceInput"));
-                    let input_sel = sel_registerName(cstr_ptr(c"deviceInputWithDevice:error:"));
-
-                    // Try to create input - this is what triggers the permission dialog
-                    let _input = msg_send_two_obj_args(input_class, input_sel, audio_device, nil);
-                }
-
-                // Note: Modern Objective-C uses ARC, so explicit release is not needed
-                // and would cause issues with ARC-managed objects.
-            }
-        }
-    }
-
-    // Wait for user response by polling the status
-    // The dialog is asynchronous, so we poll until status changes
-    info!("Waiting for user response to microphone permission dialog...");
-
-    let timeout = Duration::from_secs(60); // 60 second timeout
-    let poll_interval = Duration::from_millis(500);
-    let start = std::time::Instant::now();
-
-    loop {
-        std::thread::sleep(poll_interval);
-
-        let status = check_microphone_authorization_status();
-        match status {
-            AVAuthorizationStatus::Authorized => {
+    match swift_result {
+        Ok(output) => {
+            let result = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if result == "granted" {
                 info!("✅ Microphone permission granted by user");
                 return true;
-            }
-            AVAuthorizationStatus::Denied => {
+            } else if result == "denied" {
                 warn!("❌ Microphone permission denied by user");
-                warn!("   The daemon will continue, but voice dictation will not work");
                 warn!("   Enable in: System Settings → Privacy & Security → Microphone");
                 return false;
+            } else {
+                // Swift command ran but unexpected output — check status directly
+                warn!("Unexpected Swift output: '{}', checking status...", result);
+                let status = check_microphone_authorization_status();
+                return matches!(status, AVAuthorizationStatus::Authorized);
             }
-            AVAuthorizationStatus::NotDetermined => {
-                // Still waiting for user response
-                if start.elapsed() > timeout {
-                    warn!("⏱️  Microphone permission request timed out");
-                    warn!("   Please respond to the permission dialog");
-                    return false;
+        }
+        Err(e) => {
+            warn!("Failed to run Swift permission helper: {}", e);
+            warn!("Falling back to status polling...");
+
+            // Fallback: poll for permission change (in case user is prompted by another mechanism)
+            let timeout = Duration::from_secs(30);
+            let poll_interval = Duration::from_millis(500);
+            let start = std::time::Instant::now();
+
+            loop {
+                std::thread::sleep(poll_interval);
+                let status = check_microphone_authorization_status();
+                match status {
+                    AVAuthorizationStatus::Authorized => {
+                        info!("✅ Microphone permission granted");
+                        return true;
+                    }
+                    AVAuthorizationStatus::Denied => {
+                        warn!("❌ Microphone permission denied");
+                        return false;
+                    }
+                    _ => {
+                        if start.elapsed() > timeout {
+                            warn!("⏱️ Microphone permission request timed out");
+                            return false;
+                        }
+                    }
                 }
-                // Continue polling
-            }
-            AVAuthorizationStatus::Restricted => {
-                warn!("🚫 Microphone access became restricted");
-                return false;
             }
         }
     }

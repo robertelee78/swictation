@@ -306,6 +306,11 @@ impl OrtRecognizer {
             .map_err(|e| {
                 let _ = std::env::set_current_dir(&original_dir);
                 SttError::ModelLoadError(format!("Failed to set decoder optimization: {}", e))
+            })?
+            .with_intra_threads(4)
+            .map_err(|e| {
+                let _ = std::env::set_current_dir(&original_dir);
+                SttError::ModelLoadError(format!("Failed to set decoder intra threads: {}", e))
             })?;
 
         if use_gpu {
@@ -369,6 +374,11 @@ impl OrtRecognizer {
             .map_err(|e| {
                 let _ = std::env::set_current_dir(&original_dir);
                 SttError::ModelLoadError(format!("Failed to set joiner optimization: {}", e))
+            })?
+            .with_intra_threads(4)
+            .map_err(|e| {
+                let _ = std::env::set_current_dir(&original_dir);
+                SttError::ModelLoadError(format!("Failed to set joiner intra threads: {}", e))
             })?;
 
         if use_gpu {

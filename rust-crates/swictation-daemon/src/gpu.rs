@@ -87,19 +87,20 @@ fn check_directml_available() -> bool {
 #[allow(dead_code)]
 #[cfg(target_os = "macos")]
 fn check_coreml_available() -> bool {
-    use std::process::Command;
-
-    // Check if we're running on Apple Silicon
-    let output = Command::new("sysctl")
-        .args(["-n", "machdep.cpu.brand_string"])
-        .output();
-
-    if let Ok(output) = output {
-        let cpu_info = String::from_utf8_lossy(&output.stdout);
-        return cpu_info.contains("Apple");
+    // CoreML is available on all macOS 12+ systems (both Intel and Apple Silicon)
+    // Apple Silicon provides additional GPU/ANE acceleration
+    // Use compile-time architecture check instead of runtime subprocess
+    #[cfg(target_arch = "aarch64")]
+    {
+        info!("Apple Silicon detected (compile-time) — CoreML with GPU/ANE available");
+        true
     }
-
-    false
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        // Intel Mac — CoreML available but no ANE acceleration
+        info!("Intel Mac detected — CoreML available (CPU/GPU only, no ANE)");
+        true
+    }
 }
 
 #[allow(dead_code)]

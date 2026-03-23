@@ -87,6 +87,18 @@ extern "C" {
 /// When set to true, shows system dialog for granting accessibility
 static KAXTRUSTED_CHECK_OPTION_PROMPT: &str = "AXTrustedCheckOptionPrompt";
 
+/// No-op callback for CGEventTap validation
+/// This callback does nothing — it simply returns the event unchanged.
+/// Required because CGEventTapCreate does not accept NULL callbacks.
+unsafe extern "C" fn noop_event_tap_callback(
+    _proxy: *mut c_void,
+    _event_type: u32,
+    event: *mut c_void,
+    _user_info: *mut c_void,
+) -> *mut c_void {
+    event // Return event unchanged (listen-only, no modification)
+}
+
 /// macOS text injector using Core Graphics Accessibility API
 pub struct MacOSTextInjector {
     /// Event source for generating keyboard events (Rc for single-threaded efficient cloning)
@@ -154,7 +166,7 @@ impl MacOSTextInjector {
                 0,                    // kCGHeadInsertEventTap
                 1,                    // kCGEventTapOptionListenOnly (passive)
                 1 << 10,              // kCGEventKeyDown
-                std::ptr::null(),     // No callback needed for validation
+                noop_event_tap_callback as *const c_void,
                 std::ptr::null_mut(), // No user info
             );
 
