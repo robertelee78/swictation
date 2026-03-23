@@ -16,9 +16,13 @@ import sys
 
 
 def convert_to_fp16(input_path, output_path):
-    """Convert an ONNX model to FP16 (mixed precision)."""
+    """Convert an ONNX model to FP16 (mixed precision).
+
+    Handles both self-contained models and models with external weight files.
+    """
     try:
         import onnx
+        from onnx.external_data_helper import convert_model_to_external_data
         from onnxconverter_common import float16
     except ImportError:
         print("ERROR: Required packages not installed.")
@@ -26,7 +30,21 @@ def convert_to_fp16(input_path, output_path):
         sys.exit(1)
 
     print(f"Converting {input_path} -> {output_path}")
-    model = onnx.load(input_path)
+    model_dir = os.path.dirname(input_path)
+
+    # Check if model has external weight files (.weights or .data)
+    base_name = os.path.splitext(os.path.basename(input_path))[0]
+    has_external = any(
+        os.path.exists(os.path.join(model_dir, f"{base_name}.{ext}"))
+        for ext in ['weights', 'data']
+    )
+
+    if has_external:
+        # Load model with external data resolved from the model directory
+        print(f"  Loading with external data from {model_dir}")
+        model = onnx.load(input_path, load_external_data=True)
+    else:
+        model = onnx.load(input_path)
 
     # Convert to FP16 with mixed precision (keeps some ops in FP32 for stability)
     model_fp16 = float16.convert_float_to_float16(
@@ -34,16 +52,35 @@ def convert_to_fp16(input_path, output_path):
         min_positive_val=1e-7,
         max_finite_val=1e4,
         keep_io_types=True,  # Keep input/output as FP32 for compatibility
-        disable_shape_infer=False,
-        op_block_list=['Softmax', 'LayerNormalization'],  # Keep these in FP32 for numerical stability
+        disable_shape_infer=True,  # Skip shape inference for large models
+        op_block_list=['Softmax', 'LayerNormalization'],  # Keep in FP32 for numerical stability
     )
 
-    onnx.save(model_fp16, output_path)
+    if has_external:
+        # Save with external data to avoid protobuf 2GB limit
+        fp16_weights = output_path.replace('.fp16.onnx', '.fp16.weights')
+        print(f"  Saving with external weights: {os.path.basename(fp16_weights)}")
+        convert_model_to_external_data(
+            model_fp16,
+            all_tensors_to_one_file=True,
+            location=os.path.basename(fp16_weights),
+            size_threshold=1024,
+        )
+        onnx.save(model_fp16, output_path)
+    else:
+        onnx.save(model_fp16, output_path)
 
-    # Report size reduction
+    # Report size
     orig_size = os.path.getsize(input_path) / (1024 * 1024)
     new_size = os.path.getsize(output_path) / (1024 * 1024)
-    reduction = (1 - new_size / orig_size) * 100
+    if has_external:
+        orig_weights = input_path.replace('.onnx', '.weights')
+        if os.path.exists(orig_weights):
+            orig_size += os.path.getsize(orig_weights) / (1024 * 1024)
+        fp16_weights_path = output_path.replace('.fp16.onnx', '.fp16.weights')
+        if os.path.exists(fp16_weights_path):
+            new_size += os.path.getsize(fp16_weights_path) / (1024 * 1024)
+    reduction = (1 - new_size / orig_size) * 100 if orig_size > 0 else 0
     print(f"  {orig_size:.1f}MB -> {new_size:.1f}MB ({reduction:.1f}% smaller)")
 
 
