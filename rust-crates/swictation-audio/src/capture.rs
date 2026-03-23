@@ -166,7 +166,19 @@ impl AudioCapture {
             );
         }
 
-        // Auto-detect best device based on capabilities
+        // macOS: Use the system default input device (set in System Settings > Sound)
+        // This respects the user's OS-level audio preference and avoids picking up
+        // iPhone Continuity Camera, AirPods, or other transient devices
+        #[cfg(target_os = "macos")]
+        {
+            if let Some(default_device) = self.host.default_input_device() {
+                let name = default_device.name().unwrap_or_else(|_| "Unknown".to_string());
+                println!("  → Using macOS default input device: {}", name);
+                return Ok(default_device);
+            }
+        }
+
+        // Linux/other: Auto-detect best device based on capabilities
         let mut best_device = None;
         let mut best_score = 0;
 
@@ -198,11 +210,6 @@ impl AudioCapture {
                     score += 5;
                 }
 
-                // Webcam/camera devices (commonly used for dictation)
-                if name.to_lowercase().contains("camera") {
-                    score += 50;
-                }
-
                 // Prefer USB devices (often external mics)
                 if name.to_lowercase().contains("usb") {
                     score += 25;
@@ -214,7 +221,7 @@ impl AudioCapture {
                     score += 15;
                 }
 
-                // Avoid certain problematic devices
+                // Avoid problematic devices
                 if name.to_lowercase().contains("monitor")
                     || name.to_lowercase().contains("loopback")
                     || name.to_lowercase().contains("virtual")

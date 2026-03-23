@@ -252,18 +252,27 @@ async fn load_context_model(_config: &DaemonConfig) -> Option<ContextModel> {
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    // Parse CLI arguments
+/// On macOS, Carbon's RegisterEventHotKey (used by global-hotkey crate) delivers
+/// events through GetApplicationEventTarget(), which requires the application
+/// event loop to be running on the main thread. Tokio's executor does NOT pump
+/// this event loop, so hotkey callbacks never fire.
+///
+/// The fix: run Tokio on a background thread, and RunApplicationEventLoop() on main.
+/// On Linux, this is unnecessary (X11 XGrabKey doesn't need a run loop), so we
+/// keep #[tokio::main] behavior via block_on.
+///
+/// Verified: RunApplicationEventLoop() works with global-hotkey 0.6 on macOS ARM64.
+/// CFRunLoopRunInMode alone is NOT sufficient (tested and failed).
+fn main() -> Result<()> {
+    // Parse CLI arguments (sync — fine on main thread)
     let cli = CliArgs::parse();
 
-    // Handle version info flag
     if cli.version_info {
         println!("{}", version::version_long());
         return Ok(());
     }
 
-    // Initialize logging
+    // Initialize logging (sync)
     tracing_subscriber::fmt()
         .with_target(false)
         .with_level(true)
@@ -274,8 +283,7 @@ async fn main() -> Result<()> {
         env!("CARGO_PKG_VERSION")
     );
 
-    // macOS: Request permissions at startup with system dialogs
-    // This provides better UX by prompting users immediately rather than failing silently
+    // macOS: Request permissions on main thread (system dialogs need it)
     #[cfg(target_os = "macos")]
     {
         use crate::macos_audio_permission::request_microphone_permission;
@@ -283,8 +291,6 @@ async fn main() -> Result<()> {
 
         info!("🔐 Checking macOS permissions...");
 
-        // Request Microphone permission FIRST (shows system dialog)
-        // This is critical - without this, audio capture silently fails
         if !request_microphone_permission() {
             warn!("⚠️  Microphone permission not yet granted");
             warn!("   Please enable in: System Settings → Privacy & Security → Microphone");
@@ -293,8 +299,6 @@ async fn main() -> Result<()> {
             info!("✅ Microphone permission granted");
         }
 
-        // Request Accessibility permission with system dialog
-        // This will show a dialog guiding the user to System Settings if not granted
         if !MacOSTextInjector::request_accessibility_permissions() {
             warn!("⚠️  Accessibility permission not yet granted");
             warn!("   Please enable in: System Settings → Privacy & Security → Accessibility");
@@ -304,7 +308,57 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Load configuration
+    // Build Tokio runtime manually (instead of #[tokio::main])
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("Failed to build Tokio runtime")?;
+
+    // On macOS: run async daemon on a background thread via block_on,
+    // then run Carbon application event loop on the main thread.
+    // On Linux: run async daemon directly on main thread via block_on.
+    #[cfg(target_os = "macos")]
+    {
+        // Run the async daemon on a background thread.
+        // We use block_on (not spawn) because the daemon contains non-Send types
+        // like AudioCapture (cpal's raw pointers).
+        std::thread::spawn(move || {
+            if let Err(e) = runtime.block_on(daemon_main(cli)) {
+                error!("Daemon error: {}", e);
+                std::process::exit(1);
+            }
+        });
+
+        // Main thread: run Carbon application event loop so global-hotkey events fire.
+        // Carbon's RegisterEventHotKey delivers via GetApplicationEventTarget(),
+        // which requires this event loop to be actively pumping on the main thread.
+        // RunApplicationEventLoop() blocks until QuitApplicationEventLoop() is called.
+        //
+        // Verified: CFRunLoopRunInMode alone is NOT sufficient (tested and failed).
+        // RunApplicationEventLoop() works (tested and confirmed on M5 Max).
+        #[link(name = "Carbon", kind = "framework")]
+        extern "C" {
+            fn RunApplicationEventLoop();
+        }
+        info!("Running macOS application event loop on main thread (hotkeys active)");
+        unsafe {
+            RunApplicationEventLoop();
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        // Linux/other: run async daemon directly — no special event loop needed
+        // (X11 XGrabKey doesn't require a run loop on the main thread)
+        runtime.block_on(daemon_main(cli))?;
+    }
+
+    Ok(())
+}
+
+/// Async daemon main — all the pipeline, IPC, hotkey, and event loop logic.
+/// Separated from main() so it can run on Tokio's runtime (background threads on macOS).
+async fn daemon_main(cli: CliArgs) -> Result<()> {
     let mut config = DaemonConfig::load().context("Failed to load configuration")?;
 
     info!(
