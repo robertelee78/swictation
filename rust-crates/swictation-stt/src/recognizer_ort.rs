@@ -98,6 +98,39 @@ pub struct OrtRecognizer {
     use_gpu: bool,
 }
 
+/// Determine optimal CoreML model format based on whether the model has external weight files.
+/// MLProgram is preferred for better ANE utilization on M2+, but requires no external weight files
+/// (external .weights files conflict with .mlpackage directory creation).
+#[cfg(target_os = "macos")]
+fn optimal_coreml_format(model_path: &Path) -> CoreMLModelFormat {
+    // Check if any .weights files exist in the model directory
+    // (these are ONNX external data files that conflict with MLProgram's .mlpackage output)
+    let has_external_weights = model_path
+        .parent()
+        .map(|dir| {
+            std::fs::read_dir(dir)
+                .map(|entries| {
+                    entries.filter_map(|e| e.ok()).any(|entry| {
+                        entry
+                            .path()
+                            .extension()
+                            .map(|ext| ext == "weights" || ext == "data")
+                            .unwrap_or(false)
+                    })
+                })
+                .unwrap_or(false)
+        })
+        .unwrap_or(false);
+
+    if has_external_weights {
+        info!("Model has external weight files — using NeuralNetwork format (compatible with external data)");
+        CoreMLModelFormat::NeuralNetwork
+    } else {
+        info!("No external weight files — using MLProgram format (better ANE optimization on M2+)");
+        CoreMLModelFormat::MLProgram
+    }
+}
+
 impl OrtRecognizer {
     /// Create new recognizer from model directory
     ///
@@ -141,58 +174,9 @@ impl OrtRecognizer {
             unk_id
         );
 
-        // Configure ONNX Runtime session options
-        let mut session_builder = Session::builder()
-            .map_err(|e| {
-                SttError::ModelLoadError(format!("Failed to create session builder: {}", e))
-            })?
-            .with_optimization_level(GraphOptimizationLevel::Level3)
-            .map_err(|e| {
-                SttError::ModelLoadError(format!("Failed to set optimization level: {}", e))
-            })?
-            .with_intra_threads(4)
-            .map_err(|e| SttError::ModelLoadError(format!("Failed to set intra threads: {}", e)))?;
-
-        if use_gpu {
-            // macOS: Use CoreML execution provider (internally uses Metal/GPU)
-            #[cfg(target_os = "macos")]
-            {
-                info!("Enabling CoreML execution provider (Apple Silicon GPU acceleration)");
-                session_builder = session_builder
-                    .with_execution_providers([
-                        ep::CoreMLExecutionProvider::default()
-                            // NeuralNetwork format avoids .mlpackage directory creation that conflicts
-                            // with ONNX external weights files (e.g., encoder.onnx + encoder.weights)
-                            .with_model_format(CoreMLModelFormat::NeuralNetwork)
-                            .with_compute_units(CoreMLComputeUnits::All) // CPU + GPU + ANE
-                            .build(),
-                        ep::CPUExecutionProvider::default().build(),
-                    ])
-                    .map_err(|e| {
-                        SttError::ModelLoadError(format!(
-                            "Failed to set CoreML execution providers: {}",
-                            e
-                        ))
-                    })?;
-            }
-
-            // Linux: Use CUDA execution provider
-            #[cfg(target_os = "linux")]
-            {
-                info!("Enabling CUDA execution provider");
-                session_builder = session_builder
-                    .with_execution_providers([
-                        ep::CUDAExecutionProvider::default().build(),
-                        ep::CPUExecutionProvider::default().build(),
-                    ])
-                    .map_err(|e| {
-                        SttError::ModelLoadError(format!(
-                            "Failed to set CUDA execution providers: {}",
-                            e
-                        ))
-                    })?;
-            }
-        } else {
+        // GPU execution providers are configured per-session (encoder, decoder, joiner)
+        // to allow per-model CoreML format selection based on external weight file detection
+        if !use_gpu {
             info!("Using CPU execution provider");
         }
 
@@ -286,7 +270,66 @@ impl OrtRecognizer {
         // Load the three ONNX models (external weights load automatically!)
         info!("Loading encoder...");
         let encoder_path = find_model_file("encoder")?;
-        let encoder = session_builder
+        let mut encoder_builder = Session::builder()
+            .map_err(|e| {
+                let _ = std::env::set_current_dir(&original_dir);
+                SttError::ModelLoadError(format!("Failed to create encoder session builder: {}", e))
+            })?
+            .with_optimization_level(GraphOptimizationLevel::Level3)
+            .map_err(|e| {
+                let _ = std::env::set_current_dir(&original_dir);
+                SttError::ModelLoadError(format!("Failed to set encoder optimization: {}", e))
+            })?
+            .with_intra_threads(4)
+            .map_err(|e| {
+                let _ = std::env::set_current_dir(&original_dir);
+                SttError::ModelLoadError(format!("Failed to set encoder intra threads: {}", e))
+            })?;
+
+        if use_gpu {
+            // macOS: Use CoreML execution provider
+            // MLProgram format provides better ANE dispatch on M2+ chips
+            // Falls back to NeuralNetwork for models with external .weights files
+            #[cfg(target_os = "macos")]
+            {
+                info!("Enabling CoreML for encoder (Apple Silicon GPU acceleration)");
+                encoder_builder = encoder_builder
+                    .with_execution_providers([
+                        ep::CoreMLExecutionProvider::default()
+                            .with_model_format(optimal_coreml_format(&encoder_path))
+                            .with_compute_units(CoreMLComputeUnits::All)
+                            .build(),
+                        ep::CPUExecutionProvider::default().build(),
+                    ])
+                    .map_err(|e| {
+                        let _ = std::env::set_current_dir(&original_dir);
+                        SttError::ModelLoadError(format!(
+                            "Failed to set encoder CoreML execution providers: {}",
+                            e
+                        ))
+                    })?;
+            }
+
+            // Linux: Use CUDA execution provider
+            #[cfg(target_os = "linux")]
+            {
+                info!("Enabling CUDA for encoder");
+                encoder_builder = encoder_builder
+                    .with_execution_providers([
+                        ep::CUDAExecutionProvider::default().build(),
+                        ep::CPUExecutionProvider::default().build(),
+                    ])
+                    .map_err(|e| {
+                        let _ = std::env::set_current_dir(&original_dir);
+                        SttError::ModelLoadError(format!(
+                            "Failed to set encoder CUDA execution providers: {}",
+                            e
+                        ))
+                    })?;
+            }
+        }
+
+        let encoder = encoder_builder
             .commit_from_file(&encoder_path)
             .map_err(|e| {
                 // Restore directory even on error
@@ -321,8 +364,7 @@ impl OrtRecognizer {
                 decoder_builder = decoder_builder
                     .with_execution_providers([
                         ep::CoreMLExecutionProvider::default()
-                            // NeuralNetwork format avoids .mlpackage directory conflicts with external weights
-                            .with_model_format(CoreMLModelFormat::NeuralNetwork)
+                            .with_model_format(optimal_coreml_format(&decoder_path))
                             .with_compute_units(CoreMLComputeUnits::All)
                             .build(),
                         ep::CPUExecutionProvider::default().build(),
@@ -389,8 +431,7 @@ impl OrtRecognizer {
                 joiner_builder = joiner_builder
                     .with_execution_providers([
                         ep::CoreMLExecutionProvider::default()
-                            // NeuralNetwork format avoids .mlpackage directory conflicts with external weights
-                            .with_model_format(CoreMLModelFormat::NeuralNetwork)
+                            .with_model_format(optimal_coreml_format(&joiner_path))
                             .with_compute_units(CoreMLComputeUnits::All)
                             .build(),
                         ep::CPUExecutionProvider::default().build(),

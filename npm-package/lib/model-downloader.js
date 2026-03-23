@@ -22,20 +22,37 @@ const MODELS = {
     files: ['silero_vad.onnx']
   },
   '0.6b': {
-    name: 'Parakeet-TDT 0.6B',
-    size: '2.47 GB',
+    name: 'Parakeet-TDT 0.6B v3',
+    size: '2.55 GB',
+    // Latest v3: multilingual (25 EU languages), 6.34% WER avg, 1.93% LibriSpeech clean
+    // FP32 with external weights (encoder.onnx + encoder.weights)
     repo: 'csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3',
-    targetDir: 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-onnx',
-    files: ['encoder.onnx', 'decoder.onnx', 'joiner.onnx', 'tokens.txt']
+    targetDir: 'parakeet-tdt-0.6b-v3-onnx',
+    files: ['encoder.onnx', 'encoder.weights', 'decoder.onnx', 'joiner.onnx', 'tokens.txt']
   },
   '1.1b': {
-    name: 'Parakeet-TDT 1.1B INT8',
+    name: 'Parakeet-TDT 1.1B',
     size: '6.96 GB',
+    // v1 (only ONNX version available); includes both INT8 and FP32 variants
+    // Linux/NVIDIA: uses INT8 (encoder.int8.onnx) — fast on CPU, adequate on CUDA
+    // macOS/CoreML: uses FP32 (encoder.onnx) — convert to FP16 with scripts/convert-to-fp16.py
     repo: 'jenerallee78/parakeet-tdt-1.1b-onnx',
     targetDir: 'parakeet-tdt-1.1b-onnx',
-    files: ['encoder.int8.onnx', 'decoder.int8.onnx', 'joiner.int8.onnx', 'tokens.txt']
+    files: [
+      'encoder.onnx', 'encoder.weights',           // FP32 (for macOS FP16 conversion)
+      'encoder.int8.onnx', 'encoder.int8.weights',  // INT8 (for Linux)
+      'decoder.onnx', 'decoder.int8.onnx',
+      'joiner.onnx', 'joiner.int8.onnx',
+      'tokens.txt'
+    ]
   }
 };
+
+// FP16 model variants for macOS Apple Silicon optimization.
+// After downloading FP32 models, run: python3 scripts/convert-to-fp16.py
+// This generates *.fp16.onnx files alongside the originals.
+// The Rust model loader (recognizer_ort.rs) automatically prefers .fp16.onnx
+// files on macOS (darwin), falling back to FP32 if FP16 variants are absent.
 
 class ModelDownloader {
   constructor(options = {}) {
