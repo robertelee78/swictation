@@ -76,4 +76,5 @@ chrono = "0.4"
 default = ["sway-integration"]  # Full platform support by default (X11, Wayland, Sway)
 gpu-info = ["windows", "metal"]
 sway-integration = ["swayipc"]  # Sway/Wayland IPC integration
+coreml-native = ["swictation-stt/coreml-native"]  # Native CoreML STT on macOS (full ANE)
 minimal = []  # Minimal build without Sway support (embedded systems only)

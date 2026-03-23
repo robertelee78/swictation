@@ -31,10 +31,16 @@ pub mod engine; // Unified STT engine interface
 pub mod error;
 pub mod recognizer_ort; // Direct ONNX Runtime implementation
 
+#[cfg(all(target_os = "macos", feature = "coreml-native"))]
+pub mod recognizer_coreml;
+
 pub use audio::AudioProcessor;
 pub use engine::{RecognitionResult, SttEngine}; // Unified STT engine enum
 pub use error::{Result, SttError};
 pub use recognizer_ort::OrtRecognizer;
+
+#[cfg(all(target_os = "macos", feature = "coreml-native"))]
+pub use recognizer_coreml::CoreMLRecognizer;
 
 /// Default model path
 pub const DEFAULT_MODEL_PATH: &str = "/opt/swictation/models/parakeet-tdt-0.6b-v3-onnx";

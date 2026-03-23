@@ -45,9 +45,33 @@ const MODELS = {
       'joiner.onnx', 'joiner.int8.onnx',
       'tokens.txt'
     ]
+  },
+  '0.6b-coreml': {
+    name: 'Parakeet-TDT 0.6B v3 CoreML (Native)',
+    size: '2.67 GB',
+    // Native CoreML models for macOS — full ANE acceleration
+    // These are pre-compiled .mlmodelc bundles from FluidInference
+    repo: 'FluidInference/parakeet-tdt-0.6b-v3-coreml',
+    targetDir: 'parakeet-tdt-0.6b-coreml',
+    // Download all mlmodelc directories and vocab files
+    files: [
+      'Encoder.mlmodelc',
+      'Decoder.mlmodelc',
+      'RNNTJoint.mlmodelc',
+      'MelEncoder.mlmodelc',
+      'Preprocessor.mlmodelc',
+      'parakeet_v3_vocab.json',
+      'parakeet_vocab.json',
+      'config.json'
+    ]
   }
 };
 
+// macOS model strategy:
+// - Preferred: Native CoreML models (parakeet-tdt-0.6b-coreml) — full ANE acceleration
+// - Fallback: FP32 ONNX models with ORT CoreML EP — partial acceleration (~32% of nodes)
+// The Rust daemon auto-detects CoreML models and uses them when available.
+//
 // FP16 model variants for macOS Apple Silicon optimization.
 // After downloading FP32 models, run: python3 scripts/convert-to-fp16.py
 // This generates *.fp16.onnx files alongside the originals.
@@ -321,6 +345,9 @@ if (require.main === module) {
       break;
     case '1.1b':
       modelKeys = ['vad', '1.1b'];
+      break;
+    case '0.6b-coreml':
+      modelKeys = ['vad', '0.6b-coreml'];
       break;
     case 'both':
     default:

@@ -3,6 +3,9 @@
 use crate::error::Result;
 use crate::recognizer_ort::OrtRecognizer;
 
+#[cfg(all(target_os = "macos", feature = "coreml-native"))]
+use crate::recognizer_coreml::CoreMLRecognizer;
+
 /// Recognition result from STT engine
 #[derive(Debug, Clone)]
 pub struct RecognitionResult {
@@ -67,6 +70,11 @@ pub enum SttEngine {
     /// - **Latency**: 150-250ms
     /// - **WER**: 5.77% (best quality)
     Parakeet1_1B(OrtRecognizer),
+
+    #[cfg(all(target_os = "macos", feature = "coreml-native"))]
+    /// Native CoreML backend (macOS only, full ANE utilization)
+    /// Uses pre-compiled .mlmodelc bundles loaded via CoreML API
+    CoreMLNative(CoreMLRecognizer),
 }
 
 impl SttEngine {
@@ -91,10 +99,24 @@ impl SttEngine {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn recognize(&mut self, audio: &[f32]) -> Result<RecognitionResult> {
-        // Both variants now use OrtRecognizer
+        #[cfg(all(target_os = "macos", feature = "coreml-native"))]
+        if let SttEngine::CoreMLNative(r) = self {
+            let start = std::time::Instant::now();
+            let text = r.recognize_samples(audio)?;
+            let processing_time_ms = start.elapsed().as_secs_f64() * 1000.0;
+            return Ok(RecognitionResult {
+                text,
+                confidence: 1.0,
+                processing_time_ms,
+            });
+        }
+
+        // Both ORT variants use OrtRecognizer
         let r = match self {
             SttEngine::Parakeet0_6B(r) => r,
             SttEngine::Parakeet1_1B(r) => r,
+            #[cfg(all(target_os = "macos", feature = "coreml-native"))]
+            SttEngine::CoreMLNative(_) => unreachable!(),
         };
 
         let start = std::time::Instant::now();
@@ -118,6 +140,8 @@ impl SttEngine {
         match self {
             SttEngine::Parakeet0_6B(_) => "Parakeet-TDT-0.6B",
             SttEngine::Parakeet1_1B(_) => "Parakeet-TDT-1.1B-INT8",
+            #[cfg(all(target_os = "macos", feature = "coreml-native"))]
+            SttEngine::CoreMLNative(_) => "Parakeet-TDT-0.6B-CoreML",
         }
     }
 
@@ -131,6 +155,8 @@ impl SttEngine {
         match self {
             SttEngine::Parakeet0_6B(_) => "0.6B",
             SttEngine::Parakeet1_1B(_) => "1.1B-INT8",
+            #[cfg(all(target_os = "macos", feature = "coreml-native"))]
+            SttEngine::CoreMLNative(_) => "0.6B-CoreML",
         }
     }
 
@@ -141,7 +167,12 @@ impl SttEngine {
     /// - `"GPU"` if using GPU acceleration
     /// - `"CPU"` if using CPU-only inference
     pub fn backend(&self) -> &str {
-        // Both variants now use OrtRecognizer, check is_gpu()
+        #[cfg(all(target_os = "macos", feature = "coreml-native"))]
+        if let SttEngine::CoreMLNative(_) = self {
+            return "CoreML-ANE";
+        }
+
+        // Both ORT variants use OrtRecognizer, check is_gpu()
         match self {
             SttEngine::Parakeet0_6B(r) | SttEngine::Parakeet1_1B(r) => {
                 if r.is_gpu() {
@@ -150,6 +181,8 @@ impl SttEngine {
                     "CPU"
                 }
             }
+            #[cfg(all(target_os = "macos", feature = "coreml-native"))]
+            SttEngine::CoreMLNative(_) => unreachable!(),
         }
     }
 
@@ -192,6 +225,8 @@ impl SttEngine {
                     0 // CPU doesn't require VRAM
                 }
             }
+            #[cfg(all(target_os = "macos", feature = "coreml-native"))]
+            SttEngine::CoreMLNative(_) => 0, // Uses unified memory, not tracked as VRAM
         }
     }
 }

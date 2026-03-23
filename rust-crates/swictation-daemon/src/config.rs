@@ -33,6 +33,11 @@ fn get_default_1_1b_model_path() -> PathBuf {
     get_default_model_dir().join("parakeet-tdt-1.1b-onnx")
 }
 
+/// Get default path for CoreML model (macOS native)
+fn get_default_coreml_model_path() -> PathBuf {
+    get_default_model_dir().join("parakeet-tdt-0.6b-coreml")
+}
+
 /// Get default path for VAD model
 fn get_default_vad_model_path() -> PathBuf {
     get_default_model_dir()
@@ -96,7 +101,8 @@ pub struct DaemonConfig {
     pub vad_threshold: f32,
 
     /// STT model selection override
-    /// Options: "auto" (VRAM-based), "0.6b-cpu", "0.6b-gpu", "1.1b-gpu"
+    /// Options: "auto" (platform-adaptive), "0.6b-cpu", "0.6b-gpu", "1.1b-gpu"
+    /// macOS + coreml-native feature: also "coreml-native"
     pub stt_model_override: String,
 
     /// Path to 0.6B model directory (OrtRecognizer)
@@ -104,6 +110,9 @@ pub struct DaemonConfig {
 
     /// Path to 1.1B INT8 model directory (ONNX Runtime)
     pub stt_1_1b_model_path: PathBuf,
+
+    /// Path to CoreML model directory (macOS native, optional)
+    pub stt_coreml_model_path: PathBuf,
 
     /// Number of threads for ONNX Runtime
     pub num_threads: Option<i32>,
@@ -140,6 +149,7 @@ impl Default for DaemonConfig {
             stt_model_override: "auto".to_string(),
             stt_0_6b_model_path: get_default_0_6b_model_path(),
             stt_1_1b_model_path: get_default_1_1b_model_path(),
+            stt_coreml_model_path: get_default_coreml_model_path(),
             num_threads: Some(4),
             audio_device_index: None, // Will be set from env var or auto-detected
             hotkeys: HotkeyConfig::default(),

@@ -2618,7 +2618,8 @@ function isModelDownloaded(modelName) {
     '0.6b-gpu': 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-onnx',
     '1.1b': 'sherpa-onnx-nemo-parakeet-tdt-1.1b-v3-onnx',
     '1.1b-gpu': 'sherpa-onnx-nemo-parakeet-tdt-1.1b-v3-onnx',
-    'cpu-only': 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-onnx-int8'
+    'cpu-only': 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-onnx-int8',
+    '0.6b-coreml': 'parakeet-tdt-0.6b-coreml'
   };
 
   const targetDir = modelDirs[modelName];
@@ -2626,6 +2627,12 @@ function isModelDownloaded(modelName) {
 
   const modelPath = path.join(modelDir, targetDir);
   if (!fs.existsSync(modelPath)) return false;
+
+  // CoreML models use .mlmodelc directories — check for those instead of ONNX files
+  if (modelName === '0.6b-coreml') {
+    const coremlRequired = ['Encoder.mlmodelc', 'Decoder.mlmodelc', 'config.json'];
+    return coremlRequired.every(entry => fs.existsSync(path.join(modelPath, entry)));
+  }
 
   // Verify required model files exist
   const requiredFiles = ['encoder.onnx', 'decoder.onnx', 'tokens.txt'];
@@ -2665,7 +2672,8 @@ async function autoDownloadModel(recommendedModel) {
       '0.6b': '0.6b',
       '1.1b-gpu': '1.1b',
       '1.1b': '1.1b',
-      'cpu-only': '0.6b'  // CPU-only uses same 0.6b model
+      'cpu-only': '0.6b',  // CPU-only uses same 0.6b model
+      '0.6b-coreml': '0.6b-coreml'
     };
 
     const modelKey = modelMap[recommendedModel];

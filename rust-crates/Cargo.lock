@@ -2970,6 +2970,7 @@ version = "0.2.2"
 dependencies = [
  "anyhow",
  "approx 0.5.1",
+ "cc",
  "hound",
  "ndarray 0.16.1",
  "ort",

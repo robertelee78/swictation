@@ -35,8 +35,14 @@ tracing-subscriber = "0.3"
 [dev-dependencies]
 approx = "0.5"
 
+[build-dependencies]
+cc = { version = "1.0", optional = true }
+
 [features]
 default = []
+# Native CoreML bridge: compiles Obj-C code that calls CoreML directly.
+# Requires macOS and Xcode command-line tools.
+coreml-native = ["cc"]
 # CoreML support is built into ort crate with "coreml" feature
 # No separate Metal crate needed - CoreML EP internally uses Metal/MPS
 
