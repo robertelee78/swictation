@@ -43,11 +43,11 @@ fn get_default_vad_model_path() -> PathBuf {
 /// Hotkey configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HotkeyConfig {
-    /// Toggle hotkey (default: "Cmd+Shift+D" on macOS, "Super+Shift+D" on Linux)
+    /// Toggle hotkey (default: "Ctrl+Shift+D" on macOS, "Super+Shift+D" on Linux)
     /// User-configurable via UI settings
     pub toggle: String,
 
-    /// Push-to-talk hotkey (default: "Cmd+Space" on macOS, "Super+Space" on Linux)
+    /// Push-to-talk hotkey (default: "Ctrl+Space" on macOS, "Super+Space" on Linux)
     /// User-configurable via UI settings
     pub push_to_talk: String,
 }
@@ -57,7 +57,7 @@ impl Default for HotkeyConfig {
         // On macOS, "Super" maps to Command key (⌘)
         // Use platform-appropriate naming for user-facing config
         let (toggle, ptt) = if cfg!(target_os = "macos") {
-            ("Cmd+Shift+D".to_string(), "Cmd+Space".to_string())
+            ("Ctrl+Shift+D".to_string(), "Ctrl+Space".to_string())
         } else {
             ("Super+Shift+D".to_string(), "Super+Space".to_string())
         };

@@ -98,39 +98,6 @@ pub struct OrtRecognizer {
     use_gpu: bool,
 }
 
-/// Determine optimal CoreML model format based on whether the model has external weight files.
-/// MLProgram is preferred for better ANE utilization on M2+, but requires no external weight files
-/// (external .weights files conflict with .mlpackage directory creation).
-#[cfg(target_os = "macos")]
-fn optimal_coreml_format(model_path: &Path) -> CoreMLModelFormat {
-    // Check if any .weights files exist in the model directory
-    // (these are ONNX external data files that conflict with MLProgram's .mlpackage output)
-    let has_external_weights = model_path
-        .parent()
-        .map(|dir| {
-            std::fs::read_dir(dir)
-                .map(|entries| {
-                    entries.filter_map(|e| e.ok()).any(|entry| {
-                        entry
-                            .path()
-                            .extension()
-                            .map(|ext| ext == "weights" || ext == "data")
-                            .unwrap_or(false)
-                    })
-                })
-                .unwrap_or(false)
-        })
-        .unwrap_or(false);
-
-    if has_external_weights {
-        info!("Model has external weight files — using NeuralNetwork format (compatible with external data)");
-        CoreMLModelFormat::NeuralNetwork
-    } else {
-        info!("No external weight files — using MLProgram format (better ANE optimization on M2+)");
-        CoreMLModelFormat::MLProgram
-    }
-}
-
 impl OrtRecognizer {
     /// Create new recognizer from model directory
     ///
@@ -187,28 +154,20 @@ impl OrtRecognizer {
         // - CPU: Prefer INT8 (smaller and faster on CPU)
         let find_model_file = |name: &str| -> std::result::Result<PathBuf, SttError> {
             if use_gpu {
-                // macOS CoreML: Prefer FP16, fallback to FP32, avoid INT8
+                // macOS CoreML: Use FP32 models — CoreML NeuralNetwork format
+                // automatically runs FP16 on GPU/ANE at inference time.
+                // No pre-conversion to FP16 needed (and doing so breaks type constraints).
                 #[cfg(target_os = "macos")]
                 {
-                    // Try FP16 first (best for Apple Silicon)
-                    let fp16_path = model_path.join(format!("{}.fp16.onnx", name));
-                    if fp16_path.exists() {
-                        info!(
-                            "Using FP16 model for CoreML (Apple Silicon): {}.fp16.onnx",
-                            name
-                        );
-                        return Ok(fp16_path);
-                    }
-                    // Fallback to FP32
                     let onnx_path = model_path.join(format!("{}.onnx", name));
                     if onnx_path.exists() {
-                        info!("Using FP32 model for CoreML: {}.onnx", name);
+                        info!("Using FP32 model for CoreML: {}.onnx (runs FP16 on GPU/ANE)", name);
                         return Ok(onnx_path);
                     }
-                    // Avoid INT8 on CoreML (poor support, often dequantized to FP32)
+                    // Fallback to INT8 if FP32 not available
                     let int8_path = model_path.join(format!("{}.int8.onnx", name));
                     if int8_path.exists() {
-                        warn!("⚠️  Using INT8 model on CoreML - not recommended (poor quantization support)");
+                        warn!("Using INT8 model on CoreML (FP32 preferred but not found)");
                         return Ok(int8_path);
                     }
                 }
@@ -296,7 +255,9 @@ impl OrtRecognizer {
                 encoder_builder = encoder_builder
                     .with_execution_providers([
                         ep::CoreMLExecutionProvider::default()
-                            .with_model_format(optimal_coreml_format(&encoder_path))
+                            // NeuralNetwork format: CoreML implicitly runs FP16 on GPU/ANE
+                            // (no pre-conversion needed — FP32 weights are cast at runtime)
+                            .with_model_format(CoreMLModelFormat::NeuralNetwork)
                             .with_compute_units(CoreMLComputeUnits::All)
                             .build(),
                         ep::CPUExecutionProvider::default().build(),
@@ -364,7 +325,7 @@ impl OrtRecognizer {
                 decoder_builder = decoder_builder
                     .with_execution_providers([
                         ep::CoreMLExecutionProvider::default()
-                            .with_model_format(optimal_coreml_format(&decoder_path))
+                            .with_model_format(CoreMLModelFormat::NeuralNetwork)
                             .with_compute_units(CoreMLComputeUnits::All)
                             .build(),
                         ep::CPUExecutionProvider::default().build(),
@@ -431,7 +392,7 @@ impl OrtRecognizer {
                 joiner_builder = joiner_builder
                     .with_execution_providers([
                         ep::CoreMLExecutionProvider::default()
-                            .with_model_format(optimal_coreml_format(&joiner_path))
+                            .with_model_format(CoreMLModelFormat::NeuralNetwork)
                             .with_compute_units(CoreMLComputeUnits::All)
                             .build(),
                         ep::CPUExecutionProvider::default().build(),

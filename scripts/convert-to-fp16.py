@@ -108,10 +108,9 @@ def main():
 
         print(f"\n=== Converting {model_dir_name} ===")
         for component in components:
-            # Find the source file (could be .onnx or .int8.onnx)
+            # Find the source file — ALWAYS prefer FP32 over INT8
+            # INT8 → FP16 conversion produces broken type graphs
             source = os.path.join(model_dir, f'{component}.onnx')
-            if not os.path.exists(source):
-                source = os.path.join(model_dir, f'{component}.int8.onnx')
             if not os.path.exists(source):
                 print(f"  Skipping {component} (not found)")
                 continue
