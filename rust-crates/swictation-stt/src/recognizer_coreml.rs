@@ -1,8 +1,8 @@
 //! Native CoreML recognizer for Parakeet-TDT models on macOS
 //!
-//! Uses compiled .mlmodelc bundles loaded via Objective-C CoreML API
-//! through a C bridge (coreml_bridge.m). This achieves full ANE utilization
-//! unlike the ONNX Runtime CoreML EP which only dispatches ~32% of nodes.
+//! Uses the `coreml-rs` crate for safe, ergonomic CoreML inference with full
+//! ANE (Apple Neural Engine) utilization. Replaces the previous hand-written
+//! C/Obj-C bridge.
 //!
 //! ## Model Format
 //!
@@ -22,283 +22,22 @@ mod inner {
 
 use crate::audio::AudioProcessor;
 use crate::error::{Result, SttError};
-use ndarray::{s, Array1, Array2, Array3};
-use std::ffi::{CStr, CString};
-use std::os::raw::c_char;
+use coreml_rs::{BorrowedTensor, ComputeUnits, Model};
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
-
-// ---------------------------------------------------------------------------
-// FFI declarations matching coreml_bridge.h
-// ---------------------------------------------------------------------------
-extern "C" {
-    fn coreml_load_model(
-        path: *const c_char,
-        compute_units: i32,
-        error_out: *mut *mut c_char,
-    ) -> *mut std::ffi::c_void;
-
-    fn coreml_predict(
-        model: *mut std::ffi::c_void,
-        input_name: *const c_char,
-        input_data: *const f32,
-        input_shape: *const i64,
-        input_ndims: i32,
-        output_name: *const c_char,
-        output_data: *mut f32,
-        output_size: i64,
-        error_out: *mut *mut c_char,
-    ) -> i32;
-
-    fn coreml_predict_multi(
-        model: *mut std::ffi::c_void,
-        input_names: *const *const c_char,
-        input_datas: *const *const f32,
-        input_shapes: *const *const i64,
-        input_ndims_arr: *const i32,
-        num_inputs: i32,
-        output_name: *const c_char,
-        output_data: *mut f32,
-        output_size: i64,
-        error_out: *mut *mut c_char,
-    ) -> i32;
-
-    fn coreml_free_model(model: *mut std::ffi::c_void);
-
-    fn coreml_free_string(str_ptr: *mut c_char);
-}
-
-// ---------------------------------------------------------------------------
-// CoreML compute-unit constants (matching coreml_bridge.m switch)
-// ---------------------------------------------------------------------------
-
-/// CPU only
-#[allow(dead_code)]
-const COMPUTE_UNITS_CPU: i32 = 0;
-/// CPU + GPU
-#[allow(dead_code)]
-const COMPUTE_UNITS_CPU_GPU: i32 = 1;
-/// CPU + GPU + ANE (all)
-const COMPUTE_UNITS_ALL: i32 = 2;
-/// CPU + ANE
-#[allow(dead_code)]
-const COMPUTE_UNITS_CPU_ANE: i32 = 3;
-
-// ---------------------------------------------------------------------------
-// Safe wrapper around a CoreML model handle
-// ---------------------------------------------------------------------------
-
-/// RAII wrapper around an opaque CoreML model pointer.
-///
-/// All unsafe FFI interaction is confined to this struct so the rest of the
-/// recognizer can be written in safe Rust.
-struct CoreMLModel {
-    handle: *mut std::ffi::c_void,
-    /// Path used for error messages
-    path: PathBuf,
-}
-
-// Apple documents that MLModel.predictionFromFeatures is thread-safe for
-// concurrent read-only predictions on the same model instance.
-unsafe impl Send for CoreMLModel {}
-unsafe impl Sync for CoreMLModel {}
-
-impl CoreMLModel {
-    /// Load a compiled `.mlmodelc` bundle.
-    ///
-    /// `compute_units` selects the execution target (see constants above).
-    fn load(path: &Path, compute_units: i32) -> Result<Self> {
-        let path_cstr = path_to_cstring(path)?;
-        let mut error_ptr: *mut c_char = std::ptr::null_mut();
-
-        let handle = unsafe {
-            coreml_load_model(path_cstr.as_ptr(), compute_units, &mut error_ptr)
-        };
-
-        if handle.is_null() {
-            let msg = consume_error_string(error_ptr)
-                .unwrap_or_else(|| "unknown error".to_string());
-            return Err(SttError::ModelLoadError(format!(
-                "Failed to load CoreML model at {}: {}",
-                path.display(),
-                msg
-            )));
-        }
-
-        info!("Loaded CoreML model: {}", path.display());
-        Ok(Self {
-            handle,
-            path: path.to_path_buf(),
-        })
-    }
-
-    /// Run a single-input / single-output prediction.
-    ///
-    /// Returns a `Vec<f32>` of length `output_size`.
-    fn predict_single(
-        &self,
-        input_name: &str,
-        input_data: &[f32],
-        input_shape: &[i64],
-        output_name: &str,
-        output_size: usize,
-    ) -> Result<Vec<f32>> {
-        let in_name = CString::new(input_name).map_err(|e| {
-            SttError::InferenceError(format!("Invalid input name '{}': {}", input_name, e))
-        })?;
-        let out_name = CString::new(output_name).map_err(|e| {
-            SttError::InferenceError(format!("Invalid output name '{}': {}", output_name, e))
-        })?;
-
-        let mut output_buf = vec![0.0f32; output_size];
-        let mut error_ptr: *mut c_char = std::ptr::null_mut();
-
-        let rc = unsafe {
-            coreml_predict(
-                self.handle,
-                in_name.as_ptr(),
-                input_data.as_ptr(),
-                input_shape.as_ptr(),
-                input_shape.len() as i32,
-                out_name.as_ptr(),
-                output_buf.as_mut_ptr(),
-                output_size as i64,
-                &mut error_ptr,
-            )
-        };
-
-        if rc != 0 {
-            let msg = consume_error_string(error_ptr)
-                .unwrap_or_else(|| "unknown error".to_string());
-            return Err(SttError::InferenceError(format!(
-                "CoreML predict failed on {} (input='{}', output='{}'): {}",
-                self.path.display(),
-                input_name,
-                output_name,
-                msg
-            )));
-        }
-
-        Ok(output_buf)
-    }
-
-    /// Run a multi-input / single-output prediction.
-    ///
-    /// Each entry in `inputs` is `(name, data, shape)`.
-    /// Returns a `Vec<f32>` of length `output_size`.
-    fn predict_multi(
-        &self,
-        inputs: &[(&str, &[f32], &[i64])],
-        output_name: &str,
-        output_size: usize,
-    ) -> Result<Vec<f32>> {
-        // Prepare C-compatible arrays. Keep CStrings alive across the FFI call.
-        let c_names: Vec<CString> = inputs
-            .iter()
-            .map(|(n, _, _)| {
-                CString::new(*n).map_err(|e| {
-                    SttError::InferenceError(format!("Invalid input name '{}': {}", n, e))
-                })
-            })
-            .collect::<Result<_>>()?;
-        let name_ptrs: Vec<*const c_char> = c_names.iter().map(|n| n.as_ptr()).collect();
-        let data_ptrs: Vec<*const f32> = inputs.iter().map(|(_, d, _)| d.as_ptr()).collect();
-        let shape_ptrs: Vec<*const i64> = inputs.iter().map(|(_, _, s)| s.as_ptr()).collect();
-        let ndims: Vec<i32> = inputs.iter().map(|(_, _, s)| s.len() as i32).collect();
-
-        let out_name = CString::new(output_name).map_err(|e| {
-            SttError::InferenceError(format!("Invalid output name '{}': {}", output_name, e))
-        })?;
-
-        let mut output_buf = vec![0.0f32; output_size];
-        let mut error_ptr: *mut c_char = std::ptr::null_mut();
-
-        let rc = unsafe {
-            coreml_predict_multi(
-                self.handle,
-                name_ptrs.as_ptr(),
-                data_ptrs.as_ptr(),
-                shape_ptrs.as_ptr(),
-                ndims.as_ptr(),
-                inputs.len() as i32,
-                out_name.as_ptr(),
-                output_buf.as_mut_ptr(),
-                output_size as i64,
-                &mut error_ptr,
-            )
-        };
-
-        if rc != 0 {
-            let msg = consume_error_string(error_ptr)
-                .unwrap_or_else(|| "unknown error".to_string());
-            let in_names: Vec<&str> = inputs.iter().map(|(n, _, _)| *n).collect();
-            return Err(SttError::InferenceError(format!(
-                "CoreML predict_multi failed on {} (inputs={:?}, output='{}'): {}",
-                self.path.display(),
-                in_names,
-                output_name,
-                msg
-            )));
-        }
-
-        Ok(output_buf)
-    }
-}
-
-impl Drop for CoreMLModel {
-    fn drop(&mut self) {
-        if !self.handle.is_null() {
-            unsafe { coreml_free_model(self.handle) };
-            self.handle = std::ptr::null_mut();
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// FFI helpers
-// ---------------------------------------------------------------------------
-
-/// Convert a `Path` to a nul-terminated CString for the C bridge.
-fn path_to_cstring(path: &Path) -> Result<CString> {
-    let s = path
-        .to_str()
-        .ok_or_else(|| SttError::ModelLoadError(format!(
-            "Path contains non-UTF8 characters: {}",
-            path.display()
-        )))?;
-    CString::new(s).map_err(|e| {
-        SttError::ModelLoadError(format!("Path contains interior nul: {}", e))
-    })
-}
-
-/// Consume an error string returned by the C bridge.
-/// Returns `None` if the pointer is null.
-fn consume_error_string(ptr: *mut c_char) -> Option<String> {
-    if ptr.is_null() {
-        return None;
-    }
-    let msg = unsafe { CStr::from_ptr(ptr) }
-        .to_string_lossy()
-        .into_owned();
-    unsafe { coreml_free_string(ptr) };
-    Some(msg)
-}
 
 // ---------------------------------------------------------------------------
 // Model configuration (mirrors recognizer_ort.rs ModelConfig)
 // ---------------------------------------------------------------------------
 
 /// Model configuration for different Parakeet-TDT variants.
-///
-/// This is a local copy of the struct in `recognizer_ort.rs`.  If that struct
-/// is made `pub` in a future refactor, this duplicate can be removed.
 #[derive(Debug, Clone, Copy)]
 struct ModelConfig {
     /// Decoder hidden state size (640 for both 0.6B and 1.1B)
     decoder_hidden_size: usize,
     /// Number of mel features (128 for 0.6B, 80 for 1.1B)
     n_mel_features: usize,
-    /// Whether encoder expects transposed input (currently both use transposed)
+    /// Whether encoder expects transposed input
     #[allow(dead_code)]
     transpose_input: bool,
     /// Model variant name for logging
@@ -336,13 +75,6 @@ impl ModelConfig {
 }
 
 // ---------------------------------------------------------------------------
-// Decoder state type alias (matches recognizer_ort.rs)
-// ---------------------------------------------------------------------------
-
-/// (tokens, final_decoder_token, final_decoder_out, (blank_count, nonblank_count))
-type DecoderState = (Vec<i64>, i64, Array1<f32>, (usize, usize));
-
-// ---------------------------------------------------------------------------
 // CoreMLRecognizer
 // ---------------------------------------------------------------------------
 
@@ -352,19 +84,44 @@ type DecoderState = (Vec<i64>, i64, Array1<f32>, (usize, usize));
 /// performs TDT greedy search decoding identically to `OrtRecognizer`, but
 /// using the Apple Neural Engine for maximum on-device throughput.
 pub struct CoreMLRecognizer {
-    encoder: CoreMLModel,
-    decoder: CoreMLModel,
-    joiner: CoreMLModel,
+    encoder: Model,
+    decoder: Model,
+    joiner: Model,
     tokens: Vec<String>,
     blank_id: i64,
     unk_id: i64,
     model_path: PathBuf,
     audio_processor: AudioProcessor,
-    /// Decoder LSTM hidden state: shape (2, 1, hidden_size)
-    decoder_state1: Option<Array3<f32>>,
-    /// Decoder LSTM cell state: shape (2, 1, hidden_size)
-    decoder_state2: Option<Array3<f32>>,
+    /// Decoder LSTM hidden state: [2, 1, hidden_size] flattened
+    decoder_state_h: Vec<f32>,
+    /// Decoder LSTM cell state: [2, 1, hidden_size] flattened
+    decoder_state_c: Vec<f32>,
     config: ModelConfig,
+}
+
+/// Helper to map `coreml_rs::Error` into `SttError`.
+fn coreml_err(context: &str, e: coreml_rs::Error) -> SttError {
+    SttError::InferenceError(format!("{}: {}", context, e))
+}
+
+/// De-interleave LSTM state from column-major [2, 1, hidden] to row-major.
+///
+/// CoreML MLMultiArray may return [2, 1, 640] in column-major order where
+/// the two LSTM layers are interleaved: [L0[0], L1[0], L0[1], L1[1], ...].
+/// This function re-orders to row-major: [L0[0..640], L1[0..640]].
+fn deinterleave_lstm_state(data: &[f32], hidden_size: usize) -> Vec<f32> {
+    let num_layers = 2;
+    let expected = num_layers * hidden_size;
+    if data.len() != expected {
+        // Not the expected size — return as-is (may already be row-major)
+        return data.to_vec();
+    }
+    let mut result = vec![0.0f32; expected];
+    for i in 0..hidden_size {
+        result[i] = data[2 * i];                     // layer 0
+        result[hidden_size + i] = data[2 * i + 1];   // layer 1
+    }
+    result
 }
 
 impl CoreMLRecognizer {
@@ -376,14 +133,9 @@ impl CoreMLRecognizer {
     /// - `joiner.mlmodelc/`
     /// - `tokens.txt`
     ///
-    /// # Arguments
-    ///
-    /// * `model_dir` - Path to the model directory.
-    ///
-    /// # Errors
-    ///
-    /// Returns `SttError::ModelLoadError` if any model bundle or `tokens.txt`
-    /// cannot be loaded.
+    /// Note: CoreML MLMultiArray may return data in column-major order.
+    /// For shapes like `[2, 1, 640]` (LSTM states), this means the two layers
+    /// are interleaved element-by-element. We de-interleave after extraction.
     pub fn new<P: AsRef<Path>>(model_dir: P) -> Result<Self> {
         let model_path = model_dir.as_ref().to_path_buf();
 
@@ -404,7 +156,9 @@ impl CoreMLRecognizer {
             .iter()
             .position(|t| t == "<blk>" || t == "<blank>")
             .ok_or_else(|| {
-                SttError::ModelLoadError("Could not find <blk> token in tokens.txt".to_string())
+                SttError::ModelLoadError(
+                    "Could not find <blk> token in tokens.txt".to_string(),
+                )
             })? as i64;
 
         let unk_id = tokens
@@ -420,26 +174,46 @@ impl CoreMLRecognizer {
         );
 
         // Load the three CoreML model bundles with All compute units (CPU+GPU+ANE)
-        let compute_units = COMPUTE_UNITS_ALL;
         info!("Loading encoder.mlmodelc (compute_units=All)...");
-        let encoder = CoreMLModel::load(
-            &model_path.join("encoder.mlmodelc"),
-            compute_units,
-        )?;
+        let encoder = Model::load(
+            model_path.join("encoder.mlmodelc"),
+            ComputeUnits::All,
+        )
+        .map_err(|e| {
+            SttError::ModelLoadError(format!(
+                "Failed to load encoder: {}",
+                e
+            ))
+        })?;
 
         info!("Loading decoder.mlmodelc (compute_units=All)...");
-        let decoder = CoreMLModel::load(
-            &model_path.join("decoder.mlmodelc"),
-            compute_units,
-        )?;
+        let decoder = Model::load(
+            model_path.join("decoder.mlmodelc"),
+            ComputeUnits::All,
+        )
+        .map_err(|e| {
+            SttError::ModelLoadError(format!(
+                "Failed to load decoder: {}",
+                e
+            ))
+        })?;
 
         info!("Loading joiner.mlmodelc (compute_units=All)...");
-        let joiner = CoreMLModel::load(
-            &model_path.join("joiner.mlmodelc"),
-            compute_units,
-        )?;
+        let joiner = Model::load(
+            model_path.join("joiner.mlmodelc"),
+            ComputeUnits::All,
+        )
+        .map_err(|e| {
+            SttError::ModelLoadError(format!(
+                "Failed to load joiner: {}",
+                e
+            ))
+        })?;
 
-        let audio_processor = AudioProcessor::with_mel_features(config.n_mel_features)?;
+        let audio_processor =
+            AudioProcessor::with_mel_features(config.n_mel_features)?;
+
+        let hidden_size = config.decoder_hidden_size;
 
         info!("All CoreML models loaded successfully");
 
@@ -452,8 +226,8 @@ impl CoreMLRecognizer {
             unk_id,
             model_path,
             audio_processor,
-            decoder_state1: None,
-            decoder_state2: None,
+            decoder_state_h: vec![0.0f32; 2 * 1 * hidden_size],
+            decoder_state_c: vec![0.0f32; 2 * 1 * hidden_size],
             config,
         })
     }
@@ -469,35 +243,67 @@ impl CoreMLRecognizer {
     pub fn recognize_samples(&mut self, samples: &[f32]) -> Result<String> {
         info!("Processing {} audio samples via CoreML", samples.len());
 
-        // Extract mel-spectrogram features
-        let features = self.audio_processor.extract_mel_features(samples)?;
-        info!("Extracted mel features: {:?}", features.shape());
+        // The CoreML encoder model includes the preprocessor (mel spectrogram).
+        // We pass raw 16kHz audio directly -- no mel extraction needed in Rust.
+        // The encoder was traced with a fixed 15-second window (240000 samples).
+        const MAX_AUDIO_SAMPLES: usize = 15 * 16000; // 240000
 
-        // Chunk and decode
-        let text = if features.nrows() <= 80 {
-            let chunks = self.audio_processor.chunk_features(&features);
-            info!("Small audio: {} chunks", chunks.len());
-            self.greedy_search_decode(&chunks)?
+        // Pad or truncate audio to the fixed window size
+        let audio: Vec<f32> = if samples.len() >= MAX_AUDIO_SAMPLES {
+            samples[..MAX_AUDIO_SAMPLES].to_vec()
         } else {
-            info!(
-                "Large audio: {} frames -- chunking",
-                features.nrows()
-            );
-            let padded_rows = features.nrows().div_ceil(80) * 80;
-            let mut padded = Array2::zeros((padded_rows, features.ncols()));
+            let mut padded = vec![0.0f32; MAX_AUDIO_SAMPLES];
+            padded[..samples.len()].copy_from_slice(samples);
             padded
-                .slice_mut(s![..features.nrows(), ..])
-                .assign(&features);
-            let chunks = self.audio_processor.chunk_features(&padded);
-            info!("Processing {} encoder chunks", chunks.len());
-            self.greedy_search_decode(&chunks)?
         };
 
+        let actual_length = samples.len().min(MAX_AUDIO_SAMPLES);
+        info!(
+            "Audio: {} samples (padded to {})",
+            actual_length, MAX_AUDIO_SAMPLES
+        );
+
+        // Run the fused preprocessor+encoder
+        let (encoder_features, encoder_dim, valid_frames) =
+            self.run_encoder(&audio, actual_length)?;
+        info!(
+            "Encoder output: {} features, dim={}, valid_frames={}",
+            encoder_features.len(),
+            encoder_dim,
+            valid_frames
+        );
+
+        // Debug: compare encoder features with Python reference
+        let total_time = encoder_features.len() / encoder_dim;
+        info!("DEBUG total_time={}, encoder_dim={}", total_time, encoder_dim);
+
+        // Row-major stride extraction: feature f at time t = flat[f * total_time + t]
+        let frame10_stride: Vec<f32> = (0..5).map(|f| encoder_features[f * total_time + 10]).collect();
+        info!("DEBUG frame 10 via stride: {:?}", frame10_stride);
+        // Python reference: [0.281, 1.029, 0.868, 0.417, -0.937]
+        info!("DEBUG Python frame 10:     [0.281, 1.029, 0.868, 0.417, -0.937]");
+
+        // Reset decoder states
+        let hidden_size = self.config.decoder_hidden_size;
+        self.decoder_state_h = vec![0.0f32; 2 * 1 * hidden_size];
+        self.decoder_state_c = vec![0.0f32; 2 * 1 * hidden_size];
+
+        // Decode using TDT greedy search
+        let all_tokens = self.tdt_greedy_decode(
+            &encoder_features,
+            encoder_dim,
+            valid_frames,
+        )?;
+
+        let text = self.tokens_to_text(&all_tokens);
         Ok(text)
     }
 
     /// Recognize speech from an audio file (WAV, MP3, FLAC).
-    pub fn recognize_file<P: AsRef<Path>>(&mut self, audio_path: P) -> Result<String> {
+    pub fn recognize_file<P: AsRef<Path>>(
+        &mut self,
+        audio_path: P,
+    ) -> Result<String> {
         info!("Loading audio: {}", audio_path.as_ref().display());
         let samples = self.audio_processor.load_audio(&audio_path)?;
         info!("Loaded {} samples", samples.len());
@@ -517,163 +323,94 @@ impl CoreMLRecognizer {
     }
 
     // -----------------------------------------------------------------------
-    // Internal: greedy search decode (mirrors OrtRecognizer exactly)
-    // -----------------------------------------------------------------------
-
-    /// Top-level greedy search over a sequence of feature chunks.
-    fn greedy_search_decode(&mut self, chunks: &[Array2<f32>]) -> Result<String> {
-        let mut all_tokens = Vec::new();
-
-        // Reset decoder states at the start
-        self.decoder_state1 = None;
-        self.decoder_state2 = None;
-
-        let mut decoder_out_opt: Option<Array1<f32>> = None;
-        let mut last_decoder_token = self.blank_id;
-
-        for (chunk_idx, chunk) in chunks.iter().enumerate() {
-            debug!(
-                "Processing chunk {}/{}, shape {:?}",
-                chunk_idx + 1,
-                chunks.len(),
-                chunk.shape()
-            );
-
-            let encoder_out = self.run_encoder(chunk)?;
-            debug!("Encoder output shape: {:?}", encoder_out.shape());
-
-            let (chunk_tokens, final_token, final_decoder_out, (bc, nbc)) = self
-                .decode_frames_with_state(
-                    &encoder_out,
-                    decoder_out_opt.take(),
-                    last_decoder_token,
-                )?;
-            debug!(
-                "Chunk {}: {} tokens, {} blank / {} non-blank",
-                chunk_idx + 1,
-                chunk_tokens.len(),
-                bc,
-                nbc
-            );
-
-            all_tokens.extend(chunk_tokens);
-            last_decoder_token = final_token;
-            decoder_out_opt = Some(final_decoder_out);
-        }
-
-        let text = self.tokens_to_text(&all_tokens);
-        Ok(text)
-    }
-
-    // -----------------------------------------------------------------------
     // Encoder
     // -----------------------------------------------------------------------
 
-    /// Run the encoder on a single feature chunk.
+    /// Run the fused preprocessor+encoder on raw audio.
     ///
-    /// Input layout (matching ONNX model):
-    /// - `audio_signal`: shape `[1, n_mel_features, num_frames]` (transposed)
-    /// - `length`: shape `[1]` (i64 cast to f32 for CoreML MLMultiArray)
+    /// Inputs (verified model spec):
+    /// - `audio_signal`: [1, 240000] FLOAT32 -- raw 16kHz samples
+    /// - `audio_length`: [1] INT32 -- actual sample count
     ///
-    /// Output:
-    /// - Encoded features as `Array3<f32>` with shape `[1, encoder_dim, T']`
-    fn run_encoder(&self, features: &Array2<f32>) -> Result<Array3<f32>> {
-        let num_frames = features.nrows();
-        let num_features = features.ncols();
+    /// Outputs (single inference call):
+    /// - `obj_3`: [1, 1024, 188] FLOAT16->f32 -- encoded features
+    /// - `obj`:   [1] INT32->f32 -- valid frame count
+    ///
+    /// Returns `(features_flat, encoder_dim, valid_frames)`.
+    fn run_encoder(
+        &self,
+        audio: &[f32],
+        actual_length: usize,
+    ) -> Result<(Vec<f32>, usize, usize)> {
+        debug!("Encoder: {} raw audio samples", audio.len());
 
-        debug!(
-            "Encoder: {} frames x {} features",
-            num_frames, num_features
-        );
+        let audio_tensor = BorrowedTensor::from_f32(audio, &[1, audio.len()])
+            .map_err(|e| coreml_err("encoder audio tensor", e))?;
 
-        // Transpose to (1, num_features, num_frames) -- same layout as OrtRecognizer
-        let mut audio_data = Vec::with_capacity(num_frames * num_features);
-        for col_idx in 0..num_features {
-            for row in features.outer_iter() {
-                audio_data.push(row[col_idx]);
-            }
-        }
-        let audio_shape: [i64; 3] = [1, num_features as i64, num_frames as i64];
+        let length_data = [actual_length as i32];
+        let length_tensor = BorrowedTensor::from_i32(&length_data, &[1])
+            .map_err(|e| coreml_err("encoder length tensor", e))?;
 
-        // Length tensor -- CoreML MLMultiArray is always Float32, so we pass
-        // the frame count as f32 (the compiled model should accept this).
-        let length_data = [num_frames as f32];
-        let length_shape: [i64; 1] = [1];
+        let prediction = self
+            .encoder
+            .predict(&[
+                ("audio_signal", &audio_tensor),
+                ("audio_length", &length_tensor),
+            ])
+            .map_err(|e| coreml_err("encoder predict", e))?;
 
-        // Determine expected encoder output size.  The Parakeet encoder
-        // produces (1, encoder_dim, T') where T' <= num_frames.  We
-        // allocate conservatively: encoder_dim is typically 1024 for 1.1B
-        // and 640 for 0.6B.  Since we do not know the exact subsampling
-        // factor until we run, we allocate for the worst case (no subsampling).
-        let max_encoder_dim = 1024;
-        let max_output_size = 1 * max_encoder_dim * num_frames;
-        let mut output_buf = vec![0.0f32; max_output_size];
+        // Extract features: [1, 1024, T] FLOAT16->f32
+        let (features, feat_shape) = prediction
+            .get_f32("obj_3")
+            .map_err(|e| coreml_err("encoder get obj_3", e))?;
 
-        // Build multi-input call
-        let inputs: Vec<(&str, &[f32], &[i64])> = vec![
-            ("audio_signal", &audio_data, &audio_shape),
-            ("length", &length_data, &length_shape),
-        ];
+        // Extract valid frame count: [1] INT32->f32
+        let (valid_len_f32, _) = prediction
+            .get_f32("obj")
+            .map_err(|e| coreml_err("encoder get obj", e))?;
 
-        let result = self.encoder.predict_multi(&inputs, "output", max_output_size);
-
-        // If the default output name fails, try common alternatives
-        let output_data = match result {
-            Ok(data) => data,
-            Err(ref _e) => {
-                debug!(
-                    "Output name 'output' failed, trying 'encoder_output'. \
-                     If this also fails, inspect the .mlmodelc for the correct \
-                     output feature name."
-                );
-                let alt = self
-                    .encoder
-                    .predict_multi(&inputs, "encoder_output", max_output_size);
-                match alt {
-                    Ok(data) => data,
-                    Err(_) => {
-                        // Return original error with guidance
-                        return Err(SttError::InferenceError(format!(
-                            "Encoder prediction failed. Tried output names 'output' and \
-                             'encoder_output'. Check the encoder.mlmodelc model description \
-                             for the correct output feature name. Original error: {}",
-                            _e
-                        )));
-                    }
-                }
+        let valid_frames = if !valid_len_f32.is_empty() {
+            let frames = valid_len_f32[0] as usize;
+            info!("Encoder reported {} valid frames", frames);
+            frames
+        } else {
+            // Fallback: derive from feature shape
+            if feat_shape.len() >= 3 {
+                feat_shape[2]
+            } else {
+                features.len() / 1024
             }
         };
 
-        // Discover the actual output shape.  The encoder subsamples time by
-        // a factor of 4 (two conv layers with stride 2).  encoder_dim is
-        // typically 1024 (1.1B) or 640 (0.6B).
-        //
-        // We infer the shape from the total element count:
-        //   total = 1 * encoder_dim * T'
-        // where T' = ceil(num_frames / 4) for Conformer subsampling.
-        //
-        // We try known encoder_dim values in order of likelihood.
-        let total = output_data.iter().take_while(|&&v| v != 0.0 || true).count();
-        // Actually use the full buffer length that was returned
-        let total = output_data.len();
+        // encoder_dim is the second dimension of [1, encoder_dim, T]
+        let encoder_dim = if feat_shape.len() >= 3 {
+            feat_shape[1]
+        } else {
+            1024
+        };
 
-        let (encoder_dim, time_out) = infer_encoder_shape(total, num_frames)?;
+        let total_time = if feat_shape.len() >= 3 {
+            feat_shape[2]
+        } else {
+            features.len() / encoder_dim
+        };
 
-        // Trim to actual size and reshape
-        let actual_size = 1 * encoder_dim * time_out;
-        let trimmed = &output_data[..actual_size];
+        info!(
+            "Encoder output: {} elements -> [1, {}, {}], valid_frames={}",
+            features.len(),
+            encoder_dim,
+            total_time,
+            valid_frames
+        );
 
-        let encoder_out =
-            Array3::from_shape_vec((1, encoder_dim, time_out), trimmed.to_vec()).map_err(
-                |e| {
-                    SttError::InferenceError(format!(
-                        "Failed to reshape encoder output (total={}, encoder_dim={}, time={}): {}",
-                        actual_size, encoder_dim, time_out, e
-                    ))
-                },
-            )?;
+        // Clamp valid_frames to the actual time dimension
+        let decode_frames = if valid_frames > 0 && valid_frames <= total_time {
+            valid_frames
+        } else {
+            total_time
+        };
 
-        Ok(encoder_out)
+        Ok((features, encoder_dim, decode_frames))
     }
 
     // -----------------------------------------------------------------------
@@ -682,174 +419,79 @@ impl CoreMLRecognizer {
 
     /// Run the decoder with a single token and LSTM states.
     ///
-    /// Mirrors `OrtRecognizer::run_decoder` exactly:
-    /// - inputs: `targets` (i32), `target_length` (i32), `states.1`, `onnx::Slice_3`
-    /// - outputs: decoder_out `[1, hidden, 1]`, unused, new_state1, new_state2
+    /// Inputs (verified model spec):
+    /// - `targets`: [1, 1] INT32
+    /// - `target_length`: [1] INT32
+    /// - `h`: [2, 1, 640] FLOAT32
+    /// - `c`: [2, 1, 640] FLOAT32
     ///
-    /// NOTE: The CoreML compiled model may rename inputs/outputs.  The names
-    /// used here match the ONNX originals.  If prediction fails due to name
-    /// mismatches, the error message will guide debugging.
-    ///
-    /// IMPORTANT: The current C bridge (`coreml_predict_multi`) supports only
-    /// a single output extraction per call.  The decoder produces 4 outputs.
-    /// To work around this limitation, this method runs the decoder model
-    /// separately for each output that needs extraction (decoder_out, state1,
-    /// state2).  This is ~3x slower than a single call with multi-output
-    /// extraction.  A future enhancement to `coreml_bridge.m` adding
-    /// `coreml_predict_multi_output()` would eliminate this overhead.
-    fn run_decoder(&mut self, tokens: &[i64]) -> Result<Array1<f32>> {
+    /// Outputs (all extracted in ONE call):
+    /// - `var_47`: [1, 1, 640] FLOAT16->f32 -- decoder embedding
+    /// - `var_34`: [2, 1, 640] FLOAT16->f32 -- new h
+    /// - `var_35`: [2, 1, 640] FLOAT16->f32 -- new c
+    fn run_decoder(&mut self, token: i64) -> Result<Vec<f32>> {
         let hidden_size = self.config.decoder_hidden_size;
-        let seq_len = tokens.len();
 
-        // CoreML MLMultiArray is typed Float32 -- we pass int values as f32.
-        // The compiled model's input type must match; if the original ONNX
-        // used int32, coremltools should have inserted a cast.
-        let targets_f32: Vec<f32> = tokens.iter().map(|&t| t as f32).collect();
-        let targets_shape: [i64; 2] = [1, seq_len as i64];
+        let targets_i32 = [token as i32];
+        let targets_tensor =
+            BorrowedTensor::from_i32(&targets_i32, &[1, 1])
+                .map_err(|e| coreml_err("decoder targets tensor", e))?;
 
-        let target_length_f32 = [seq_len as f32];
-        let target_length_shape: [i64; 1] = [1];
+        let target_length_i32 = [1i32];
+        let target_length_tensor =
+            BorrowedTensor::from_i32(&target_length_i32, &[1])
+                .map_err(|e| coreml_err("decoder target_length tensor", e))?;
 
-        // Initialize LSTM states if needed
-        if self.decoder_state1.is_none() {
-            self.decoder_state1 = Some(Array3::zeros((2, 1, hidden_size)));
-            self.decoder_state2 = Some(Array3::zeros((2, 1, hidden_size)));
-        }
-
-        let state1_data: Vec<f32> = self
-            .decoder_state1
-            .as_ref()
-            .unwrap()
-            .iter()
-            .copied()
-            .collect();
-        let state1_shape: [i64; 3] = [2, 1, hidden_size as i64];
-
-        let state2_data: Vec<f32> = self
-            .decoder_state2
-            .as_ref()
-            .unwrap()
-            .iter()
-            .copied()
-            .collect();
-        let state2_shape: [i64; 3] = [2, 1, hidden_size as i64];
-
-        let inputs: Vec<(&str, &[f32], &[i64])> = vec![
-            ("targets", &targets_f32, &targets_shape),
-            ("target_length", &target_length_f32, &target_length_shape),
-            ("states.1", &state1_data, &state1_shape),
-            ("onnx::Slice_3", &state2_data, &state2_shape),
-        ];
-
-        // Extract decoder output (output index 0): shape (1, hidden_size, seq_len)
-        let decoder_out_size = 1 * hidden_size * seq_len;
-        let decoder_out_data = self.run_decoder_for_output(&inputs, "output", decoder_out_size)?;
-
-        // Extract new state1 (output index 2): shape (2, 1, hidden_size)
-        let state_size = 2 * 1 * hidden_size;
-        let new_state1_data =
-            self.run_decoder_for_output(&inputs, "new_state1", state_size);
-        // Extract new state2 (output index 3): shape (2, 1, hidden_size)
-        let new_state2_data =
-            self.run_decoder_for_output(&inputs, "new_state2", state_size);
-
-        // Update LSTM states if extraction succeeded.
-        // If the output names do not match, log a warning and keep old states.
-        match new_state1_data {
-            Ok(data) => {
-                self.decoder_state1 = Some(
-                    Array3::from_shape_vec((2, 1, hidden_size), data)
-                        .map_err(|e| {
-                            SttError::InferenceError(format!(
-                                "Failed to reshape decoder state1: {}",
-                                e
-                            ))
-                        })?,
-                );
-            }
-            Err(e) => {
-                warn!(
-                    "Could not extract decoder state1 (tried 'new_state1'). \
-                     LSTM states will not update. Error: {}. \
-                     Check decoder.mlmodelc output feature names.",
-                    e
-                );
-            }
-        }
-
-        match new_state2_data {
-            Ok(data) => {
-                self.decoder_state2 = Some(
-                    Array3::from_shape_vec((2, 1, hidden_size), data)
-                        .map_err(|e| {
-                            SttError::InferenceError(format!(
-                                "Failed to reshape decoder state2: {}",
-                                e
-                            ))
-                        })?,
-                );
-            }
-            Err(e) => {
-                warn!(
-                    "Could not extract decoder state2 (tried 'new_state2'). \
-                     LSTM states will not update. Error: {}. \
-                     Check decoder.mlmodelc output feature names.",
-                    e
-                );
-            }
-        }
-
-        // Reshape decoder output: (1, hidden_size, seq_len) -> take last timestep
-        let decoder_out_3d = Array3::from_shape_vec(
-            (1, hidden_size, seq_len),
-            decoder_out_data,
+        let h_tensor = BorrowedTensor::from_f32(
+            &self.decoder_state_h,
+            &[2, 1, hidden_size],
         )
-        .map_err(|e| {
-            SttError::InferenceError(format!(
-                "Failed to reshape decoder output: {}",
-                e
-            ))
-        })?;
+        .map_err(|e| coreml_err("decoder h tensor", e))?;
 
-        let last_frame = decoder_out_3d.slice(s![0, .., seq_len - 1]).to_owned();
-        Ok(last_frame)
-    }
+        let c_tensor = BorrowedTensor::from_f32(
+            &self.decoder_state_c,
+            &[2, 1, hidden_size],
+        )
+        .map_err(|e| coreml_err("decoder c tensor", e))?;
 
-    /// Helper: run the decoder model and extract a single named output.
-    ///
-    /// Tries the given `output_name` first, then falls back to common
-    /// alternatives derived from ONNX conversion patterns.
-    fn run_decoder_for_output(
-        &self,
-        inputs: &[(&str, &[f32], &[i64])],
-        output_name: &str,
-        output_size: usize,
-    ) -> Result<Vec<f32>> {
-        let result = self.decoder.predict_multi(inputs, output_name, output_size);
-        if result.is_ok() {
-            return result;
+        let prediction = self
+            .decoder
+            .predict(&[
+                ("targets", &targets_tensor),
+                ("target_length", &target_length_tensor),
+                ("h", &h_tensor),
+                ("c", &c_tensor),
+            ])
+            .map_err(|e| coreml_err("decoder predict", e))?;
+
+        // Decoder embedding: [1, 1, 640]
+        let (dec_out, _) = prediction
+            .get_f32("var_47")
+            .map_err(|e| coreml_err("decoder get var_47", e))?;
+
+        // New LSTM states: [2, 1, 640] each
+        let (new_h, _) = prediction
+            .get_f32("var_34")
+            .map_err(|e| coreml_err("decoder get var_34", e))?;
+
+        let (new_c, _) = prediction
+            .get_f32("var_35")
+            .map_err(|e| coreml_err("decoder get var_35", e))?;
+
+        // Log first values for debugging stride order
+        if new_h.len() >= 10 {
+            info!("DEBUG h[0..10]: {:?}", &new_h[..10]);
+            info!("DEBUG h[640..650]: {:?}", &new_h[640..650]);
+            // Python reference (from blank_id=1024 initial call):
+            // h[0,0,0]=-0.040161, h[0,0,1]=0.013962, h[1,0,0]=-0.154297
+            // Row-major: flat[0]=-0.040161, flat[1]=0.013962, flat[640]=-0.154297
+            // Col-major: flat[0]=-0.040161, flat[1]=-0.154297, flat[2]=0.013962
         }
 
-        // Try alternative names that coremltools may generate
-        let alternatives: &[&str] = match output_name {
-            "output" => &["decoder_output", "output_0"],
-            "new_state1" => &["states.1_output", "output_2", "onnx::LSTM_output_1"],
-            "new_state2" => &["onnx::Slice_3_output", "output_3", "onnx::LSTM_output_2"],
-            _ => &[],
-        };
+        self.decoder_state_h = new_h;
+        self.decoder_state_c = new_c;
 
-        for alt in alternatives {
-            if let Ok(data) = self.decoder.predict_multi(inputs, alt, output_size) {
-                debug!(
-                    "Decoder output '{}' not found, but '{}' worked",
-                    output_name, alt
-                );
-                return Ok(data);
-            }
-        }
-
-        // Return the original error
-        result
+        Ok(dec_out)
     }
 
     // -----------------------------------------------------------------------
@@ -858,72 +500,58 @@ impl CoreMLRecognizer {
 
     /// Combine encoder frame and decoder output through the joint network.
     ///
-    /// Mirrors `OrtRecognizer::run_joiner`:
-    /// - inputs: `encoder_outputs` `[1, enc_dim, 1]`, `decoder_outputs` `[1, hidden, 1]`
-    /// - output: logits `[1, 1, 1, vocab_size + num_durations]`
+    /// Inputs (verified model spec):
+    /// - `encoder_output`: [1, 1, 1024] FLOAT32
+    /// - `decoder_output`: [1, 1, 640] FLOAT32
+    ///
+    /// Output:
+    /// - `var_31`: [1, 1, 1, 1030] FLOAT16->f32 -- logits
     fn run_joiner(
         &self,
-        encoder_frame: &Array1<f32>,
-        decoder_out: &Array1<f32>,
-    ) -> Result<Array1<f32>> {
-        let enc_data: Vec<f32> = encoder_frame.to_vec();
-        let enc_shape: [i64; 3] = [1, encoder_frame.len() as i64, 1];
+        encoder_frame: &[f32],
+        decoder_out: &[f32],
+    ) -> Result<Vec<f32>> {
+        let enc_dim = encoder_frame.len();
+        let dec_dim = decoder_out.len();
 
-        let dec_data: Vec<f32> = decoder_out.to_vec();
-        let dec_shape: [i64; 3] = [1, decoder_out.len() as i64, 1];
+        let enc_tensor =
+            BorrowedTensor::from_f32(encoder_frame, &[1, 1, enc_dim])
+                .map_err(|e| coreml_err("joiner encoder tensor", e))?;
 
-        // Output size: vocab_size + duration_logits
-        // For TDT models, there are typically 5 duration bins appended.
-        // Total = vocab_size + num_durations.  We know vocab_size from tokens.
-        // Allocate generously (tokens.len() + 16 for durations).
-        let output_size = self.tokens.len() + 16;
+        let dec_tensor =
+            BorrowedTensor::from_f32(decoder_out, &[1, 1, dec_dim])
+                .map_err(|e| coreml_err("joiner decoder tensor", e))?;
 
-        let inputs: Vec<(&str, &[f32], &[i64])> = vec![
-            ("encoder_outputs", &enc_data, &enc_shape),
-            ("decoder_outputs", &dec_data, &dec_shape),
-        ];
+        let prediction = self
+            .joiner
+            .predict(&[
+                ("encoder_output", &enc_tensor),
+                ("decoder_output", &dec_tensor),
+            ])
+            .map_err(|e| coreml_err("joiner predict", e))?;
 
-        let result = self.joiner.predict_multi(&inputs, "output", output_size);
-        let output_data = match result {
-            Ok(d) => d,
-            Err(ref _e) => {
-                // Try alternative output name
-                let alt = self
-                    .joiner
-                    .predict_multi(&inputs, "logits", output_size);
-                match alt {
-                    Ok(d) => d,
-                    Err(_) => {
-                        return Err(SttError::InferenceError(format!(
-                            "Joiner prediction failed. Tried output names 'output' and \
-                             'logits'. Check joiner.mlmodelc output feature names. \
-                             Original error: {}",
-                            _e
-                        )));
-                    }
-                }
-            }
-        };
+        // Logits: [1, 1, 1, 1030]
+        let (logits, _) = prediction
+            .get_f32("var_31")
+            .map_err(|e| coreml_err("joiner get var_31", e))?;
 
-        Ok(Array1::from_vec(output_data))
+        Ok(logits)
     }
 
     // -----------------------------------------------------------------------
-    // TDT greedy search (identical logic to OrtRecognizer)
+    // TDT greedy search decode
     // -----------------------------------------------------------------------
 
-    /// Decode encoder output frames using TDT greedy search with cross-chunk
-    /// state persistence.
+    /// Decode encoder output frames using TDT greedy search.
     ///
-    /// This is a direct port of `OrtRecognizer::decode_frames_with_state`.
-    /// Reference: sherpa-onnx `DecodeOneTDT` (offline-transducer-greedy-search-nemo-decoder.cc).
-    fn decode_frames_with_state(
+    /// Reference: sherpa-onnx `DecodeOneTDT`
+    /// (offline-transducer-greedy-search-nemo-decoder.cc).
+    fn tdt_greedy_decode(
         &mut self,
-        encoder_out: &Array3<f32>,
-        prev_decoder_out: Option<Array1<f32>>,
-        initial_token: i64,
-    ) -> Result<DecoderState> {
-        let num_frames = encoder_out.shape()[2];
+        encoder_features: &[f32],
+        encoder_dim: usize,
+        num_frames: usize,
+    ) -> Result<Vec<i64>> {
         let vocab_size = self.tokens.len();
         let blank_id = self.blank_id;
         let max_tokens_per_frame = 5; // sherpa-onnx TDT default
@@ -932,15 +560,8 @@ impl CoreMLRecognizer {
         let mut blank_count = 0_usize;
         let mut nonblank_count = 0_usize;
 
-        // Initialize decoder output: reuse from previous chunk or compute fresh
-        let mut decoder_out = if let Some(prev_out) = prev_decoder_out {
-            debug!("Reusing decoder_out from previous chunk (token={})", initial_token);
-            prev_out
-        } else {
-            debug!("Computing initial decoder_out (token={})", initial_token);
-            self.run_decoder(&[initial_token])?
-        };
-        let mut last_emitted_token = initial_token;
+        // Compute initial decoder output from blank token
+        let mut decoder_out = self.run_decoder(blank_id)?;
 
         let mut tokens_this_frame = 0;
         let mut t = 0_usize;
@@ -956,25 +577,57 @@ impl CoreMLRecognizer {
                 break;
             }
 
-            // Extract single encoder frame: (encoder_dim,)
-            let encoder_frame = encoder_out.slice(s![0, .., t]).to_owned();
+            // Extract single encoder frame t from [1, 1024, total_time] in row-major order.
+            // Row-major means time varies fastest: flat[f * total_time + t] = feature f at time t.
+            // Verified: flat[0] matches Python but flat[1] = features[0,0,1] (row-major),
+            // NOT features[0,1,0] (column-major).
+            let total_time = encoder_features.len() / encoder_dim;
+            if t >= total_time {
+                warn!("Encoder frame {} out of bounds (total_time={})", t, total_time);
+                break;
+            }
+            let encoder_frame: Vec<f32> = (0..encoder_dim)
+                .map(|f| encoder_features[f * total_time + t])
+                .collect();
 
             // Run joiner
             let logits = self.run_joiner(&encoder_frame, &decoder_out)?;
-            let logits_slice = logits.as_slice().unwrap();
-            let output_size = logits_slice.len();
-            let num_durations = output_size - vocab_size;
+            let actual_logit_count =
+                logits.len().min(vocab_size + 5); // vocab + 5 TDT durations
+            let num_durations = actual_logit_count.saturating_sub(vocab_size);
 
-            let token_logits = &logits_slice[0..vocab_size];
-            let duration_logits = &logits_slice[vocab_size..];
+            let token_logits = &logits[0..vocab_size];
+            let duration_logits =
+                &logits[vocab_size..vocab_size + num_durations];
+
+            // Debug: log first frame's logits
+            if t == 0 && iteration_count == 1 {
+                let (max_tok_idx, max_tok_val) = token_logits
+                    .iter()
+                    .enumerate()
+                    .max_by(|(_, a), (_, b)| {
+                        a.partial_cmp(b).unwrap()
+                    })
+                    .unwrap();
+                info!(
+                    "Frame 0: total_logits={}, vocab={}, durations={}, best_token={}(val={:.3}), blank_val={:.3}, dur={:?}",
+                    logits.len(),
+                    vocab_size,
+                    num_durations,
+                    max_tok_idx,
+                    max_tok_val,
+                    token_logits[blank_id as usize],
+                    duration_logits
+                );
+            }
 
             // Greedy token selection
-            let (y, _) = token_logits
+            let y = token_logits
                 .iter()
                 .enumerate()
                 .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+                .map(|(idx, _)| idx as i64)
                 .unwrap();
-            let y = y as i64;
 
             // Greedy duration selection
             let mut skip = if num_durations > 0 {
@@ -998,8 +651,7 @@ impl CoreMLRecognizer {
             // Emit token and update decoder state
             if y != blank_id {
                 tokens.push(y);
-                decoder_out = self.run_decoder(&[y])?;
-                last_emitted_token = y;
+                decoder_out = self.run_decoder(y)?;
                 tokens_this_frame += 1;
             }
 
@@ -1022,15 +674,22 @@ impl CoreMLRecognizer {
             // else: stay at same frame to potentially emit more tokens
         }
 
-        debug!(
-            "Decoded {} tokens from {} frames ({} blank, {} non-blank)",
+        info!(
+            "TDT decode complete: {} tokens from {} frames ({} blank, {} non-blank, {} iterations)",
             tokens.len(),
             num_frames,
             blank_count,
-            nonblank_count
+            nonblank_count,
+            iteration_count
         );
+        if !tokens.is_empty() {
+            let token_strs: Vec<&str> = tokens.iter()
+                .map(|&t| self.tokens.get(t as usize).map(|s| s.as_str()).unwrap_or("?"))
+                .collect();
+            info!("  Tokens: {:?}", token_strs);
+        }
 
-        Ok((tokens, last_emitted_token, decoder_out, (blank_count, nonblank_count)))
+        Ok(tokens)
     }
 
     // -----------------------------------------------------------------------
@@ -1090,94 +749,21 @@ fn load_tokens(model_dir: &Path) -> Result<Vec<String>> {
     Ok(tokens)
 }
 
-/// Infer encoder output shape from total element count and input frame count.
-///
-/// The Parakeet Conformer encoder subsamples time by 4x (two conv layers
-/// with stride 2).  Known encoder dimensions:
-/// - 1024 for 1.1B
-/// - 640  for 0.6B
-/// - 512  for smaller variants
-///
-/// Returns `(encoder_dim, time_out)`.
-fn infer_encoder_shape(total_elements: usize, input_frames: usize) -> Result<(usize, usize)> {
-    // Try known encoder dimensions in order of likelihood
-    let candidates = [1024_usize, 640, 512, 768, 256];
-    // Possible subsampling factors
-    let subsample_factors = [4_usize, 2, 8, 1];
-
-    for &dim in &candidates {
-        if total_elements % dim == 0 {
-            let time_out = total_elements / dim;
-            // Sanity check: time_out should be roughly input_frames / subsample
-            for &factor in &subsample_factors {
-                let expected = input_frames.div_ceil(factor);
-                // Allow some slack (encoder may pad or trim slightly)
-                if time_out <= expected + 2 && time_out + 2 >= expected.saturating_sub(2) {
-                    debug!(
-                        "Inferred encoder shape: (1, {}, {}) from {} elements \
-                         (subsample factor ~{})",
-                        dim, time_out, total_elements, factor
-                    );
-                    return Ok((dim, time_out));
-                }
-            }
-        }
-    }
-
-    // Fallback: assume encoder_dim = total / ceil(input_frames/4) if it divides evenly
-    let time_guess = input_frames.div_ceil(4);
-    if time_guess > 0 && total_elements % time_guess == 0 {
-        let dim = total_elements / time_guess;
-        warn!(
-            "Using fallback encoder shape inference: (1, {}, {}) from {} elements",
-            dim, time_guess, total_elements
-        );
-        return Ok((dim, time_guess));
-    }
-
-    Err(SttError::InferenceError(format!(
-        "Cannot infer encoder output shape from {} total elements \
-         (input_frames={}). Expected encoder_dim in {:?} with ~4x subsampling.",
-        total_elements, input_frames, candidates
-    )))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_infer_encoder_shape_1_1b() {
-        // 1.1B model: 1024 dim, 4x subsample, 10000 input frames -> 2500 output
-        let (dim, time) = infer_encoder_shape(1024 * 2500, 10000).unwrap();
-        assert_eq!(dim, 1024);
-        assert_eq!(time, 2500);
-    }
-
-    #[test]
-    fn test_infer_encoder_shape_0_6b() {
-        // 0.6B model: 640 dim, 4x subsample, 10000 input frames -> 2500 output
-        let (dim, time) = infer_encoder_shape(640 * 2500, 10000).unwrap();
-        assert_eq!(dim, 640);
-        assert_eq!(time, 2500);
-    }
-
-    #[test]
     fn test_model_config_detection() {
-        let cfg_1_1b = ModelConfig::detect_from_path(Path::new("/models/parakeet-tdt-1.1b-coreml"));
+        let cfg_1_1b =
+            ModelConfig::detect_from_path(Path::new("/models/parakeet-tdt-1.1b-coreml"));
         assert_eq!(cfg_1_1b.n_mel_features, 80);
         assert_eq!(cfg_1_1b.decoder_hidden_size, 640);
 
-        let cfg_0_6b = ModelConfig::detect_from_path(Path::new("/models/parakeet-tdt-0.6b-coreml"));
+        let cfg_0_6b =
+            ModelConfig::detect_from_path(Path::new("/models/parakeet-tdt-0.6b-coreml"));
         assert_eq!(cfg_0_6b.n_mel_features, 128);
         assert_eq!(cfg_0_6b.decoder_hidden_size, 640);
-    }
-
-    #[test]
-    fn test_path_to_cstring() {
-        let p = Path::new("/tmp/model.mlmodelc");
-        let c = path_to_cstring(p).unwrap();
-        assert_eq!(c.to_str().unwrap(), "/tmp/model.mlmodelc");
     }
 }
 

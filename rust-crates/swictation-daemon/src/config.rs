@@ -35,7 +35,7 @@ fn get_default_1_1b_model_path() -> PathBuf {
 
 /// Get default path for CoreML model (macOS native)
 fn get_default_coreml_model_path() -> PathBuf {
-    get_default_model_dir().join("parakeet-tdt-0.6b-coreml")
+    get_default_model_dir().join("parakeet-tdt-1.1b-coreml")
 }
 
 /// Get default path for VAD model
