@@ -30,7 +30,8 @@
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     // Create and start broadcaster
-//!     let broadcaster = MetricsBroadcaster::new(swictation_paths::metrics_socket_path().to_str().unwrap()).await?;
+//!     let socket_path = "/tmp/swictation-metrics.sock"; // Use swictation_paths in production
+//!     let broadcaster = MetricsBroadcaster::new(socket_path).await?;
 //!     broadcaster.start().await?;
 //!
 //!     // Start session
