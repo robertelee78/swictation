@@ -194,16 +194,16 @@ semaphore.wait()
             let result = String::from_utf8_lossy(&output.stdout).trim().to_string();
             if result == "granted" {
                 info!("✅ Microphone permission granted by user");
-                return true;
+                true
             } else if result == "denied" {
                 warn!("❌ Microphone permission denied by user");
                 warn!("   Enable in: System Settings → Privacy & Security → Microphone");
-                return false;
+                false
             } else {
                 // Swift command ran but unexpected output — check status directly
                 warn!("Unexpected Swift output: '{}', checking status...", result);
                 let status = check_microphone_authorization_status();
-                return matches!(status, AVAuthorizationStatus::Authorized);
+                matches!(status, AVAuthorizationStatus::Authorized)
             }
         }
         Err(e) => {
