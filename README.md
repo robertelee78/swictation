@@ -2,7 +2,7 @@
 
 **Voice-to-text dictation for Linux and macOS with GPU acceleration**
 
-[![Linux](https://img.shields.io/badge/Linux-X11%2FWayland%20%7C%20CUDA-blue?logo=linux)](docs/display-servers.md) [![macOS](https://img.shields.io/badge/macOS-Apple%20Silicon%20%7C%20CoreML-black?logo=apple)](docs/architecture.md)
+[![Linux](https://img.shields.io/badge/Linux-X11%2FWayland%20%7C%20CUDA-blue?logo=linux)](docs/window-manager-configs.md) [![macOS](https://img.shields.io/badge/macOS-Apple%20Silicon%20%7C%20CoreML-black?logo=apple)](docs/architecture.md)
 
 Pure Rust daemon with VAD-triggered auto-transcription, sub-second latency, and complete privacy.
 
@@ -38,10 +38,14 @@ Pure Rust daemon with VAD-triggered auto-transcription, sub-second latency, and 
 ### Install
 
 ```bash
+# Linux (x64)
+npm install -g swictation --foreground-scripts
+
+# macOS (Apple Silicon) — uses platform-specific optional package
 npm install -g swictation --foreground-scripts
 
 # Postinstall automatically (with retry and progress reporting):
-# - Detects GPU and downloads optimized libraries (~1.5GB)
+# - Detects platform and GPU, downloads optimized libraries (~1.5GB)
 # - Recommends and test-loads AI model (30-60s)
 # - Installs services (systemd on Linux, launchd on macOS)
 # - Shows platform-specific setup instructions
@@ -152,13 +156,14 @@ journalctl --user -u swictation-daemon -f
 Edit `~/.config/swictation/config.toml`:
 
 ```toml
-[vad]
-threshold = 0.25           # 0.0-1.0 (lower = more sensitive)
-min_silence_duration = 0.8 # Seconds before transcription
-min_speech_duration = 0.25 # Minimum speech length
+vad_threshold = 0.25           # 0.0-1.0 (lower = more sensitive)
+vad_min_silence = 0.8          # Seconds before transcription
+vad_min_speech = 0.25          # Minimum speech length
+stt_model_override = "auto"    # auto, 0.6b-cpu, 0.6b-gpu, or 1.1b-gpu
 
-[stt]
-model_override = "auto"    # auto, 0.6b-cpu, 0.6b-gpu, or 1.1b-gpu
+[hotkeys]
+toggle = "Super+Shift+D"       # macOS: Ctrl+Shift+D
+push_to_talk = "Super+Space"   # macOS: Ctrl+Space
 ```
 
 ---
@@ -183,7 +188,7 @@ echo $XDG_SESSION_TYPE
 ```
 
 **Low accuracy / no detection:**
-- Lower `threshold` in config (try 0.15)
+- Lower `vad_threshold` in config (try 0.15)
 - Check logs for VAD probabilities
 
 ### macOS-Specific
@@ -207,7 +212,7 @@ log show --predicate 'processImagePath CONTAINS "swictation"' --last 5m
 - The daemon auto-selects the default input device
 - Change default input in System Settings > Sound > Input
 
-📖 **More help:** [docs/troubleshooting-display-servers.md](docs/troubleshooting-display-servers.md)
+📖 **More help:** [docs/window-manager-configs.md](docs/window-manager-configs.md)
 
 ---
 
@@ -231,13 +236,16 @@ Transform (MidStream) → Platform-specific text injection
 - `swictation-stt` - Speech-to-text (ONNX Runtime + native CoreML backends)
 - `swictation-metrics` - Performance tracking
 - `swictation-broadcaster` - Real-time metrics
+- `swictation-paths` - Platform-aware path resolution
+- `swictation-context-learning` - Context-aware meta-learning
+- `swictation-wasm-utils` - WASM utility bindings
 - `external/midstream/text-transform` - Secretary Mode (submodule)
 - `coreml-native` - Native CoreML inference for macOS ([external repo](https://github.com/robertelee78/coreml-native))
 
 **Audio Configuration:**
 - Sample rate: 16kHz mono
 - Capture chunks: 1024 samples (~64ms)
-- VAD windows: 8000 samples (0.5s)
+- VAD windows: 512 samples (~32ms)
 - Processing: Lock-free circular buffer
 
 📖 **[Architecture Details](docs/architecture.md)**
@@ -270,7 +278,7 @@ Auto-detects Apple Silicon and unified memory:
 
 Uses CoreML execution provider with FP16 models for optimal performance.
 
-📖 **[GPU Packages Guide](docs/implementation/gpu-multi-package-guide.md)**
+📖 **[Architecture Details](docs/architecture.md)** (includes GPU model selection)
 
 ### Metrics API
 
@@ -293,8 +301,7 @@ Configure in `config.toml`.
 ## Documentation
 
 - **[Secretary Mode Guide](docs/secretary-mode.md)** - 60+ command reference
-- **[Display Server Support](docs/display-servers.md)** - X11/Wayland deep dive
-- **[Installation by Distro](docs/installation-by-distro.md)** - Distro-specific setup
+- **[Window Manager Configs](docs/window-manager-configs.md)** - X11/Wayland setup
 - **[Architecture](docs/architecture.md)** - Technical implementation
 - **[MidStream Transform](external/midstream/)** - Text transformation library
 

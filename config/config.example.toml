@@ -62,9 +62,9 @@ phonetic_threshold = 0.3
 # Hotkey configuration
 [hotkeys]
 # Toggle recording on/off
-# Default: Super+Shift+D (Windows/Super key + Shift + D for "Dictation")
+# Linux default: Super+Shift+D | macOS default: Ctrl+Shift+D
 toggle = "Super+Shift+D"
 
 # Push-to-talk (hold to record, release to stop)
-# Default: Super+Space (Windows/Super key + Space)
+# Linux default: Super+Space | macOS default: Ctrl+Space
 push_to_talk = "Super+Space"
