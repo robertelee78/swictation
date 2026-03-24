@@ -938,7 +938,7 @@ mod inner {
             assert_eq!(end0, 240_000);
 
             // Chunk 1: start=208000, end=448000 (with overlap)
-            let start1 = 1 * STRIDE_SAMPLES;
+            let start1 = STRIDE_SAMPLES;
             let end1 = (start1 + CHUNK_SAMPLES).min(total_samples);
             assert_eq!(start1, 208_000);
             assert_eq!(end1, 448_000);
@@ -963,7 +963,7 @@ mod inner {
             let num_chunks = compute_num_chunks(total_samples);
             assert_eq!(num_chunks, 2);
 
-            let start1 = 1 * STRIDE_SAMPLES;
+            let start1 = STRIDE_SAMPLES;
             let end1 = (start1 + CHUNK_SAMPLES).min(total_samples);
             assert_eq!(start1, 208_000);
             assert_eq!(end1, 320_000);
