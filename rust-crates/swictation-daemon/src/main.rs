@@ -28,6 +28,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::{mpsc, RwLock};
 use tracing::{error, info, warn};
 
@@ -73,6 +74,10 @@ struct Daemon {
     state: Arc<RwLock<DaemonState>>,
     broadcaster: Arc<MetricsBroadcaster>,
     session_id: Arc<RwLock<Option<i64>>>,
+    /// Prevents concurrent toggle() calls when spawned off the event loop
+    toggle_lock: tokio::sync::Mutex<()>,
+    /// Atomic flag for fast non-blocking "toggle in progress" check
+    toggling: AtomicBool,
 }
 
 impl Daemon {
@@ -100,6 +105,8 @@ impl Daemon {
             state: Arc::new(RwLock::new(DaemonState::Idle)),
             broadcaster: broadcaster.clone(),
             session_id: Arc::new(RwLock::new(None)),
+            toggle_lock: tokio::sync::Mutex::new(()),
+            toggling: AtomicBool::new(false),
         };
 
         // Start broadcaster Unix socket server
@@ -118,7 +125,27 @@ impl Daemon {
     /// And we must RELEASE locks before any long-running operations (STT inference).
     /// The metrics updater acquires locks in: metrics -> state (read)
     /// To prevent deadlock, we minimize lock scope and release before await points.
+    ///
+    /// Serialized via toggle_lock to prevent concurrent toggles when spawned
+    /// off the event loop. The AtomicBool provides a fast non-blocking check
+    /// for callers that want to skip duplicate toggles.
     async fn toggle(&self) -> Result<String> {
+        // Fast non-blocking check: if a toggle is already in progress, skip
+        if self.toggling.load(Ordering::SeqCst) {
+            info!("Toggle already in progress, skipping");
+            return Ok("Toggle already in progress".to_string());
+        }
+
+        // Acquire serialization lock (blocks if another toggle is running)
+        let _guard = self.toggle_lock.lock().await;
+        self.toggling.store(true, Ordering::SeqCst);
+        let result = self.toggle_inner().await;
+        self.toggling.store(false, Ordering::SeqCst);
+        result
+    }
+
+    /// Inner toggle implementation — must only be called with toggle_lock held.
+    async fn toggle_inner(&self) -> Result<String> {
         // Phase 1: Check current state (minimal lock scope)
         let current_state = {
             let state = self.state.read().await;
@@ -257,12 +284,18 @@ async fn load_context_model(_config: &DaemonConfig) -> Option<ContextModel> {
 /// event loop to be running on the main thread. Tokio's executor does NOT pump
 /// this event loop, so hotkey callbacks never fire.
 ///
-/// The fix: run Tokio on a background thread, and RunApplicationEventLoop() on main.
+/// CRITICAL: The global-hotkey crate REQUIRES that GlobalHotKeyManager::new() and
+/// register() are called on the main thread (same thread as RunApplicationEventLoop).
+/// See: global-hotkey crate docs, line 17-18: "On macOS, an event loop must be
+/// running on the main thread so you also need to create the global hotkey manager
+/// on the main thread."
+///
+/// Architecture:
+/// 1. Main thread: permissions -> load config -> create HotkeyManager -> RunApplicationEventLoop()
+/// 2. Background thread: Tokio runtime -> daemon_main(cli, hotkey_manager)
+///
 /// On Linux, this is unnecessary (X11 XGrabKey doesn't need a run loop), so we
 /// keep #[tokio::main] behavior via block_on.
-///
-/// Verified: RunApplicationEventLoop() works with global-hotkey 0.6 on macOS ARM64.
-/// CFRunLoopRunInMode alone is NOT sufficient (tested and failed).
 fn main() -> Result<()> {
     // Parse CLI arguments (sync — fine on main thread)
     let cli = CliArgs::parse();
@@ -279,7 +312,7 @@ fn main() -> Result<()> {
         .init();
 
     info!(
-        "🎙️ Starting Swictation Daemon v{}",
+        "Starting Swictation Daemon v{}",
         env!("CARGO_PKG_VERSION")
     );
 
@@ -289,23 +322,37 @@ fn main() -> Result<()> {
         use crate::macos_audio_permission::request_microphone_permission;
         use crate::macos_text_inject::MacOSTextInjector;
 
-        info!("🔐 Checking macOS permissions...");
+        info!("Checking macOS permissions...");
 
         if !request_microphone_permission() {
-            warn!("⚠️  Microphone permission not yet granted");
-            warn!("   Please enable in: System Settings → Privacy & Security → Microphone");
-            warn!("   The daemon will continue, but voice dictation will not work until permission is granted");
+            warn!("Microphone permission not yet granted");
+            warn!("   Please enable in: System Settings -> Privacy & Security -> Microphone");
         } else {
-            info!("✅ Microphone permission granted");
+            info!("Microphone permission granted");
         }
 
         if !MacOSTextInjector::request_accessibility_permissions() {
-            warn!("⚠️  Accessibility permission not yet granted");
-            warn!("   Please enable in: System Settings → Privacy & Security → Accessibility");
-            warn!("   The daemon will continue, but text injection may fail until permission is granted");
+            warn!("Accessibility permission not yet granted");
+            warn!("   Please enable in: System Settings -> Privacy & Security -> Accessibility");
         } else {
-            info!("✅ Accessibility permission granted");
+            info!("Accessibility permission granted");
         }
+    }
+
+    // Load config early — needed on main thread for hotkey setup (macOS)
+    let config = DaemonConfig::load().context("Failed to load configuration")?;
+
+    // CRITICAL (macOS): Create hotkey manager on the MAIN THREAD.
+    // Carbon's RegisterEventHotKey + InstallEventHandler require the main thread —
+    // the same thread that will run RunApplicationEventLoop().
+    // On Linux/X11, thread doesn't matter, but we do it here for consistency.
+    let hotkey_manager = HotkeyManager::new(config.hotkeys.clone())
+        .context("Failed to initialize hotkey manager")?;
+
+    if hotkey_manager.is_some() {
+        info!("Hotkeys registered on main thread");
+    } else {
+        info!("Hotkeys not available - using IPC/CLI control only");
     }
 
     // Build Tokio runtime manually (instead of #[tokio::main])
@@ -319,11 +366,12 @@ fn main() -> Result<()> {
     // On Linux: run async daemon directly on main thread via block_on.
     #[cfg(target_os = "macos")]
     {
-        // Run the async daemon on a background thread.
-        // We use block_on (not spawn) because the daemon contains non-Send types
-        // like AudioCapture (cpal's raw pointers).
+        // Move hotkey_manager and config to the background thread.
+        // The HotkeyManager is Send (global-hotkey marks it as such) and event
+        // delivery works cross-thread via crossbeam channels. Only the initial
+        // registration needed the main thread.
         std::thread::spawn(move || {
-            if let Err(e) = runtime.block_on(daemon_main(cli)) {
+            if let Err(e) = runtime.block_on(daemon_main(cli, config, hotkey_manager)) {
                 error!("Daemon error: {}", e);
                 std::process::exit(1);
             }
@@ -333,9 +381,6 @@ fn main() -> Result<()> {
         // Carbon's RegisterEventHotKey delivers via GetApplicationEventTarget(),
         // which requires this event loop to be actively pumping on the main thread.
         // RunApplicationEventLoop() blocks until QuitApplicationEventLoop() is called.
-        //
-        // Verified: CFRunLoopRunInMode alone is NOT sufficient (tested and failed).
-        // RunApplicationEventLoop() works (tested and confirmed on M5 Max).
         #[link(name = "Carbon", kind = "framework")]
         extern "C" {
             fn RunApplicationEventLoop();
@@ -350,7 +395,7 @@ fn main() -> Result<()> {
     {
         // Linux/other: run async daemon directly — no special event loop needed
         // (X11 XGrabKey doesn't require a run loop on the main thread)
-        runtime.block_on(daemon_main(cli))?;
+        runtime.block_on(daemon_main(cli, config, hotkey_manager))?;
     }
 
     Ok(())
@@ -358,11 +403,16 @@ fn main() -> Result<()> {
 
 /// Async daemon main — all the pipeline, IPC, hotkey, and event loop logic.
 /// Separated from main() so it can run on Tokio's runtime (background threads on macOS).
-async fn daemon_main(cli: CliArgs) -> Result<()> {
-    let mut config = DaemonConfig::load().context("Failed to load configuration")?;
-
+///
+/// `hotkey_manager` is created on the main thread (required for macOS Carbon API)
+/// and moved here. Config is also loaded early for the same reason.
+async fn daemon_main(
+    cli: CliArgs,
+    mut config: DaemonConfig,
+    mut hotkey_manager: Option<HotkeyManager>,
+) -> Result<()> {
     info!(
-        "📋 Configuration loaded from {}",
+        "Configuration loaded from {}",
         config.config_path.display()
     );
 
@@ -482,14 +532,12 @@ async fn daemon_main(cli: CliArgs) -> Result<()> {
         info!("⚠️  Context model not available (insufficient training data)");
     }
 
-    // Initialize hotkey manager (optional - some compositors don't support it)
-    let mut hotkey_manager = HotkeyManager::new(config.hotkeys.clone())
-        .context("Failed to initialize hotkey manager")?;
-
-    if let Some(ref _manager) = hotkey_manager {
-        info!("✓ Hotkeys initialized successfully");
+    // Hotkey manager was created on the main thread (required for macOS Carbon API)
+    // and passed in as a parameter. It's already registered and ready.
+    if hotkey_manager.is_some() {
+        info!("Hotkeys active");
     } else {
-        info!("⚠️  Hotkeys not available - using IPC/CLI control only");
+        info!("Hotkeys not available - using IPC/CLI control only");
     }
 
     // Start IPC server for CLI/scripts (optional) with secure socket path
@@ -682,6 +730,13 @@ async fn daemon_main(cli: CliArgs) -> Result<()> {
         }
     });
 
+    // Toggle debounce: reject rapid re-toggles within this window.
+    // This prevents the "double-tap race" where a second keypress during a slow
+    // toggle() undoes the first toggle (e.g., stop immediately followed by start).
+    const TOGGLE_DEBOUNCE_MS: u64 = 500;
+    let last_toggle = std::sync::Mutex::new(std::time::Instant::now()
+        - std::time::Duration::from_secs(10)); // allow first toggle immediately
+
     // Main event loop
     loop {
         tokio::select! {
@@ -696,18 +751,46 @@ async fn daemon_main(cli: CliArgs) -> Result<()> {
             } => {
                 match event {
                     HotkeyEvent::Toggle => {
+                        // Debounce: reject if too soon after last toggle.
+                        // This prevents the "double-tap race" where a second keypress
+                        // during a slow toggle() undoes the first (stop->start).
+                        let elapsed = last_toggle.lock().unwrap().elapsed();
+                        if elapsed < std::time::Duration::from_millis(TOGGLE_DEBOUNCE_MS) {
+                            info!("Toggle debounced ({}ms since last)", elapsed.as_millis());
+                            // Drain any additional queued toggle events
+                            if let Some(ref mut manager) = hotkey_manager {
+                                let drained = manager.try_drain();
+                                if drained > 0 {
+                                    info!("Drained {} queued hotkey events", drained);
+                                }
+                            }
+                            continue;
+                        }
+                        *last_toggle.lock().unwrap() = std::time::Instant::now();
+
+                        // Execute toggle (serialized via toggle_lock inside Daemon)
                         if let Err(e) = daemon_clone.toggle().await {
                             error!("Toggle error: {}", e);
                         }
+
+                        // After toggle completes, update debounce timestamp and
+                        // drain any events that queued during the slow toggle
+                        *last_toggle.lock().unwrap() = std::time::Instant::now();
+                        if let Some(ref mut manager) = hotkey_manager {
+                            let drained = manager.try_drain();
+                            if drained > 0 {
+                                info!("Drained {} queued hotkey events after toggle", drained);
+                            }
+                        }
                     }
                     HotkeyEvent::PushToTalkPressed => {
-                        info!("⏺️ Push-to-talk pressed");
+                        info!("Push-to-talk pressed");
                         if let Err(e) = daemon_clone.toggle().await {
                             error!("PTT start error: {}", e);
                         }
                     }
                     HotkeyEvent::PushToTalkReleased => {
-                        info!("⏸️ Push-to-talk released");
+                        info!("Push-to-talk released");
                         if let Err(e) = daemon_clone.toggle().await {
                             error!("PTT stop error: {}", e);
                         }
@@ -716,6 +799,8 @@ async fn daemon_main(cli: CliArgs) -> Result<()> {
             }
 
             // IPC server (secondary, for CLI/scripts)
+            // Note: awaited inline because Daemon is not Send (cpal raw pointers).
+            // The toggle_lock inside Daemon still serializes concurrent toggles.
             Ok((stream, daemon)) = ipc_server.accept() => {
                 if let Err(e) = handle_ipc_connection(stream, daemon).await {
                     error!("IPC connection error: {}", e);
@@ -724,7 +809,7 @@ async fn daemon_main(cli: CliArgs) -> Result<()> {
 
             // Shutdown signal
             _ = tokio::signal::ctrl_c() => {
-                info!("🛑 Received shutdown signal");
+                info!("Received shutdown signal");
                 break;
             }
         }

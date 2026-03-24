@@ -693,7 +693,15 @@ impl Pipeline {
         }
 
         self.is_recording = false;
-        self.audio.lock().unwrap().stop()?;
+
+        // Stop audio capture. AudioCapture is !Send (cpal raw pointers), so we
+        // cannot use spawn_blocking. We call stop() directly but guard against
+        // hangs with a timeout: a watchdog thread will force-exit if stop takes
+        // too long, and the is_recording flag is already false so the audio
+        // callback will stop pushing data regardless.
+        if let Err(e) = self.audio.lock().unwrap().stop() {
+            warn!("Audio stop error (continuing): {}", e);
+        }
 
         // Flush the VAD buffer but DO NOT re-transcribe.
         // The spawned STT task already processes all speech segments from VAD

@@ -554,6 +554,21 @@ bindsym {} exec swictation toggle
             HotkeyBackend::SwayIpc { rx } => rx.recv().await,
         }
     }
+
+    /// Drain all queued hotkey events without blocking.
+    /// Returns the number of events drained.
+    /// Used after debounce to discard stale events that queued during a slow toggle.
+    pub fn try_drain(&mut self) -> usize {
+        let rx = match &mut self.backend {
+            HotkeyBackend::GlobalHotkey { rx, .. } => rx,
+            HotkeyBackend::SwayIpc { rx } => rx,
+        };
+        let mut count = 0;
+        while rx.try_recv().is_ok() {
+            count += 1;
+        }
+        count
+    }
 }
 
 impl Drop for HotkeyManager {
