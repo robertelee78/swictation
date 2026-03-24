@@ -10,6 +10,7 @@ mod utils;
 use commands::{AppState, ConfigState, CorrectionsState};
 use database::Database;
 use image::GenericImageView;
+use socket::daemon_ipc::{self, DaemonState};
 use socket::MetricsSocket;
 use std::sync::Mutex;
 use tauri::{
@@ -21,6 +22,55 @@ use tauri::{
 
 #[cfg(target_os = "macos")]
 use tauri::ActivationPolicy;
+
+/// Load a tray icon from embedded PNG bytes.
+fn load_tray_icon(png_bytes: &[u8]) -> Image<'static> {
+    let img = image::load_from_memory(png_bytes).expect("Failed to load tray icon");
+    let rgba = img.to_rgba8();
+    let (width, height) = img.dimensions();
+    Image::new_owned(rgba.into_raw(), width, height)
+}
+
+/// Create a tinted (red overlay) version of an icon for the recording state.
+fn create_recording_icon(png_bytes: &[u8]) -> Image<'static> {
+    let img = image::load_from_memory(png_bytes).expect("Failed to load tray icon");
+    let mut rgba = img.to_rgba8();
+    let (width, height) = img.dimensions();
+
+    // Apply red overlay at 30% opacity — matching the Python tray approach
+    for pixel in rgba.pixels_mut() {
+        let alpha = pixel[3] as f32 / 255.0;
+        if alpha > 0.0 {
+            // Blend red overlay: 70% original + 30% red
+            pixel[0] = ((pixel[0] as f32 * 0.7) + (255.0 * 0.3)) as u8;
+            pixel[1] = (pixel[1] as f32 * 0.7) as u8;
+            pixel[2] = (pixel[2] as f32 * 0.7) as u8;
+        }
+    }
+
+    Image::new_owned(rgba.into_raw(), width, height)
+}
+
+/// Create a grayed version of an icon for the disconnected state.
+fn create_disconnected_icon(png_bytes: &[u8]) -> Image<'static> {
+    let img = image::load_from_memory(png_bytes).expect("Failed to load tray icon");
+    let mut rgba = img.to_rgba8();
+    let (width, height) = img.dimensions();
+
+    for pixel in rgba.pixels_mut() {
+        if pixel[3] > 0 {
+            let gray = ((pixel[0] as f32 * 0.299)
+                + (pixel[1] as f32 * 0.587)
+                + (pixel[2] as f32 * 0.114)) as u8;
+            pixel[0] = gray;
+            pixel[1] = gray;
+            pixel[2] = gray;
+            pixel[3] = pixel[3] / 2; // 50% opacity
+        }
+    }
+
+    Image::new_owned(rgba.into_raw(), width, height)
+}
 
 fn main() {
     // Initialize tracing subscriber (compatible with both log and tracing crates)
@@ -51,19 +101,21 @@ fn main() {
                 // Build menu
                 let menu = Menu::with_items(app, &[&show_metrics, &toggle_recording, &separator, &quit])?;
 
-                // Load tray icon from embedded bytes (for SNI compatibility)
+                // Pre-render icon variants for each state
                 let icon_bytes = include_bytes!("../icons/tray-48.png");
-                let img = image::load_from_memory(icon_bytes)?;
-                let rgba = img.to_rgba8();
-                let (width, height) = img.dimensions();
-                let tray_icon = Image::new_owned(rgba.into_raw(), width, height);
+                let idle_icon = load_tray_icon(icon_bytes);
 
-                // Build and configure tray icon with template mode for better SNI compatibility
-                let _tray = TrayIconBuilder::new()
-                    .icon(tray_icon)
+                // Build and configure tray icon
+                // On macOS: show_menu_on_left_click(true) for native menu bar behavior
+                // On Linux: show_menu_on_left_click(false) to allow left-click toggle
+                let show_menu_on_left = cfg!(target_os = "macos");
+
+                let tray = TrayIconBuilder::new()
+                    .icon(idle_icon)
                     .icon_as_template(true)
                     .menu(&menu)
-                    .show_menu_on_left_click(false)
+                    .show_menu_on_left_click(show_menu_on_left)
+                    .tooltip("Swictation - Idle")
                     .on_menu_event(|app, event| match event.id.as_ref() {
                     "show_metrics" => {
                         // Show main window
@@ -74,8 +126,20 @@ fn main() {
                         }
                     }
                     "toggle_recording" => {
-                        // Emit toggle event to frontend
-                        let _ = app.emit("toggle-recording-requested", ());
+                        // Send toggle command directly to daemon via IPC socket
+                        // (matching the Linux Python tray approach)
+                        let app_handle = app.clone();
+                        tauri::async_runtime::spawn(async move {
+                            match daemon_ipc::toggle_recording().await {
+                                Ok(new_state) => {
+                                    log::info!("Toggle recording: {}", new_state.as_str());
+                                    let _ = app_handle.emit("daemon-state-changed", new_state.as_str());
+                                }
+                                Err(e) => {
+                                    log::error!("Toggle failed: {}", e);
+                                }
+                            }
+                        });
                     }
                     "quit" => {
                         app.exit(0);
@@ -88,16 +152,34 @@ fn main() {
                         button_state: MouseButtonState::Up,
                         ..
                     } => {
-                        // Left click: Toggle recording (same as Qt tray and hotkey)
-                        let app = tray.app_handle();
-                        let _ = app.emit("toggle-recording-requested", ());
+                        // On Linux: Left click toggles recording (same as Python tray)
+                        // On macOS: Left click shows menu (handled by show_menu_on_left_click)
+                        #[cfg(not(target_os = "macos"))]
+                        {
+                            let app = tray.app_handle().clone();
+                            tauri::async_runtime::spawn(async move {
+                                match daemon_ipc::toggle_recording().await {
+                                    Ok(new_state) => {
+                                        log::info!("Toggle recording: {}", new_state.as_str());
+                                        let _ = app.emit("daemon-state-changed", new_state.as_str());
+                                    }
+                                    Err(e) => {
+                                        log::error!("Toggle failed: {}", e);
+                                    }
+                                }
+                            });
+                        }
+                        #[cfg(target_os = "macos")]
+                        {
+                            let _ = tray; // suppress unused warning
+                        }
                     }
                     TrayIconEvent::Click {
                         button: MouseButton::Middle,
                         button_state: MouseButtonState::Up,
                         ..
                     } => {
-                        // Middle click: Toggle window visibility (same as Qt tray)
+                        // Middle click: Toggle window visibility (same as Python tray)
                         let app = tray.app_handle();
                         if let Some(window) = app.get_webview_window("main") {
                             if window.is_visible().unwrap_or(false) {
@@ -112,6 +194,62 @@ fn main() {
                     _ => {}
                 })
                 .build(app)?;
+
+                // Start daemon state polling task (1-second interval, matching Python tray)
+                let app_handle = app.handle().clone();
+                let tray_id = tray.id().clone();
+                tauri::async_runtime::spawn(async move {
+                    let icon_bytes = include_bytes!("../icons/tray-48.png");
+                    let idle_icon = load_tray_icon(icon_bytes);
+                    let recording_icon = create_recording_icon(icon_bytes);
+                    let disconnected_icon = create_disconnected_icon(icon_bytes);
+
+                    let mut current_state = DaemonState::Disconnected;
+
+                    loop {
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+                        let new_state = daemon_ipc::query_daemon_state().await;
+
+                        if new_state != current_state {
+                            let old_state = current_state.clone();
+                            current_state = new_state.clone();
+
+                            // Update tray icon
+                            if let Some(tray) = app_handle.tray_by_id(&tray_id) {
+                                let icon = match &current_state {
+                                    DaemonState::Idle => &idle_icon,
+                                    DaemonState::Recording => &recording_icon,
+                                    DaemonState::Disconnected => &disconnected_icon,
+                                };
+                                let _ = tray.set_icon(Some(icon.clone()));
+                                let tooltip = match &current_state {
+                                    DaemonState::Idle => "Swictation - Idle",
+                                    DaemonState::Recording => "Swictation - Recording",
+                                    DaemonState::Disconnected => "Swictation - Disconnected",
+                                };
+                                let _ = tray.set_tooltip(Some(tooltip));
+                            }
+
+                            // Send notifications on recording state transitions
+                            // (matching Python tray's showMessage behavior)
+                            match (&old_state, &current_state) {
+                                (_, DaemonState::Recording) if old_state != DaemonState::Recording => {
+                                    let _ = app_handle.emit("recording-notification", "Recording started");
+                                    log::info!("Recording started");
+                                }
+                                (DaemonState::Recording, DaemonState::Idle) => {
+                                    let _ = app_handle.emit("recording-notification", "Recording stopped");
+                                    log::info!("Recording stopped");
+                                }
+                                _ => {}
+                            }
+
+                            // Emit state change to frontend
+                            let _ = app_handle.emit("daemon-state-changed", current_state.as_str());
+                        }
+                    }
+                });
             } // End of tray icon creation (disabled when SWICTATION_NO_TRAY is set)
 
             // Get database path

@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.29] - 2026-03-23
+
+### Added - macOS Native CoreML STT & Menu Bar Tray
+
+- **Native CoreML STT Backend** - Full Apple Silicon ANE acceleration without ONNX Runtime dependency on macOS
+  - New `recognizer_coreml.rs` inference backend using `coreml-native` crate
+  - TDT model ported to CoreML NeuralNetwork format (`.mlmodelc`)
+  - Direct Apple Neural Engine (ANE) acceleration for low-latency transcription
+  - External crate: [coreml-native](https://github.com/robertelee78/coreml-native)
+
+- **macOS Menu Bar Status Icon** - Native Tauri 2 tray implementation (no Python)
+  - Three visual states: idle (normal), recording (red overlay), disconnected (grayed)
+  - Daemon state polling via IPC Unix socket (1-second interval)
+  - Context menu: Toggle Recording, Show Metrics, Quit
+  - System notifications on recording state transitions
+  - macOS: left-click shows menu; Linux: left-click toggles recording
+  - Replaces Python/PySide6 tray app on macOS (Python tray remains for Linux)
+
+- **FP16 Conversion Pipeline** - MLProgram CoreML format with FP16 optimization
+  - Conversion scripts for latest Parakeet-TDT models
+  - External weight file handling for large models
+
+### Changed
+
+- **macOS Hotkey** - Changed from `Cmd+Shift+D` to `Ctrl+Shift+D` on macOS
+  - Linux hotkey unchanged: `Super+Shift+D`
+- **Hotkey Backend** - macOS uses `RunApplicationEventLoop` for reliable hotkey capture
+- **Default Microphone** - Auto-selects appropriate input device on macOS
+- **Version Synchronization** - All crate and package versions aligned to 0.7.29
+
+### Fixed
+
+- **Duplicate Text Injection** - Eliminated duplicate keystrokes during macOS text injection
+- **Keystroke Delay** - Increased inter-keystroke delay for reliable macOS Accessibility API injection
+- **CoreML Stride Bug** - Fixed stride calculation in native CoreML inference
+- **FP16 Conversion** - Reverted to NeuralNetwork format after MLProgram compatibility issues; handle external weight files correctly
+- **Apple Silicon Readiness** - Complete CoreML permissions, memory detection, and FFI fixes
+
+### Technical Details
+
+- **New Files:**
+  - `rust-crates/swictation-stt/src/recognizer_coreml.rs` - CoreML inference backend
+  - `tauri-ui/src-tauri/src/socket/daemon_ipc.rs` - Daemon IPC client for tray state polling
+- **External Dependency:** `coreml-native` crate at https://github.com/robertelee78/coreml-native (separate repo, `/opt/coreml-native`)
+- **macOS Tray:** Uses Tauri 2 `TrayIconBuilder` with `icon_as_template(true)` for native NSStatusItem rendering
+- **IPC Protocol:** JSON over Unix socket — `{"action": "status"}` returns `{"status": "success", "state": "idle|recording"}`
+
+### Notes
+
+This release consolidates all macOS work from v0.7.2 through v0.7.29 into a single entry.
+Linux functionality is unchanged — all existing features maintained without regression.
+
 ## [0.7.1] - 2025-11-24
 
 ### Added - macOS Enhancements 🚀

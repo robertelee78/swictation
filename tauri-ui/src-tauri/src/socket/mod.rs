@@ -5,6 +5,7 @@
 // - Automatic reconnection on disconnect
 // - Event parsing and Tauri integration
 
+pub mod daemon_ipc;
 mod metrics;
 mod socket_utils;
 

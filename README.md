@@ -59,7 +59,7 @@ swictation start
 1. Open any text editor
 2. **Press hotkey to start recording:**
    - **Linux:** `$mod+Shift+d` (Super+Shift+d)
-   - **macOS:** `Cmd+Shift+D`
+   - **macOS:** `Ctrl+Shift+D`
 3. Speak: "Hello world." [pause]
 4. Text appears automatically after 0.8s silence
 5. **Press hotkey again to stop**
@@ -75,6 +75,8 @@ swictation start
 **Components:**
 - **VAD:** Silero VAD v6 (ONNX) - detects speech vs silence
 - **STT:** Parakeet-TDT-1.1B (5.77% WER) or 0.6B (auto-selected by GPU memory)
+  - **Linux:** ONNX Runtime with CUDA execution provider
+  - **macOS:** Native CoreML via [coreml-native](https://github.com/robertelee78/coreml-native) crate (ANE acceleration)
 - **Transform:** MidStream text-transform (Secretary Mode commands)
 - **Inject:**
   - **Linux:** xdotool (X11) / wtype / ydotool (Wayland)
@@ -184,6 +186,27 @@ echo $XDG_SESSION_TYPE
 - Lower `threshold` in config (try 0.15)
 - Check logs for VAD probabilities
 
+### macOS-Specific
+
+**No text appears (macOS):**
+- Grant Accessibility permissions: System Settings > Privacy & Security > Accessibility > Enable Swictation
+- Restart the daemon after granting permissions
+
+**Daemon won't start (macOS):**
+```bash
+# Check launchd logs
+log show --predicate 'processImagePath CONTAINS "swictation"' --last 5m
+```
+
+**CoreML model not loading:**
+- Ensure model files exist in `~/Library/Application Support/swictation/models/`
+- Check that `.mlmodelc` directory is present for CoreML inference
+- Verify Apple Silicon: `uname -m` should show `arm64`
+
+**Wrong microphone selected:**
+- The daemon auto-selects the default input device
+- Change default input in System Settings > Sound > Input
+
 📖 **More help:** [docs/troubleshooting-display-servers.md](docs/troubleshooting-display-servers.md)
 
 ---
@@ -205,10 +228,11 @@ Transform (MidStream) → Platform-specific text injection
 - `swictation-daemon` - Main binary (tokio async)
 - `swictation-audio` - Audio capture
 - `swictation-vad` - Voice activity detection
-- `swictation-stt` - Speech-to-text
+- `swictation-stt` - Speech-to-text (ONNX Runtime + native CoreML backends)
 - `swictation-metrics` - Performance tracking
 - `swictation-broadcaster` - Real-time metrics
 - `external/midstream/text-transform` - Secretary Mode (submodule)
+- `coreml-native` - Native CoreML inference for macOS ([external repo](https://github.com/robertelee78/coreml-native))
 
 **Audio Configuration:**
 - Sample rate: 16kHz mono

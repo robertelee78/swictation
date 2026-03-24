@@ -1,6 +1,6 @@
 [package]
 name = "swictation-wasm-utils"
-version = "0.1.0"
+version = "0.7.29"
 edition = "2021"
 authors = ["Robert E. Lee <robert@agidreams.us>"]
 description = "WebAssembly utilities for swictation UI - metrics calculations and text processing"

@@ -1,6 +1,6 @@
 [package]
 name = "swictation-paths"
-version = "0.1.0"
+version = "0.7.29"
 edition = "2021"
 description = "Cross-platform path utilities for Swictation"
 license = "Apache-2.0"

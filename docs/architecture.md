@@ -6,7 +6,10 @@ Detailed technical architecture documentation for the Swictation voice dictation
 
 ## System Overview
 
-Swictation is a **pure Rust daemon** with VAD-triggered automatic transcription. The system uses **ONNX models** for both voice activity detection and speech recognition with CPU or GPU acceleration (auto-detected), with zero Python runtime dependencies.
+Swictation is a **pure Rust daemon** with VAD-triggered automatic transcription. The system uses **ONNX models** for voice activity detection and speech recognition, with platform-specific GPU acceleration (auto-detected) and zero Python runtime dependencies.
+
+- **Linux:** ONNX Runtime with CUDA execution provider
+- **macOS:** Native CoreML inference via [coreml-native](https://github.com/robertelee78/coreml-native) crate (Apple Neural Engine acceleration)
 
 ```
 ┌────────────────────────────────────────────────────────────┐
@@ -16,8 +19,11 @@ Swictation is a **pure Rust daemon** with VAD-triggered automatic transcription.
 │   State Machine:  [IDLE] ↔ [RECORDING]                     │
 │   Runtime: Tokio async with state machine                  │
 │                                                            │
-│   Control: Global hotkey ($mod+Shift+d)                    │
-│   Output: wtype text injection (Wayland)                   │
+│   Control: Global hotkey                                   │
+│     Linux: Super+Shift+D  |  macOS: Ctrl+Shift+D          │
+│   Output: Platform-specific text injection                 │
+│     Linux: xdotool/wtype/ydotool                           │
+│     macOS: Accessibility API                               │
 └────────────────────────────────────────────────────────────┘
 ```
 
@@ -173,8 +179,10 @@ impl VadDetector {
 // Enum dispatch pattern - consistent API across model implementations
 // Location: rust-crates/swictation-stt/src/engine.rs
 pub enum SttEngine {
-    Parakeet0_6B(OrtRecognizer),   // Direct ONNX Runtime (GPU or CPU)
-    Parakeet1_1B(OrtRecognizer),   // Direct ONNX Runtime (GPU only)
+    Parakeet0_6B(OrtRecognizer),       // Direct ONNX Runtime (GPU or CPU) — Linux
+    Parakeet1_1B(OrtRecognizer),       // Direct ONNX Runtime (GPU only) — Linux
+    #[cfg(target_os = "macos")]
+    CoreML(CoreMlRecognizer),          // Native CoreML via coreml-native — macOS
 }
 
 impl SttEngine {
@@ -554,13 +562,28 @@ $ swictation-daemon --test-model 0.6b-gpu
 
 **Key Files:**
 - `rust-crates/swictation-stt/src/engine.rs` - Unified SttEngine interface (enum dispatch)
-- `rust-crates/swictation-stt/src/recognizer_ort.rs` - OrtRecognizer for both models (direct ONNX Runtime)
+- `rust-crates/swictation-stt/src/recognizer_ort.rs` - OrtRecognizer for both models (direct ONNX Runtime, Linux)
+- `rust-crates/swictation-stt/src/recognizer_coreml.rs` - CoreMlRecognizer for native CoreML (macOS)
 - `rust-crates/swictation-stt/src/audio.rs` - Mel feature extraction (80/128 bins auto-detected)
 - `rust-crates/swictation-daemon/src/pipeline.rs` - Adaptive selection logic (lines 77-227)
 - `rust-crates/swictation-daemon/src/gpu.rs` - GPU detection + VRAM measurement
 - `rust-crates/swictation-daemon/src/config.rs` - Configuration management
 - `rust-crates/swictation-daemon/src/main.rs` - CLI argument parsing
 - `npm-package/postinstall.js` - **SOURCE OF TRUTH** for VRAM thresholds (lines 1136-1156)
+
+#### CoreML Native Backend (macOS)
+
+On macOS, the STT engine uses `coreml-native` ([separate repo](https://github.com/robertelee78/coreml-native)) for direct CoreML inference, bypassing ONNX Runtime entirely. This provides:
+
+- **Apple Neural Engine (ANE) acceleration** - hardware-level inference optimization
+- **NeuralNetwork format** - `.mlmodelc` compiled CoreML models
+- **Zero ONNX Runtime dependency** on macOS for STT
+
+```
+Audio → Mel Features → CoreMlRecognizer → coreml-native → CoreML Framework → ANE/GPU → Text
+```
+
+The `recognizer_coreml.rs` module wraps the `coreml-native` crate and presents the same `recognize()` interface as `OrtRecognizer`.
 
 ---
 
@@ -1298,4 +1321,34 @@ WantedBy=default.target
 
 ---
 
-**Last Updated:** 2025-11-20 (Unified OrtRecognizer, Secretary Mode production-ready, Maxwell GPU support)
+### Menu Bar / System Tray Architecture
+
+The system tray provides daemon state visualization and control:
+
+**macOS:** Native Tauri 2 `TrayIconBuilder` (pure Rust, NSStatusItem)
+**Linux:** Python/PySide6 QSystemTrayIcon (legacy, to be migrated to Tauri)
+
+Both implementations use the same daemon IPC protocol:
+
+```
+Tray App ──(1s poll)──► Unix Socket (swictation.sock)
+         ◄────────────── {"status": "success", "state": "idle|recording"}
+
+Tray App ──(on click)──► {"action": "toggle"}
+         ◄────────────── {"status": "success", "message": "Recording started"}
+```
+
+**Tray States:**
+- **Idle:** Normal icon, daemon running
+- **Recording:** Red overlay icon, actively capturing
+- **Disconnected:** Grayed icon, daemon not running
+
+**Key Files:**
+- `tauri-ui/src-tauri/src/main.rs` - Tray icon setup, polling task, menu events
+- `tauri-ui/src-tauri/src/socket/daemon_ipc.rs` - IPC socket client for daemon commands
+- `src/ui/swictation_tray.py` - Python tray app (Linux only)
+- `rust-crates/swictation-daemon/src/ipc.rs` - Daemon IPC server
+
+---
+
+**Last Updated:** 2026-03-23 (Native CoreML STT, macOS menu bar tray, version 0.7.29)
