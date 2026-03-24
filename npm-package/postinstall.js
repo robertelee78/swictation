@@ -2021,30 +2021,12 @@ function detectUnifiedMemoryMacOS() {
       log('cyan', `  Metal: ${gpuInfo.metalVersion}`);
     }
 
-    // Intelligent model recommendation based on GPU memory share
-    // Same logic as Linux, but using unified memory split
-    // 0.6B model: ~3.5GB memory
-    // 1.1B model: ~6GB memory
-    if (gpuInfo.gpuMemoryMB >= 6000) {
-      // 6GB+ GPU share: Can safely run 1.1B model
-      gpuInfo.recommendedModel = '1.1b-gpu';
-      log('green', `  ✓ Sufficient memory for 1.1B model (best quality)`);
-    } else if (gpuInfo.gpuMemoryMB >= 3500) {
-      // 3.5-6GB GPU share: Run 0.6B model
-      gpuInfo.recommendedModel = '0.6b-gpu';
-      if (gpuInfo.gpuMemoryMB >= 4000) {
-        log('green', `  ✓ Memory sufficient for 0.6B GPU model`);
-      } else {
-        log('yellow', `  ⚠️  Limited GPU memory - Recommending 0.6B model`);
-      }
-      log('cyan', `     (1.1B model requires ~6GB GPU memory)`);
-    } else {
-      // <3.5GB GPU share: Too little for GPU acceleration
-      gpuInfo.recommendedModel = 'cpu-only';
-      log('yellow', `  ⚠️  Insufficient GPU memory for GPU models`);
-      log('cyan', `     GPU models require minimum 3.5GB (10GB+ total system memory)`);
-      log('cyan', `     Falling back to CPU-only mode`);
-    }
+    // macOS Apple Silicon: Always use native CoreML 1.1B model
+    // All supported Macs (M1-M5) have sufficient unified memory for the 1.9GB model.
+    // Native CoreML provides full ANE (Apple Neural Engine) acceleration.
+    gpuInfo.recommendedModel = '1.1b-coreml';
+    log('green', `  ✓ Apple Silicon detected — using native CoreML 1.1B model`);
+    log('cyan', `     Full ANE acceleration via coreml-native`);
 
     // Save GPU info for later use by daemon
     const configDir = path.join(os.homedir(), '.config', 'swictation');
@@ -2619,7 +2601,8 @@ function isModelDownloaded(modelName) {
     '1.1b': 'sherpa-onnx-nemo-parakeet-tdt-1.1b-v3-onnx',
     '1.1b-gpu': 'sherpa-onnx-nemo-parakeet-tdt-1.1b-v3-onnx',
     'cpu-only': 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-onnx-int8',
-    '0.6b-coreml': 'parakeet-tdt-0.6b-coreml'
+    '0.6b-coreml': 'parakeet-tdt-0.6b-coreml',
+    '1.1b-coreml': 'parakeet-tdt-1.1b-coreml'
   };
 
   const targetDir = modelDirs[modelName];
@@ -2631,6 +2614,10 @@ function isModelDownloaded(modelName) {
   // CoreML models use .mlmodelc directories — check for those instead of ONNX files
   if (modelName === '0.6b-coreml') {
     const coremlRequired = ['Encoder.mlmodelc', 'Decoder.mlmodelc', 'config.json'];
+    return coremlRequired.every(entry => fs.existsSync(path.join(modelPath, entry)));
+  }
+  if (modelName === '1.1b-coreml') {
+    const coremlRequired = ['encoder.mlmodelc', 'decoder.mlmodelc', 'joiner.mlmodelc', 'tokens.txt'];
     return coremlRequired.every(entry => fs.existsSync(path.join(modelPath, entry)));
   }
 
@@ -2673,7 +2660,8 @@ async function autoDownloadModel(recommendedModel) {
       '1.1b-gpu': '1.1b',
       '1.1b': '1.1b',
       'cpu-only': '0.6b',  // CPU-only uses same 0.6b model
-      '0.6b-coreml': '0.6b-coreml'
+      '0.6b-coreml': '0.6b-coreml',
+      '1.1b-coreml': '1.1b-coreml'
     };
 
     const modelKey = modelMap[recommendedModel];
@@ -2729,7 +2717,12 @@ async function showNextSteps() {
     console.log('');
 
     log('cyan', '🎯 Recommended Model:');
-    if (gpuInfo.recommendedModel === '1.1b-gpu' || gpuInfo.recommendedModel === '1.1b') {
+    if (gpuInfo.recommendedModel === '1.1b-coreml') {
+      log('green', '   1.1B CoreML - Native Apple Neural Engine acceleration');
+      console.log('   Size: ~1.9GB download (pre-compiled .mlmodelc bundles)');
+      console.log('   Performance: Full ANE + GPU + CPU via CoreML');
+      console.log('   Source: huggingface.co/jenerallee78/parakeet-tdt-1.1b-coreml');
+    } else if (gpuInfo.recommendedModel === '1.1b-gpu' || gpuInfo.recommendedModel === '1.1b') {
       log('green', '   1.1B GPU - Best quality with full CUDA acceleration');
       console.log('   Size: ~75MB download (FP32 + INT8 versions)');
       console.log('   Performance: 62x realtime speed on GPU');

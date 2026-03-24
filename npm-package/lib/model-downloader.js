@@ -64,6 +64,20 @@ const MODELS = {
       'parakeet_vocab.json',
       'config.json'
     ]
+  },
+  '1.1b-coreml': {
+    name: 'Parakeet-TDT 1.1B CoreML (Native)',
+    size: '1.9 GB',
+    // Native CoreML models for macOS Apple Silicon — full ANE acceleration
+    // Pre-compiled .mlmodelc bundles for encoder/decoder/joiner architecture
+    repo: 'jenerallee78/parakeet-tdt-1.1b-coreml',
+    targetDir: 'parakeet-tdt-1.1b-coreml',
+    files: [
+      'encoder.mlmodelc',
+      'decoder.mlmodelc',
+      'joiner.mlmodelc',
+      'tokens.txt'
+    ]
   }
 };
 

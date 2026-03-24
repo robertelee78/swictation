@@ -150,10 +150,10 @@ jobs:
 
         echo "✓ All ONNX Runtime libraries signed"
 
-    - name: Build daemon (release)
+    - name: Build daemon (release, with native CoreML)
       working-directory: rust-crates
       run: |
-        cargo build --release --bin swictation-daemon --target aarch64-apple-darwin
+        cargo build --release --bin swictation-daemon --features coreml-native --target aarch64-apple-darwin
         strip target/aarch64-apple-darwin/release/swictation-daemon
 
     - name: Check binary

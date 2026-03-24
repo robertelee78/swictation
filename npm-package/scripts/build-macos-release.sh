@@ -43,7 +43,7 @@ echo ""
 # 4. Build Rust workspace in release mode for Apple Silicon
 echo "📦 Building Rust workspace for aarch64-apple-darwin..."
 cd "$REPO_ROOT/rust-crates"
-cargo build --release --target aarch64-apple-darwin --workspace
+cargo build --release --target aarch64-apple-darwin --workspace --features coreml-native
 echo "✓ Rust build complete"
 echo ""
 
