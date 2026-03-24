@@ -1606,4 +1606,4 @@ tauri-ui/
 
 ---
 
-**Last Updated:** 2026-03-23 (CoreML windowed chunking, macOS batched CGEvent injection, Tauri desktop UI, resilient npm postinstall, version 0.7.29)
+**Last Updated:** 2026-03-23 (CoreML windowed chunking, macOS batched CGEvent injection, Tauri desktop UI, resilient npm postinstall, version 0.7.28)
