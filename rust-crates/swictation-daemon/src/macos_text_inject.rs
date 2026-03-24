@@ -375,8 +375,10 @@ impl MacOSTextInjector {
             // Post key up event
             event_up.post(CGEventTapLocation::HID);
 
-            // Small delay to prevent event coalescing (optional, adjust if needed)
-            std::thread::sleep(std::time::Duration::from_micros(100));
+            // Delay between characters for macOS WindowServer to process each event.
+            // 100μs was too fast — caused event queue interleaving with sequential injections.
+            // 3ms gives WindowServer time to fully dispatch each keystroke.
+            std::thread::sleep(std::time::Duration::from_millis(3));
         }
 
         Ok(())

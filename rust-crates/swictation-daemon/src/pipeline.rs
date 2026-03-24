@@ -695,7 +695,11 @@ impl Pipeline {
         self.is_recording = false;
         self.audio.lock().unwrap().stop()?;
 
-        // Flush remaining audio through VAD and process any final speech
+        // Flush the VAD buffer but DO NOT re-transcribe.
+        // The spawned STT task already processes all speech segments from VAD
+        // during recording. Re-transcribing the flushed audio here causes
+        // duplicate text injection (proven: same text injected twice, 1ms apart,
+        // producing interleaved garbled output in the target application).
         let flushed_speech = self.vad.lock().unwrap().flush();
 
         if let Some(swictation_vad::VadResult::Speech {
@@ -703,6 +707,16 @@ impl Pipeline {
             ..
         }) = flushed_speech
         {
+            info!(
+                "Discarding flushed speech: {} samples (STT task already processed)",
+                speech_samples.len()
+            );
+        }
+
+        // Original flush-and-transcribe block disabled to prevent duplicate injection.
+        // If re-enabled, must first ensure the STT task is fully stopped.
+        if false {
+            let speech_samples: Vec<f32> = vec![];  // placeholder
             info!(
                 "Processing flushed speech segment: {} samples",
                 speech_samples.len()
