@@ -6,17 +6,17 @@
   "components": {
     "_comment": "Component versions are extracted from Cargo.toml files. These can evolve independently from the distribution version.",
     "daemon": {
-      "version": "0.7.5",
+      "version": "0.7.28",
       "source": "rust-crates/swictation-daemon/Cargo.toml",
       "description": "Main daemon binary that handles voice recognition and text injection"
     },
     "ui": {
-      "version": "0.1.0",
+      "version": "0.7.28",
       "source": "tauri-ui/src-tauri/Cargo.toml",
       "description": "Tauri-based UI application for configuration and monitoring"
     },
     "context-learning": {
-      "version": "0.1.0",
+      "version": "0.7.28",
       "source": "rust-crates/swictation-context-learning/Cargo.toml",
       "description": "Context-aware meta-learning module"
     }
