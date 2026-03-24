@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.7.32] - 2026-03-24
+
+### Fixed - Upgrade Crash Loop, Launcher Paths, Log Rotation, Chunking Dedup (Issue #4)
+
+- **Upgrade Crash Loop** - Replace blind dylib existence check with version-aware metadata
+  + signature validation. Stale dylib from v0.7.30 no longer causes Team ID mismatch crash.
+  Same-version reinstalls use fast-path skip via `ort-metadata.json` + `codesign -dv`.
+
+- **Launcher Wrapper Paths** - Add nested dependency path resolution for `find_onnx_lib()`
+  and `DAEMON_BIN`. Fix `lib/` to `lib/native/` (was dead code). Add diagnostic trace
+  to `launcher.log` for debugging path resolution failures.
+
+- **Log Rotation** - Rotate daemon/UI/launcher logs to `.prev` during macOS service stop.
+  Prevents 37K+ lines of old crash traces from confusing post-upgrade diagnostics.
+
+- **Chunking Word Duplication** - Fix `skip_frames` formula denominator from
+  `MAX_AUDIO_SAMPLES` to `actual_length` for partial chunks. Old formula under-skipped
+  by 5-22 frames, causing word duplication at every chunk boundary for speech >15s.
+  Validated with 19 test files across 4 TTS voices. Added regression test.
+
+### Installation
+```bash
+npm install -g swictation@0.7.32
+```
+
+### Platforms
+- macOS ARM64 (Apple Silicon) - `@agidreams/darwin-arm64`
+- Linux x86_64 (NVIDIA CUDA/CPU) - `@agidreams/linux-x64`
+
+---
+
 ## [0.7.31] - 2026-03-24
 
 ### Fixed - macOS CoreML Install Flow (Issue #3)
