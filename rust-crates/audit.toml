@@ -1,0 +1,11 @@
+# cargo-audit configuration
+# https://github.com/rustsec/rustsec/tree/main/cargo-audit
+
+[advisories]
+# Ignore unmaintained crate warnings for transitive dependencies we cannot control
+ignore = [
+    # paste 1.0.15 — unmaintained, transitive dep via metal and nalgebra/simba.
+    # No replacement available. metal crate (Apple GPU) and simba/nalgebra are
+    # upstream dependencies that pin paste. No security impact.
+    "RUSTSEC-2024-0436",
+]
