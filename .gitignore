@@ -98,7 +98,6 @@ downloads/
 tmp/
 /tmp/
 *.wav
-*.mp3
 *.flac
 *.ogg
 tests/outputs/
