@@ -8,6 +8,8 @@ const https = require('https');
 const crypto = require('crypto');
 const { checkNvidiaHibernationStatus } = require('./src/nvidia-hibernation-setup');
 const { getIpcSocketPath } = require('./src/socket-paths');
+const { InstallError } = require('./src/install-error');
+const { downloadWithRetry, ProgressReporter } = require('./src/download');
 
 // Environment variable support for model test-loading
 // By default, model testing runs when GPU is detected
@@ -23,9 +25,51 @@ const colors = {
   red: '\x1b[31m'
 };
 
+// ── Install Logger ──────────────────────────────────────────────────
+// Tees all output to ~/.local/share/swictation/install.log
+const _installWarnings = [];
+let _installLogStream = null;
+
+function _initInstallLog() {
+  try {
+    const logDir = path.join(os.homedir(), '.local', 'share', 'swictation');
+    if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+    _installLogStream = fs.createWriteStream(path.join(logDir, 'install.log'), { flags: 'w' });
+    _installLogStream.write(`Swictation install log — ${new Date().toISOString()}\n`);
+    _installLogStream.write(`Platform: ${process.platform} ${process.arch}\n`);
+    _installLogStream.write(`Node: ${process.version}\n\n`);
+  } catch {
+    // Non-fatal — logging is best-effort
+  }
+}
+
+function _logToFile(message) {
+  if (_installLogStream) {
+    try {
+      _installLogStream.write(`[${new Date().toISOString()}] ${message}\n`);
+    } catch {
+      // ignore
+    }
+  }
+}
+
 function log(color, message) {
   console.log(`${colors[color]}${message}${colors.reset}`);
+  _logToFile(message);
 }
+
+// ── Phase Tracking ──────────────────────────────────────────────────
+let _phaseNumber = 0;
+let _totalPhases = 7; // Adjusted dynamically
+
+function phaseLog(title) {
+  _phaseNumber++;
+  const banner = `\n[${_phaseNumber}/${_totalPhases}] ${title}`;
+  log('cyan', banner);
+  log('cyan', '─'.repeat(banner.length - 1));
+}
+
+const _installStart = Date.now();
 
 function checkPlatform() {
   const platform = process.platform;
@@ -436,7 +480,9 @@ function checkDependencies() {
     { name: 'nc', type: 'optional', package: 'netcat' },
     { name: 'wtype', type: 'optional', package: 'wtype (for Wayland)' },
     { name: 'xdotool', type: 'optional', package: 'xdotool (for X11)' },
-    { name: 'hf', type: 'optional', package: 'huggingface_hub[cli] (pip install huggingface_hub[cli])' }
+    { name: 'hf', type: 'optional', package: process.platform === 'darwin'
+        ? 'huggingface-cli (brew install huggingface-cli or pip install huggingface_hub[cli])'
+        : 'huggingface_hub[cli] (pip install huggingface_hub[cli])' }
   ];
 
   for (const tool of tools) {
@@ -631,34 +677,12 @@ function detectCudaLibraryPaths() {
   return paths;
 }
 
+/**
+ * Download a file (legacy API — delegates to downloadWithRetry)
+ * @deprecated Use downloadWithRetry() directly for new code
+ */
 async function downloadFile(url, dest) {
-  return new Promise((resolve, reject) => {
-    const file = fs.createWriteStream(dest);
-    https.get(url, (response) => {
-      if (response.statusCode === 302 || response.statusCode === 301) {
-        // Follow redirect
-        https.get(response.headers.location, (redirectResponse) => {
-          redirectResponse.pipe(file);
-          file.on('finish', () => {
-            file.close();
-            resolve();
-          });
-        }).on('error', (err) => {
-          fs.unlink(dest, () => {});
-          reject(err);
-        });
-      } else {
-        response.pipe(file);
-        file.on('finish', () => {
-          file.close();
-          resolve();
-        });
-      }
-    }).on('error', (err) => {
-      fs.unlink(dest, () => {});
-      reject(err);
-    });
-  });
+  await downloadWithRetry(url, dest);
 }
 
 /**
@@ -880,11 +904,15 @@ async function downloadGPULibraries() {
     }
 
     if (!skipDownload) {
-      // Download tarball
+      // Download tarball with retry, resume, and progress
       log('cyan', `  Downloading ${variant} package...`);
       log('cyan', `  URL: ${releaseUrl}`);
-      await downloadFile(releaseUrl, tarPath);
-      log('green', `  ✓ Downloaded ${variant} package (~1.5GB)`);
+      const dlResult = await downloadWithRetry(releaseUrl, tarPath);
+      if (dlResult.skipped) {
+        log('green', `  ✓ Package already downloaded and verified`);
+      } else {
+        log('green', `  ✓ Downloaded ${variant} package${dlResult.resumed ? ' (resumed)' : ''}`);
+      }
 
       // Verify cryptographic checksum before extraction
       const filename = `cuda-libs-${variant}.tar.gz`;
@@ -944,14 +972,20 @@ async function downloadGPULibraries() {
     log('cyan', '   Your system will use CUDA for faster transcription\n');
 
   } catch (err) {
-    log('yellow', `\n⚠️  Failed to download GPU libraries: ${err.message}`);
-    log('cyan', '   Continuing with CPU-only mode');
-    log('cyan', '   You can manually download from:');
-    log('cyan', `   ${releaseUrl}`);
-    log('cyan', '\n   Manual installation:');
-    log('cyan', `   1. Download: curl -L -o /tmp/cuda-libs-${variant}.tar.gz ${releaseUrl}`);
-    log('cyan', `   2. Extract: tar -xzf /tmp/cuda-libs-${variant}.tar.gz -C /tmp`);
-    log('cyan', `   3. Install: cp /tmp/${variant}/libs/*.so ${gpuLibsDir}/`);
+    if (err instanceof InstallError) {
+      console.log(err.format());
+      log('cyan', '   Continuing with CPU-only mode');
+      _installWarnings.push(`GPU library download failed (${err.code})`);
+    } else {
+      const wrapped = InstallError.fromSystemError(err, 'SW-E003', 'GPU library download failed', { url: releaseUrl });
+      console.log(wrapped.format());
+      log('cyan', '   Continuing with CPU-only mode');
+      log('cyan', '\n   Manual installation:');
+      log('cyan', `   1. Download: curl -L -C - -o /tmp/cuda-libs-${variant}.tar.gz ${releaseUrl}`);
+      log('cyan', `   2. Extract: tar -xzf /tmp/cuda-libs-${variant}.tar.gz -C /tmp`);
+      log('cyan', `   3. Install: cp /tmp/${variant}/libs/*.so ${gpuLibsDir}/`);
+      _installWarnings.push('GPU library download failed');
+    }
   }
 }
 
@@ -1021,11 +1055,15 @@ async function downloadONNXRuntimeCoreML() {
       fs.mkdirSync(nativeDir, { recursive: true });
     }
 
-    // Download dylib
+    // Download dylib with retry and progress
     log('cyan', `  Downloading CoreML-enabled ONNX Runtime...`);
     log('cyan', `  URL: ${releaseUrl}`);
-    await downloadFile(releaseUrl, dylibPath);
-    log('green', `  ✓ Downloaded CoreML dylib (~80MB)`);
+    const dlResult = await downloadWithRetry(releaseUrl, dylibPath);
+    if (dlResult.skipped) {
+      log('green', `  ✓ CoreML dylib already downloaded and verified`);
+    } else {
+      log('green', `  ✓ Downloaded CoreML dylib${dlResult.resumed ? ' (resumed)' : ''}`);
+    }
 
     // Verify it's a valid Mach-O library
     try {
@@ -1063,11 +1101,19 @@ async function downloadONNXRuntimeCoreML() {
     log('green', `✅ CoreML-enabled ONNX Runtime ready for GPU acceleration`);
 
   } catch (err) {
-    log('red', `\n❌ Failed to download ONNX Runtime CoreML library`);
-    log('yellow', `   Error: ${err.message}`);
-    log('cyan', '\n   Manual installation:');
-    log('cyan', `   1. Download: ${releaseUrl}`);
-    log('cyan', `   2. Copy to: ${targetDylibPath}`);
+    if (err instanceof InstallError) {
+      console.log(err.format());
+      _installWarnings.push(`CoreML ONNX Runtime download failed (${err.code})`);
+    } else {
+      const wrapped = new InstallError('SW-E010', 'Failed to download ONNX Runtime CoreML library', {
+        cause: err.message,
+        fix: `Manual installation:\n         1. Download: curl -L -C - -o "${targetDylibPath}" "${releaseUrl}"\n         2. Then re-run: npm install -g swictation`,
+        original: err,
+        context: { url: releaseUrl, dest: targetDylibPath },
+      });
+      console.log(wrapped.format());
+      _installWarnings.push('CoreML ONNX Runtime download failed');
+    }
     throw err;
   }
 }
@@ -1166,11 +1212,15 @@ function detectOrtLibrary() {
     return ortLibPath;
 
   } catch (err) {
-    log('yellow', '\n⚠️  Could not detect ONNX Runtime:');
-    log('yellow', `   ${err.message}`);
-    log('cyan', '\n📦 Please install onnxruntime-gpu for optimal performance:');
-    log('cyan', '   pip3 install onnxruntime-gpu');
-    log('cyan', '\n   The daemon will not work correctly without this library!');
+    const wrapped = new InstallError('SW-E010', 'Could not detect ONNX Runtime', {
+      cause: err.message,
+      fix: process.platform === 'darwin'
+        ? 'ONNX Runtime should be provided by the platform package — try reinstalling: npm install -g swictation'
+        : 'Install with: pip3 install onnxruntime-gpu\n         The daemon will not work correctly without this library',
+      original: err,
+    });
+    console.log(wrapped.format());
+    _installWarnings.push('ONNX Runtime not detected');
     return null;
   }
 }
@@ -1493,8 +1543,10 @@ WantedBy=default.target
     }
 
   } catch (err) {
-    log('yellow', `⚠️  Failed to generate systemd services: ${err.message}`);
+    const wrapped = InstallError.fromSystemError(err, 'SW-E006', 'Failed to generate systemd services', { path: path.join(os.homedir(), '.config', 'systemd', 'user') });
+    console.log(wrapped.format());
     log('cyan', '  You can manually create them later using: swictation setup');
+    _installWarnings.push('Systemd service generation failed');
   }
 }
 
@@ -1786,8 +1838,10 @@ function generateLaunchdServices(ortLibPath) {
     log('cyan', '  swictation stop      - Stop services');
 
   } catch (err) {
-    log('yellow', `⚠️  Failed to generate launchd services: ${err.message}`);
+    const wrapped = InstallError.fromSystemError(err, 'SW-E006', 'Failed to generate launchd services', { path: path.join(os.homedir(), 'Library', 'LaunchAgents') });
+    console.log(wrapped.format());
     log('cyan', '  You can manually create them later using: swictation setup');
+    _installWarnings.push('LaunchAgent service generation failed');
   }
 }
 
@@ -2678,9 +2732,12 @@ async function autoDownloadModel(recommendedModel) {
     log('green', '\n✓ Model downloaded successfully!');
     return true;
   } catch (err) {
-    log('yellow', `⚠️  Auto-download failed: ${err.message}`);
+    const wrapped = (err instanceof InstallError) ? err :
+      InstallError.fromSystemError(err, 'SW-E008', 'Model download failed', { model: recommendedModel });
+    console.log(wrapped.format());
     log('cyan', '   You can download manually later with:');
     log('green', `   swictation download-model ${recommendedModel}`);
+    _installWarnings.push(`Model download failed for ${recommendedModel}`);
     return false;
   }
 }
@@ -2833,7 +2890,12 @@ function updateConfigWithTestedModel(testedModel) {
 
 // Main postinstall process
 async function main() {
-  log('cyan', '🚀 Setting up Swictation...\n');
+  _initInstallLog();
+
+  const pkgVersion = require('./package.json').version;
+  log('green', `\nInstalling swictation v${pkgVersion} for ${process.platform} ${process.arch}`);
+  log('cyan', 'This may take 5-10 minutes (downloads GPU libraries and speech models)');
+  log('cyan', '');
 
   try {
     // Platform and basic checks
@@ -2878,9 +2940,12 @@ async function main() {
           throw new Error('Platform package not found after installation');
         }
       } catch (installErr) {
-        log('red', `\n❌ Failed to install platform package: ${installErr.message}`);
-        log('yellow', `   Try manually: npm install -g ${packageName}`);
-        throw new Error('Platform package installation failed');
+        throw new InstallError('SW-E009', 'Failed to install platform package', {
+          cause: installErr.message,
+          fix: `Try manually: npm install -g ${packageName}`,
+          original: installErr,
+          context: { packageName },
+        });
       }
     }
 
@@ -2893,26 +2958,19 @@ async function main() {
     ensureBinaryPermissions();
     createDirectories();
 
-    // Phase 0: Stop running services BEFORE any modifications
-    // This prevents CUDA state corruption and file conflicts
-    log('cyan', '\n═══ Phase 0: Stop Running Services ═══');
+    // Phase 1: Stop running services BEFORE any modifications
+    phaseLog('Checking platform compatibility...');
     await stopExistingServices();
 
-    // Phase 1: Clean up old/conflicting service files
-    log('cyan', '\n═══ Phase 1: Service Cleanup ═══');
+    phaseLog('Cleaning up previous installations...');
     await cleanOldServices();
-
-    // Phase 1.5: Clean up conflicting installations
-    log('cyan', '\n═══ Phase 1.5: Cleanup Old Installations ═══');
     cleanupOldOnnxRuntime();
     cleanupOldNpmInstallations();
 
-    // Phase 2: Handle config file migration
-    log('cyan', '\n═══ Phase 2: Configuration ═══');
+    phaseLog('Configuring...');
     await interactiveConfigMigration();
 
-    // Phase 3: Detect GPU capabilities (platform-specific)
-    log('cyan', '\n═══ Phase 3: GPU Detection ═══');
+    phaseLog('Downloading GPU libraries...');
     let gpuInfo;
     let ortLibPath;
 
@@ -2947,9 +3005,9 @@ async function main() {
       ortLibPath = path.join(__dirname, 'lib', 'native', 'libonnxruntime.dylib');
     }
 
-    // Phase 3.5: Model test-loading (actual verification)
+    // Model test-loading (actual verification)
     if (!SKIP_MODEL_TEST && gpuInfo.hasGPU && gpuInfo.recommendedModel !== 'cpu-only') {
-      log('cyan', '\n═══ Phase 3.5: Model Verification ═══');
+      log('cyan', '\n  Model Verification:');
       // Use daemon binary from platform package
       const daemonBin = binaryPaths.daemon;
       log('cyan', `  Using daemon: ${daemonBin}`);
@@ -2973,27 +3031,22 @@ async function main() {
         log('yellow', `  ⚠️  Could not save GPU info: ${err.message}`);
       }
     } else if (SKIP_MODEL_TEST) {
-      log('cyan', '\n═══ Phase 3.5: Model Verification ═══');
-      log('yellow', '  ⚠️  Model test-loading skipped (SKIP_MODEL_TEST=1)');
+      log('yellow', '  Model test-loading skipped (SKIP_MODEL_TEST=1)');
       log('cyan', '     Using memory-based heuristics only');
     }
 
-    // Phase 4: Generate service files (platform-specific)
-    log('cyan', '\n═══ Phase 4: Service Installation ═══');
+    phaseLog('Configuring system services...');
     if (process.platform === 'linux') {
       generateSystemdService(ortLibPath);
     } else if (process.platform === 'darwin') {
       generateLaunchdServices(ortLibPath);
     }
 
-    // Phase 5: Platform-specific integration
+    phaseLog('Downloading speech models...');
+    // Phase: Platform-specific integration
     if (process.platform === 'linux') {
-      // Linux: Wayland-specific setup (ydotool + GNOME shortcuts)
-      log('cyan', '\n═══ Phase 5: Wayland Integration ═══');
       const waylandResults = await setupWaylandIntegration();
     } else if (process.platform === 'darwin') {
-      // macOS: Accessibility permissions guidance
-      log('cyan', '\n═══ Phase 5: macOS Integration ═══');
       log('yellow', '');
       log('yellow', '╔════════════════════════════════════════════════════════════════════╗');
       log('yellow', '║  IMPORTANT: macOS Accessibility Permission Required                ║');
@@ -3019,8 +3072,7 @@ async function main() {
       log('cyan', '  Documentation: https://github.com/robertelee78/swictation/blob/main/docs/MACOS_SETUP.md');
     }
 
-    // Phase 6: Auto-enable and start service (platform-specific)
-    log('cyan', '\n═══ Phase 6: Service Activation ═══');
+    phaseLog('Verifying installation...');
     if (process.platform === 'linux') {
       const serviceResults = await enableAndStartService();
     } else if (process.platform === 'darwin') {
@@ -3031,14 +3083,10 @@ async function main() {
       log('cyan', '\nOr use: swictation start');
     }
 
-    // Phase 7: Platform-specific checks
+    // Platform-specific final checks
     if (process.platform === 'linux') {
-      // Linux: Check NVIDIA hibernation configuration (laptops only)
-      log('cyan', '\n═══ Phase 7: NVIDIA Hibernation Check ═══');
       await checkNvidiaHibernation();
     } else if (process.platform === 'darwin') {
-      // macOS: No additional checks needed
-      log('cyan', '\n═══ Phase 7: System Checks ═══');
       log('green', '✓ macOS system configuration complete');
     }
 
@@ -3046,19 +3094,57 @@ async function main() {
     checkDependencies();
     showNextSteps();
 
-    log('green', '\n✅ Postinstall completed successfully!');
+    // ── Install Summary ──
+    const duration = ((Date.now() - _installStart) / 1000).toFixed(0);
+    const mins = Math.floor(duration / 60);
+    const secs = duration % 60;
+    const durationStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+
+    log('green', '\n╔══════════════════════════════════════════════════════╗');
+    log('green', `║  swictation v${pkgVersion} installed successfully`);
+    log('green', `║  Platform:  ${process.platform} ${process.arch}`);
+    log('green', `║  Duration:  ${durationStr}`);
+    if (_installWarnings.length > 0) {
+      log('yellow', '║');
+      log('yellow', `║  Warnings (${_installWarnings.length}):`);
+      for (const w of _installWarnings) {
+        log('yellow', `║    - ${w}`);
+      }
+    }
+    log('green', '╚══════════════════════════════════════════════════════╝');
+
+    const logPath = path.join(os.homedir(), '.local', 'share', 'swictation', 'install.log');
+    log('cyan', `\n  Full log: ${logPath}`);
 
   } catch (err) {
-    log('red', `\n❌ Postinstall error: ${err.message}`);
+    if (err instanceof InstallError) {
+      console.log('\n' + err.format());
+      _logToFile(err.formatForLog());
+    } else {
+      log('red', `\n[FAIL] Postinstall error (SW-E000)`);
+      log('yellow', `  Cause: ${err.message}`);
+      log('green', `  Fix:   Run "swictation setup" to complete configuration manually`);
+      _logToFile(`FATAL: ${err.message}\n${err.stack}`);
+    }
+    const logPath = path.join(os.homedir(), '.local', 'share', 'swictation', 'install.log');
+    log('cyan', `\n  Full log: ${logPath}`);
     log('yellow', '\nSome steps may have failed, but installation can continue.');
     log('cyan', 'Run "swictation setup" to complete configuration manually.');
     // Don't exit with error - npm install should succeed even if postinstall has issues
+  } finally {
+    if (_installLogStream) {
+      try { _installLogStream.end(); } catch { /* ignore */ }
+    }
   }
 }
 
 // Run postinstall
 main().catch(err => {
-  log('red', `Postinstall error: ${err.message}`);
+  if (err instanceof InstallError) {
+    console.log(err.format());
+  } else {
+    console.log(`\x1b[31mPostinstall error: ${err.message}\x1b[0m`);
+  }
   // Don't exit with error code - npm install should still succeed
   process.exit(0);
 });
