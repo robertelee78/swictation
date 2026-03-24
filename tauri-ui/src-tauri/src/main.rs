@@ -31,20 +31,33 @@ fn load_tray_icon(png_bytes: &[u8]) -> Image<'static> {
     Image::new_owned(rgba.into_raw(), width, height)
 }
 
-/// Create a tinted (red overlay) version of an icon for the recording state.
+/// Create a red-tinted recording icon from the template source.
+///
+/// macOS template icons (isTemplate=true) discard all RGB data and use only
+/// the alpha channel as a mask. To show a colored icon, we must:
+/// 1. Set icon_as_template(false) so macOS renders actual pixel colors
+/// 2. Clean the semi-transparent background haze to fully transparent
+/// 3. Tint the icon shape pixels solid red
+///
+/// This matches how professional macOS menu bar apps show recording state.
 fn create_recording_icon(png_bytes: &[u8]) -> Image<'static> {
     let img = image::load_from_memory(png_bytes).expect("Failed to load tray icon");
     let mut rgba = img.to_rgba8();
     let (width, height) = img.dimensions();
 
-    // Apply red overlay at 30% opacity — matching the Python tray approach
     for pixel in rgba.pixels_mut() {
-        let alpha = pixel[3] as f32 / 255.0;
-        if alpha > 0.0 {
-            // Blend red overlay: 70% original + 30% red
-            pixel[0] = ((pixel[0] as f32 * 0.7) + (255.0 * 0.3)) as u8;
-            pixel[1] = (pixel[1] as f32 * 0.7) as u8;
-            pixel[2] = (pixel[2] as f32 * 0.7) as u8;
+        if pixel[3] > 20 {
+            // Visible pixel: tint red, preserve alpha for shape/anti-aliasing
+            pixel[0] = 220; // R
+            pixel[1] = 40;  // G
+            pixel[2] = 40;  // B
+        } else {
+            // Background haze: force fully transparent so non-template
+            // rendering doesn't show a gray blob behind the icon
+            pixel[0] = 0;
+            pixel[1] = 0;
+            pixel[2] = 0;
+            pixel[3] = 0;
         }
     }
 
@@ -217,12 +230,15 @@ fn main() {
 
                             // Update tray icon
                             if let Some(tray) = app_handle.tray_by_id(&tray_id) {
-                                let icon = match &current_state {
-                                    DaemonState::Idle => &idle_icon,
-                                    DaemonState::Recording => &recording_icon,
-                                    DaemonState::Disconnected => &disconnected_icon,
+                                let (icon, as_template) = match &current_state {
+                                    DaemonState::Idle => (&idle_icon, true),
+                                    // Recording: disable template mode so red color is visible
+                                    // macOS template icons are forced monochrome by the system
+                                    DaemonState::Recording => (&recording_icon, false),
+                                    DaemonState::Disconnected => (&disconnected_icon, true),
                                 };
                                 let _ = tray.set_icon(Some(icon.clone()));
+                                let _ = tray.set_icon_as_template(as_template);
                                 let tooltip = match &current_state {
                                     DaemonState::Idle => "Swictation - Idle",
                                     DaemonState::Recording => "Swictation - Recording",
@@ -304,7 +320,7 @@ fn main() {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 // Hide window instead of closing to keep app running in tray
                 // This is standard tray app behavior on all platforms
-                window.hide().unwrap();
+                let _ = window.hide();
                 api.prevent_close();
             }
         })
