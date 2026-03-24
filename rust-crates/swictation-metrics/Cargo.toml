@@ -17,8 +17,6 @@ serde_json = { workspace = true }
 # Date/Time
 chrono = { version = "0.4", features = ["serde"] }
 
-# Statistics
-statistical = "1.0"
 
 # Async runtime (for background writes) - disabled for WASM
 tokio = { version = "1.0", features = ["full"], optional = true }

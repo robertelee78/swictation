@@ -22,8 +22,6 @@ serde_json = "1.0"
 # Date/time parsing (pure Rust, no libc dependency)
 chrono = { version = "0.4", default-features = false, features = ["wasmbind", "serde"] }
 
-# Statistics (pure Rust)
-statistical = "1.0"
 
 # Error handling
 thiserror = "2.0"
