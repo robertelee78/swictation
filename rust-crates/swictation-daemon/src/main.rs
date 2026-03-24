@@ -435,7 +435,10 @@ async fn daemon_main(
                 "1.1b-gpu" => {
                     info!("  Would load: Parakeet-TDT-1.1B-INT8 (GPU, forced)");
                     info!("    Path: {}", config.stt_1_1b_model_path.display());
-                    config.stt_1_1b_model_path.join("encoder.int8.onnx").exists()
+                    config
+                        .stt_1_1b_model_path
+                        .join("encoder.int8.onnx")
+                        .exists()
                 }
                 "0.6b-gpu" => {
                     info!("  Would load: Parakeet-TDT-0.6B (GPU, forced)");
@@ -451,7 +454,10 @@ async fn daemon_main(
                     info!("  Would load: Parakeet-TDT-1.1B (CoreML, forced)");
                     info!("    Path: {}", config.stt_coreml_model_path.display());
                     info!("    Reason: Native Apple Neural Engine acceleration");
-                    config.stt_coreml_model_path.join("encoder.mlmodelc").exists()
+                    config
+                        .stt_coreml_model_path
+                        .join("encoder.mlmodelc")
+                        .exists()
                 }
                 _ => {
                     error!("  Invalid override value!");
@@ -467,7 +473,10 @@ async fn daemon_main(
                     info!("  Would load: Parakeet-TDT-1.1B-INT8 (GPU)");
                     info!("    Path: {}", config.stt_1_1b_model_path.display());
                     info!("    Reason: ≥6GB VRAM available");
-                    config.stt_1_1b_model_path.join("encoder.int8.onnx").exists()
+                    config
+                        .stt_1_1b_model_path
+                        .join("encoder.int8.onnx")
+                        .exists()
                 } else if vram >= 3500 {
                     info!("  Would load: Parakeet-TDT-0.6B (GPU)");
                     info!("    Path: {}", config.stt_0_6b_model_path.display());
@@ -494,7 +503,9 @@ async fn daemon_main(
             return Ok(());
         } else {
             error!("    Model files NOT found at expected path");
-            return Err(anyhow::anyhow!("Model files not found for dry-run verification"));
+            return Err(anyhow::anyhow!(
+                "Model files not found for dry-run verification"
+            ));
         }
     }
 
