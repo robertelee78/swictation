@@ -27,8 +27,8 @@ mod macos_audio_permission;
 use anyhow::{Context, Result};
 use clap::Parser;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{error, info, warn};
 
@@ -311,10 +311,7 @@ fn main() -> Result<()> {
         .with_level(true)
         .init();
 
-    info!(
-        "Starting Swictation Daemon v{}",
-        env!("CARGO_PKG_VERSION")
-    );
+    info!("Starting Swictation Daemon v{}", env!("CARGO_PKG_VERSION"));
 
     // macOS: Request permissions on main thread (system dialogs need it)
     #[cfg(target_os = "macos")]
@@ -411,10 +408,7 @@ async fn daemon_main(
     mut config: DaemonConfig,
     mut hotkey_manager: Option<HotkeyManager>,
 ) -> Result<()> {
-    info!(
-        "Configuration loaded from {}",
-        config.config_path.display()
-    );
+    info!("Configuration loaded from {}", config.config_path.display());
 
     // Apply CLI overrides
     if let Some(ref model) = cli.test_model {
@@ -734,8 +728,8 @@ async fn daemon_main(
     // This prevents the "double-tap race" where a second keypress during a slow
     // toggle() undoes the first toggle (e.g., stop immediately followed by start).
     const TOGGLE_DEBOUNCE_MS: u64 = 500;
-    let last_toggle = std::sync::Mutex::new(std::time::Instant::now()
-        - std::time::Duration::from_secs(10)); // allow first toggle immediately
+    let last_toggle =
+        std::sync::Mutex::new(std::time::Instant::now() - std::time::Duration::from_secs(10)); // allow first toggle immediately
 
     // Main event loop
     loop {

@@ -95,7 +95,6 @@ unsafe fn msg_send_obj_arg(obj: *mut c_void, sel: *mut c_void, arg: *mut c_void)
     func(obj, sel, arg)
 }
 
-
 /// Check the current microphone authorization status
 ///
 /// Returns the current permission state without triggering a dialog.

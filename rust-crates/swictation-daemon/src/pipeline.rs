@@ -11,9 +11,9 @@ use midstreamer_text_transform::transform;
 use swictation_audio::AudioCapture;
 use swictation_broadcaster::MetricsBroadcaster;
 use swictation_metrics::{MetricsCollector, SegmentMetrics};
-use swictation_stt::{OrtRecognizer, SttEngine};
 #[cfg(all(target_os = "macos", feature = "coreml-native"))]
 use swictation_stt::CoreMLRecognizer;
+use swictation_stt::{OrtRecognizer, SttEngine};
 use swictation_vad::{VadConfig, VadDetector, VadResult};
 
 use crate::capitalization::{
@@ -252,21 +252,19 @@ impl Pipeline {
                         warn!("  Falling back to CPU mode (slower but functional)");
                         info!("  Loading Parakeet-TDT-0.6B via ONNX Runtime (CPU)...");
 
-                        let ort_recognizer =
-                            OrtRecognizer::new(&config.stt_0_6b_model_path, false).map_err(
-                                |e| {
-                                    anyhow::anyhow!(
-                                        "Failed to load 0.6B CPU model. \
+                        let ort_recognizer = OrtRecognizer::new(&config.stt_0_6b_model_path, false)
+                            .map_err(|e| {
+                                anyhow::anyhow!(
+                                    "Failed to load 0.6B CPU model. \
                                     \nTroubleshooting:\
                                     \n  1. Verify model files: ls {}\
                                     \n  2. Check available RAM (need ~1GB free)\
                                     \n  3. Ensure ONNX Runtime CPU EP is available\
                                     \nError: {}",
-                                        config.stt_0_6b_model_path.display(),
-                                        e
-                                    )
-                                },
-                            )?;
+                                    config.stt_0_6b_model_path.display(),
+                                    e
+                                )
+                            })?;
 
                         info!("✓ Parakeet-TDT-0.6B loaded successfully (CPU)");
                         SttEngine::Parakeet0_6B(ort_recognizer)
@@ -277,8 +275,8 @@ impl Pipeline {
                     warn!("  Falling back to CPU mode (slower but functional)");
                     info!("  Loading Parakeet-TDT-0.6B via ONNX Runtime (CPU)...");
 
-                    let ort_recognizer =
-                        OrtRecognizer::new(&config.stt_0_6b_model_path, false).map_err(|e| {
+                    let ort_recognizer = OrtRecognizer::new(&config.stt_0_6b_model_path, false)
+                        .map_err(|e| {
                             anyhow::anyhow!(
                                 "Failed to load 0.6B CPU model. \
                             \nTroubleshooting:\
@@ -724,7 +722,7 @@ impl Pipeline {
         // Original flush-and-transcribe block disabled to prevent duplicate injection.
         // If re-enabled, must first ensure the STT task is fully stopped.
         if false {
-            let speech_samples: Vec<f32> = vec![];  // placeholder
+            let speech_samples: Vec<f32> = vec![]; // placeholder
             info!(
                 "Processing flushed speech segment: {} samples",
                 speech_samples.len()

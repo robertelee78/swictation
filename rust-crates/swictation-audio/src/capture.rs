@@ -172,7 +172,9 @@ impl AudioCapture {
         #[cfg(target_os = "macos")]
         {
             if let Some(default_device) = self.host.default_input_device() {
-                let name = default_device.name().unwrap_or_else(|_| "Unknown".to_string());
+                let name = default_device
+                    .name()
+                    .unwrap_or_else(|_| "Unknown".to_string());
                 println!("  → Using macOS default input device: {}", name);
                 return Ok(default_device);
             }

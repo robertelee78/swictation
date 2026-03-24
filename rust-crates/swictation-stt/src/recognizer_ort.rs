@@ -161,7 +161,10 @@ impl OrtRecognizer {
                 {
                     let onnx_path = model_path.join(format!("{}.onnx", name));
                     if onnx_path.exists() {
-                        info!("Using FP32 model for CoreML: {}.onnx (runs FP16 on GPU/ANE)", name);
+                        info!(
+                            "Using FP32 model for CoreML: {}.onnx (runs FP16 on GPU/ANE)",
+                            name
+                        );
                         return Ok(onnx_path);
                     }
                     // Fallback to INT8 if FP32 not available

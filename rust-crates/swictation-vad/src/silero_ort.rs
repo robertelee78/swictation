@@ -3,16 +3,11 @@
 
 use crate::{Result, VadError};
 use ndarray::{Array2, Array3, ArrayView3};
-use ort::{
-    execution_providers::CPUExecutionProvider,
-    inputs,
-    session::Session,
-    value::Tensor,
-};
-#[cfg(not(target_os = "macos"))]
-use ort::execution_providers::CUDAExecutionProvider;
 #[cfg(target_os = "macos")]
 use ort::execution_providers::coreml::{CoreMLComputeUnits, CoreMLExecutionProvider};
+#[cfg(not(target_os = "macos"))]
+use ort::execution_providers::CUDAExecutionProvider;
+use ort::{execution_providers::CPUExecutionProvider, inputs, session::Session, value::Tensor};
 use std::sync::{Arc, Mutex};
 
 /// Silero VAD model using direct ONNX Runtime
@@ -53,10 +48,9 @@ impl SileroVadOrt {
         debug: bool,
     ) -> Result<Self> {
         // Build session with appropriate execution provider
-        let mut session_builder = Session::builder()
-            .map_err(|e| {
-                VadError::initialization(format!("Failed to create session builder: {}", e))
-            })?;
+        let mut session_builder = Session::builder().map_err(|e| {
+            VadError::initialization(format!("Failed to create session builder: {}", e))
+        })?;
 
         // macOS: use CoreML for Apple Silicon acceleration
         #[cfg(target_os = "macos")]
@@ -129,9 +123,7 @@ impl SileroVadOrt {
 
         let session = session_builder
             .commit_from_file(model_path)
-            .map_err(|e| {
-                VadError::initialization(format!("Failed to load model: {}", e))
-            })?;
+            .map_err(|e| VadError::initialization(format!("Failed to load model: {}", e)))?;
 
         // Print model input/output names for debugging
         println!("=== ONNX Model Metadata ===");

@@ -162,10 +162,10 @@ impl MacOSTextInjector {
             // CGEventTapOptions: kCGEventTapOptionListenOnly = 1 (don't modify events)
             // CGEventMask: just listen for key events (1 << 10 for keyDown)
             let tap = CGEventTapCreate(
-                0,                    // kCGHIDEventTap
-                0,                    // kCGHeadInsertEventTap
-                1,                    // kCGEventTapOptionListenOnly (passive)
-                1 << 10,              // kCGEventKeyDown
+                0,       // kCGHIDEventTap
+                0,       // kCGHeadInsertEventTap
+                1,       // kCGEventTapOptionListenOnly (passive)
+                1 << 10, // kCGEventKeyDown
                 noop_event_tap_callback as *const c_void,
                 std::ptr::null_mut(), // No user info
             );
