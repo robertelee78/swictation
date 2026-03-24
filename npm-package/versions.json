@@ -1,22 +1,22 @@
 {
   "$schema": "https://json-schema.org/draft-07/schema#",
   "$comment": "Single source of truth for all version numbers in the Swictation project",
-  "distribution": "0.7.29",
+  "distribution": "0.7.30",
   "_distribution_comment": "Main npm package version - this is the user-facing version for swictation, @agidreams/linux-x64, and @agidreams/darwin-arm64. All three packages MUST have the same version.",
   "components": {
     "_comment": "Component versions are extracted from Cargo.toml files. These can evolve independently from the distribution version.",
     "daemon": {
-      "version": "0.7.28",
+      "version": "0.7.29",
       "source": "rust-crates/swictation-daemon/Cargo.toml",
       "description": "Main daemon binary that handles voice recognition and text injection"
     },
     "ui": {
-      "version": "0.7.28",
+      "version": "0.7.29",
       "source": "tauri-ui/src-tauri/Cargo.toml",
       "description": "Tauri-based UI application for configuration and monitoring"
     },
     "context-learning": {
-      "version": "0.7.28",
+      "version": "0.7.29",
       "source": "rust-crates/swictation-context-learning/Cargo.toml",
       "description": "Context-aware meta-learning module"
     }
@@ -45,7 +45,7 @@
   },
   "metadata": {
     "_comment": "Build metadata - updated automatically by build scripts",
-    "last_updated": "2026-03-24T06:01:26.884Z",
+    "last_updated": "2026-03-24T06:22:23.624Z",
     "schema_version": "1.0.0"
   }
 }

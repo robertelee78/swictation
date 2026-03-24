@@ -3100,18 +3100,20 @@ async function main() {
     const secs = duration % 60;
     const durationStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
 
-    log('green', '\n╔══════════════════════════════════════════════════════╗');
-    log('green', `║  swictation v${pkgVersion} installed successfully          ║`);
-    log('green', `║  Platform:  ${process.platform} ${process.arch}${' '.repeat(Math.max(0, 38 - process.platform.length - process.arch.length))}║`);
-    log('green', `║  Duration:  ${durationStr}${' '.repeat(Math.max(0, 39 - durationStr.length))}║`);
+    const boxW = 54;
+    const boxLine = (text) => `║${text}${''.padEnd(Math.max(0, boxW - text.length))}║`;
+    log('green', `\n╔${'═'.repeat(boxW)}╗`);
+    log('green', boxLine(`  swictation v${pkgVersion} installed successfully`));
+    log('green', boxLine(`  Platform:  ${process.platform} ${process.arch}`));
+    log('green', boxLine(`  Duration:  ${durationStr}`));
     if (_installWarnings.length > 0) {
-      log('yellow', '║');
-      log('yellow', `║  Warnings (${_installWarnings.length}):`);
+      log('yellow', boxLine(''));
+      log('yellow', boxLine(`  Warnings (${_installWarnings.length}):`));
       for (const w of _installWarnings) {
-        log('yellow', `║    - ${w}`);
+        log('yellow', boxLine(`    - ${w}`));
       }
     }
-    log('green', '╚══════════════════════════════════════════════════════╝');
+    log('green', `╚${'═'.repeat(boxW)}╝`);
 
     const logPath = path.join(os.homedir(), '.local', 'share', 'swictation', 'install.log');
     log('cyan', `\n  Full log: ${logPath}`);

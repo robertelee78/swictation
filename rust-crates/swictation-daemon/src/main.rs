@@ -42,7 +42,7 @@ use crate::config::DaemonConfig;
 struct CliArgs {
     /// Override STT model selection (bypasses auto-detection)
     #[arg(long, value_name = "MODEL")]
-    #[arg(value_parser = ["0.6b-cpu", "0.6b-gpu", "1.1b-gpu"])]
+    #[arg(value_parser = ["0.6b-cpu", "0.6b-gpu", "1.1b-gpu", "1.1b-coreml"])]
     test_model: Option<String>,
 
     /// Dry-run: show model selection without loading models
@@ -435,6 +435,11 @@ async fn daemon_main(
                 "1.1b-gpu" => info!("  Would load: Parakeet-TDT-1.1B-INT8 (GPU, forced)"),
                 "0.6b-gpu" => info!("  Would load: Parakeet-TDT-0.6B (GPU, forced)"),
                 "0.6b-cpu" => info!("  Would load: Parakeet-TDT-0.6B (CPU, forced)"),
+                "1.1b-coreml" => {
+                    info!("  Would load: Parakeet-TDT-1.1B (CoreML, forced)");
+                    info!("    Path: {}", config.stt_coreml_model_path.display());
+                    info!("    Reason: Native Apple Neural Engine acceleration");
+                }
                 _ => error!("  Invalid override value!"),
             }
         } else {
