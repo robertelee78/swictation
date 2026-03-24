@@ -2,7 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
+const { execSync, execFileSync } = require('child_process');
 const os = require('os');
 const https = require('https');
 const crypto = require('crypto');
@@ -32,7 +32,9 @@ let _installLogStream = null;
 
 function _initInstallLog() {
   try {
-    const logDir = path.join(os.homedir(), '.local', 'share', 'swictation');
+    const logDir = process.platform === 'darwin'
+      ? path.join(os.homedir(), 'Library', 'Logs', 'swictation')
+      : path.join(os.homedir(), '.local', 'share', 'swictation');
     if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
     _installLogStream = fs.createWriteStream(path.join(logDir, 'install.log'), { flags: 'w' });
     _installLogStream.write(`Swictation install log — ${new Date().toISOString()}\n`);
@@ -58,9 +60,45 @@ function log(color, message) {
   _logToFile(message);
 }
 
+/**
+ * Get platform-appropriate config directory.
+ * macOS: ~/Library/Application Support/swictation/
+ * Linux: ~/.config/swictation/
+ */
+function getConfigDir() {
+  if (process.platform === 'darwin') {
+    return path.join(os.homedir(), 'Library', 'Application Support', 'swictation');
+  }
+  return path.join(os.homedir(), '.config', 'swictation');
+}
+
+/**
+ * Get platform-appropriate data directory.
+ * macOS: ~/Library/Application Support/swictation/
+ * Linux: ~/.local/share/swictation/
+ */
+function getDataDir() {
+  if (process.platform === 'darwin') {
+    return path.join(os.homedir(), 'Library', 'Application Support', 'swictation');
+  }
+  return path.join(os.homedir(), '.local', 'share', 'swictation');
+}
+
+/**
+ * Get platform-appropriate cache directory.
+ * macOS: ~/Library/Caches/swictation/
+ * Linux: ~/.cache/swictation/
+ */
+function getCacheDir() {
+  if (process.platform === 'darwin') {
+    return path.join(os.homedir(), 'Library', 'Caches', 'swictation');
+  }
+  return path.join(os.homedir(), '.cache', 'swictation');
+}
+
 // ── Phase Tracking ──────────────────────────────────────────────────
 let _phaseNumber = 0;
-let _totalPhases = 8; // Adjusted dynamically
+let _totalPhases = 9;
 
 function phaseLog(title) {
   _phaseNumber++;
@@ -86,7 +124,7 @@ function checkPlatform() {
     // Check GLIBC version
     try {
       const glibcVersion = execSync('ldd --version 2>&1 | head -1', { encoding: 'utf8' });
-      const versionMatch = glibcVersion.match(/(\d+)\.(\d+)/);
+      const versionMatch = glibcVersion.match(/GLIBC\s+(\d+)\.(\d+)/i);
       if (versionMatch) {
         const major = parseInt(versionMatch[1]);
         const minor = parseInt(versionMatch[2]);
@@ -122,7 +160,6 @@ function checkPlatform() {
       const versionMatch = osVersion.match(/(\d+)\.(\d+)/);
       if (versionMatch) {
         const major = parseInt(versionMatch[1]);
-        const minor = parseInt(versionMatch[2]);
 
         if (major < 14) {
           log('red', '\n⚠ UNSUPPORTED MACOS VERSION');
@@ -167,18 +204,37 @@ async function stopExistingServices() {
       execSync('swictation stop 2>/dev/null', { stdio: 'ignore' });
       log('green', '✓ Stopped swictation services via CLI');
       stopped = true;
-      // Give services time to fully stop and release CUDA
+      // Give services time to fully stop and release resources
       await new Promise(resolve => setTimeout(resolve, 2000));
     } catch (cliErr) {
-      // swictation CLI not available, try systemctl
-      try {
-        execSync('systemctl --user stop swictation-daemon.service 2>/dev/null', { stdio: 'ignore' });
-        execSync('systemctl --user stop swictation-ui.service 2>/dev/null', { stdio: 'ignore' });
-        log('green', '✓ Stopped services via systemctl');
-        stopped = true;
-        await new Promise(resolve => setTimeout(resolve, 2000));
-      } catch (systemctlErr) {
-        log('cyan', 'ℹ No existing services to stop');
+      // swictation CLI not available, try platform-specific fallback
+      if (process.platform === 'darwin') {
+        try {
+          const uid = execSync('id -u', { encoding: 'utf8' }).trim();
+          try {
+            execFileSync('launchctl', ['bootout', `gui/${uid}`, 'com.swictation.daemon'], { stdio: 'ignore' });
+          } catch (e) { /* ignore - may not be loaded */ }
+          try {
+            execFileSync('launchctl', ['bootout', `gui/${uid}`, 'com.swictation.ui'], { stdio: 'ignore' });
+          } catch (e) { /* ignore - may not be loaded */ }
+          log('green', '✓ Stopped services via launchctl');
+          stopped = true;
+        } catch (e) { /* ignore */ }
+        // Safety net for manually launched daemons
+        try {
+          execSync('pkill -f swictation-daemon 2>/dev/null || true', { stdio: 'ignore' });
+        } catch (e) { /* ignore */ }
+        if (stopped) await new Promise(resolve => setTimeout(resolve, 2000));
+      } else {
+        try {
+          execSync('systemctl --user stop swictation-daemon.service 2>/dev/null', { stdio: 'ignore' });
+          execSync('systemctl --user stop swictation-ui.service 2>/dev/null', { stdio: 'ignore' });
+          log('green', '✓ Stopped services via systemctl');
+          stopped = true;
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        } catch (systemctlErr) {
+          log('cyan', 'ℹ No existing services to stop');
+        }
       }
     }
   } catch (err) {
@@ -197,12 +253,20 @@ function cleanupOldOnnxRuntime() {
 
   try {
     const homeDir = os.homedir();
+    const isMacOS = process.platform === 'darwin';
+    const ortExtension = isMacOS ? 'libonnxruntime' : 'libonnxruntime.so';
     const pythonLibDirs = [
       path.join(homeDir, '.local', 'lib', 'python3.13', 'site-packages', 'onnxruntime'),
       path.join(homeDir, '.local', 'lib', 'python3.12', 'site-packages', 'onnxruntime'),
       path.join(homeDir, '.local', 'lib', 'python3.11', 'site-packages', 'onnxruntime'),
       path.join(homeDir, '.local', 'lib', 'python3.10', 'site-packages', 'onnxruntime'),
     ];
+    // Add macOS pip paths
+    if (isMacOS) {
+      for (const pyVer of ['3.13', '3.12', '3.11', '3.10']) {
+        pythonLibDirs.push(path.join(homeDir, 'Library', 'Python', pyVer, 'lib', 'python', 'site-packages', 'onnxruntime'));
+      }
+    }
 
     let removedAny = false;
 
@@ -212,11 +276,24 @@ function cleanupOldOnnxRuntime() {
           // Check if it's an old version that conflicts
           const capiDir = path.join(ortDir, 'capi');
           if (fs.existsSync(capiDir)) {
-            const ortFiles = fs.readdirSync(capiDir).filter(f => f.includes('libonnxruntime.so'));
-            if (ortFiles.length > 0 && ortFiles[0].includes('1.20')) {
-              log('yellow', `⚠️  Found old ONNX Runtime 1.20.x at ${ortDir}`);
+            const ortFiles = fs.readdirSync(capiDir).filter(f => f.includes(ortExtension));
+            // Check all files for versions older than 1.22
+            const hasOldVersion = ortFiles.some(f => {
+              const m = f.match(/(\d+)\.(\d+)/);
+              if (m) {
+                const ver = parseInt(m[1]) * 100 + parseInt(m[2]);
+                return ver < 122; // anything older than 1.22
+              }
+              return false;
+            });
+            if (hasOldVersion) {
+              log('yellow', `⚠️  Found old ONNX Runtime (<1.22) at ${ortDir}`);
               log('cyan', `   Removing to prevent version conflicts...`);
-              execSync(`rm -rf "${ortDir}"`, { stdio: 'ignore' });
+              try {
+                fs.rmSync(ortDir, { recursive: true, force: true });
+              } catch (rmErr) {
+                execSync(`rm -rf "${ortDir}"`, { stdio: 'ignore' });
+              }
               log('green', `✓ Removed old ONNX Runtime installation`);
               removedAny = true;
             }
@@ -246,6 +323,7 @@ function cleanupOldNpmInstallations() {
     '/usr/local/lib/node_modules/swictation',
     '/usr/local/nodejs/lib/node_modules/swictation',
     '/usr/lib/node_modules/swictation',
+    '/opt/homebrew/lib/node_modules/swictation', // Homebrew ARM64 (macOS Apple Silicon)
   ];
 
   let removedAny = false;
@@ -255,7 +333,12 @@ function cleanupOldNpmInstallations() {
       log('yellow', `⚠️  Found old npm installation at ${oldPath}`);
       log('cyan', `   Removing to prevent conflicts...`);
       try {
-        execSync(`sudo rm -rf "${oldPath}" 2>/dev/null || rm -rf "${oldPath}"`, { stdio: 'ignore' });
+        try {
+          fs.rmSync(oldPath, { recursive: true, force: true });
+        } catch (rmErr) {
+          // May need elevated permissions for system paths
+          execFileSync('sudo', ['rm', '-rf', oldPath], { stdio: 'ignore' });
+        }
         log('green', `✓ Removed old installation`);
         removedAny = true;
       } catch (err) {
@@ -273,75 +356,101 @@ function cleanupOldNpmInstallations() {
 async function cleanOldServices() {
   log('cyan', '\n🧹 Checking for old service files...');
 
-  const oldServiceLocations = [
-    // Old system-wide service files (from Python version)
-    '/usr/lib/systemd/user/swictation.service',
-    '/usr/lib/systemd/system/swictation.service',
-    // Old user service files that might conflict
-    path.join(os.homedir(), '.config', 'systemd', 'user', 'swictation.service')
-  ];
-
   let foundOldServices = false;
 
-  for (const servicePath of oldServiceLocations) {
-    if (fs.existsSync(servicePath)) {
-      foundOldServices = true;
-      log('yellow', `⚠️  Found old service file: ${servicePath}`);
-
-      // Extract service name from path
-      const serviceName = path.basename(servicePath);
-      const isSystemService = servicePath.includes('/system/');
-
-      try {
-        // Try to stop the service if it's running
-        const stopCmd = isSystemService
-          ? `sudo systemctl stop ${serviceName} 2>/dev/null || true`
-          : `systemctl --user stop ${serviceName} 2>/dev/null || true`;
-
-        execSync(stopCmd, { stdio: 'ignore' });
-        log('cyan', `  ✓ Stopped service: ${serviceName}`);
-
-        // Disable the service
-        const disableCmd = isSystemService
-          ? `sudo systemctl disable ${serviceName} 2>/dev/null || true`
-          : `systemctl --user disable ${serviceName} 2>/dev/null || true`;
-
-        execSync(disableCmd, { stdio: 'ignore' });
-        log('cyan', `  ✓ Disabled service: ${serviceName}`);
-
-        // Remove the service file (requires sudo for system services)
-        if (isSystemService) {
+  if (process.platform === 'darwin') {
+    // macOS: clean stale LaunchAgent plists
+    const agentsDir = path.join(os.homedir(), 'Library', 'LaunchAgents');
+    if (fs.existsSync(agentsDir)) {
+      const plists = fs.readdirSync(agentsDir).filter(f => f.startsWith('com.swictation.') && f.endsWith('.plist'));
+      for (const plist of plists) {
+        const plistPath = path.join(agentsDir, plist);
+        const label = plist.replace('.plist', '');
+        try {
+          const uid = execSync('id -u', { encoding: 'utf8' }).trim();
           try {
-            execSync(`sudo rm -f "${servicePath}"`, { stdio: 'ignore' });
-            log('green', `  ✓ Removed old service file: ${servicePath}`);
-          } catch (err) {
-            log('yellow', `  ⚠️  Could not remove ${servicePath} (may need manual cleanup)`);
+            execFileSync('launchctl', ['bootout', `gui/${uid}`, label], { stdio: 'ignore' });
+          } catch (e) { /* ignore - may not be loaded */ }
+        } catch (e) { /* ignore */ }
+        try {
+          fs.unlinkSync(plistPath);
+          log('green', `  Removed old plist: ${plist}`);
+          foundOldServices = true;
+        } catch (e) { /* ignore */ }
+      }
+    }
+  } else if (process.platform === 'linux') {
+    // Linux: clean systemd service files
+    const oldServiceLocations = [
+      // Old system-wide service files (from Python version)
+      '/usr/lib/systemd/user/swictation.service',
+      '/usr/lib/systemd/system/swictation.service',
+      // Old user service files that might conflict
+      path.join(os.homedir(), '.config', 'systemd', 'user', 'swictation.service')
+    ];
+
+    for (const servicePath of oldServiceLocations) {
+      if (fs.existsSync(servicePath)) {
+        foundOldServices = true;
+        log('yellow', `⚠️  Found old service file: ${servicePath}`);
+
+        // Extract service name from path
+        const serviceName = path.basename(servicePath);
+        const isSystemService = servicePath.includes('/system/');
+
+        try {
+          // Try to stop the service if it's running
+          const stopCmd = isSystemService
+            ? `sudo systemctl stop ${serviceName} 2>/dev/null || true`
+            : `systemctl --user stop ${serviceName} 2>/dev/null || true`;
+
+          execSync(stopCmd, { stdio: 'ignore' });
+          log('cyan', `  ✓ Stopped service: ${serviceName}`);
+
+          // Disable the service
+          const disableCmd = isSystemService
+            ? `sudo systemctl disable ${serviceName} 2>/dev/null || true`
+            : `systemctl --user disable ${serviceName} 2>/dev/null || true`;
+
+          execSync(disableCmd, { stdio: 'ignore' });
+          log('cyan', `  ✓ Disabled service: ${serviceName}`);
+
+          // Remove the service file (requires sudo for system services)
+          if (isSystemService) {
+            try {
+              execFileSync('sudo', ['rm', '-f', servicePath], { stdio: 'ignore' });
+              log('green', `  ✓ Removed old service file: ${servicePath}`);
+            } catch (err) {
+              log('yellow', `  ⚠️  Could not remove ${servicePath} (may need manual cleanup)`);
+            }
+          } else {
+            try {
+              fs.unlinkSync(servicePath);
+              log('green', `  ✓ Removed old service file: ${servicePath}`);
+            } catch (err) {
+              log('yellow', `  ⚠️  Could not remove ${servicePath}: ${err.message}`);
+            }
           }
-        } else {
-          try {
-            fs.unlinkSync(servicePath);
-            log('green', `  ✓ Removed old service file: ${servicePath}`);
-          } catch (err) {
-            log('yellow', `  ⚠️  Could not remove ${servicePath}: ${err.message}`);
-          }
+
+        } catch (err) {
+          log('yellow', `  ⚠️  Error cleaning up ${serviceName}: ${err.message}`);
         }
+      }
+    }
 
+    if (foundOldServices) {
+      // Reload systemd to pick up changes
+      try {
+        execSync('systemctl --user daemon-reload 2>/dev/null', { stdio: 'ignore' });
+        execSync('sudo systemctl daemon-reload 2>/dev/null || true', { stdio: 'ignore' });
+        log('green', '✓ Reloaded systemd daemon');
       } catch (err) {
-        log('yellow', `  ⚠️  Error cleaning up ${serviceName}: ${err.message}`);
+        log('yellow', '⚠️  Could not reload systemd daemon');
       }
     }
   }
 
-  if (foundOldServices) {
-    // Reload systemd to pick up changes
-    try {
-      execSync('systemctl --user daemon-reload 2>/dev/null', { stdio: 'ignore' });
-      execSync('sudo systemctl daemon-reload 2>/dev/null || true', { stdio: 'ignore' });
-      log('green', '✓ Reloaded systemd daemon');
-    } catch (err) {
-      log('yellow', '⚠️  Could not reload systemd daemon');
-    }
-  } else {
+  if (!foundOldServices) {
     log('green', '✓ No old service files found');
   }
 
@@ -399,11 +508,13 @@ function ensureBinaryPermissions() {
 }
 
 function createDirectories() {
+  const dataDir = getDataDir();
+  const cacheDir = getCacheDir();
   const dirs = [
-    path.join(os.homedir(), '.config', 'swictation'),
-    path.join(os.homedir(), '.local', 'share', 'swictation'),
-    path.join(os.homedir(), '.local', 'share', 'swictation', 'models'),
-    path.join(os.homedir(), '.cache', 'swictation')
+    getConfigDir(),
+    dataDir,
+    path.join(dataDir, 'models'),
+    cacheDir
   ];
 
   for (const dir of dirs) {
@@ -413,6 +524,45 @@ function createDirectories() {
         log('green', `✓ Created directory: ${dir}`);
       } catch (err) {
         log('yellow', `Warning: Could not create ${dir}: ${err.message}`);
+      }
+    }
+  }
+
+  // On macOS, clean up stale config from pre-v0.7.33 that wrote to wrong path
+  if (process.platform === 'darwin') {
+    const staleConfigDir = path.join(os.homedir(), '.config', 'swictation');
+    if (fs.existsSync(staleConfigDir)) {
+      try {
+        fs.rmSync(staleConfigDir, { recursive: true });
+        log('cyan', `  Cleaned up stale config dir: ${staleConfigDir}`);
+        log('cyan', `  Config now lives at: ${getConfigDir()}`);
+      } catch (err) {
+        log('yellow', `  Warning: Could not remove stale config dir: ${err.message}`);
+      }
+    }
+
+    // Migrate models from old XDG path to macOS-native path
+    const oldModelsDir = path.join(os.homedir(), '.local', 'share', 'swictation', 'models');
+    const newModelsDir = path.join(dataDir, 'models');
+    if (fs.existsSync(oldModelsDir) && oldModelsDir !== newModelsDir) {
+      try {
+        const modelEntries = fs.readdirSync(oldModelsDir);
+        for (const entry of modelEntries) {
+          const oldPath = path.join(oldModelsDir, entry);
+          const newPath = path.join(newModelsDir, entry);
+          if (!fs.existsSync(newPath)) {
+            fs.renameSync(oldPath, newPath);
+            log('cyan', `  Migrated model: ${entry}`);
+          }
+        }
+        // Clean up old directory if empty
+        const remaining = fs.readdirSync(oldModelsDir);
+        if (remaining.length === 0) {
+          fs.rmSync(oldModelsDir, { recursive: true, force: true });
+          log('cyan', `  Cleaned up old models dir: ${oldModelsDir}`);
+        }
+      } catch (err) {
+        log('yellow', `  Warning: Could not migrate models: ${err.message}`);
       }
     }
   }
@@ -471,39 +621,25 @@ function installPackage(packageName, displayName) {
 }
 
 function checkDependencies() {
-  const optional = [];
-  const required = [];
+  if (process.platform === 'darwin') return; // No optional deps to check on macOS
 
-  // Check for required tools
+  const optional = [];
+
+  // Check for optional tools (all tools are optional — no required deps)
   const tools = [
-    { name: 'systemctl', type: 'optional', package: 'systemd' },
-    { name: 'nc', type: 'optional', package: 'netcat' },
-    { name: 'wtype', type: 'optional', package: 'wtype (for Wayland)' },
-    { name: 'xdotool', type: 'optional', package: 'xdotool (for X11)' },
-    { name: 'hf', type: 'optional', package: process.platform === 'darwin'
-        ? 'huggingface-cli (brew install huggingface-cli or pip install huggingface_hub[cli])'
-        : 'huggingface_hub[cli] (pip install huggingface_hub[cli])' }
+    { name: 'systemctl', package: 'systemd' },
+    { name: 'nc', package: 'netcat' },
+    { name: 'wtype', package: 'wtype (for Wayland)' },
+    { name: 'xdotool', package: 'xdotool (for X11)' },
+    { name: 'hf', package: 'huggingface_hub[cli] (pip install huggingface_hub[cli])' }
   ];
 
   for (const tool of tools) {
     try {
       execSync(`which ${tool.name}`, { stdio: 'ignore' });
     } catch {
-      if (tool.type === 'required') {
-        required.push(tool);
-      } else {
-        optional.push(tool);
-      }
+      optional.push(tool);
     }
-  }
-
-  if (required.length > 0) {
-    log('red', '\n⚠ Required dependencies missing:');
-    for (const tool of required) {
-      log('yellow', `  - ${tool.name} (install: ${tool.package})`);
-    }
-    log('red', '\nPlease install required dependencies before using Swictation');
-    process.exit(1);
   }
 
   if (optional.length > 0) {
@@ -555,7 +691,7 @@ function detectGPUComputeCapability() {
 
     // Convert "5.2" -> 52, "8.6" -> 86, "12.0" -> 120
     const [major, minor] = computeCap.split('.').map(n => parseInt(n));
-    result.smVersion = major * 10 + minor;
+    result.smVersion = parseInt(`${major}${minor}`);
 
     log('green', `✓ Detected GPU: ${gpuName}`);
     log('cyan', `  Compute Capability: ${computeCap} (sm_${result.smVersion})`);
@@ -614,33 +750,11 @@ function selectGPUPackageVariant(smVersion) {
  * Returns an array of directories to include in LD_LIBRARY_PATH
  * Now includes ~/.local/share/swictation/gpu-libs as PRIMARY source
  */
-/**
- * Detect actual npm installation path (handles nvm vs system-wide)
- * This is critical for service files to find the correct libraries
- */
-function detectActualNpmInstallPath() {
-  // __dirname is where this script is running from
-  // For system-wide: /usr/local/lib/node_modules/swictation
-  // For nvm: /home/user/.nvm/versions/node/vX.Y.Z/lib/node_modules/swictation
-
-  // Return the actual installation directory
-  return __dirname;
-}
-
-/**
- * Detect where npm global packages are installed
- * This helps find the native library path for LD_LIBRARY_PATH
- */
-function detectNpmNativeLibPath() {
-  const installDir = detectActualNpmInstallPath();
-  return path.join(installDir, 'lib', 'native');
-}
-
 function detectCudaLibraryPaths() {
   const paths = [];
 
   // PRIORITY 1: User's GPU libs directory (our multi-architecture packages)
-  const gpuLibsDir = path.join(os.homedir(), '.local', 'share', 'swictation', 'gpu-libs');
+  const gpuLibsDir = path.join(getDataDir(), 'gpu-libs');
   if (fs.existsSync(gpuLibsDir)) {
     paths.push(gpuLibsDir);
   }
@@ -700,11 +814,13 @@ const MACOS_CHECKSUMS = {
 function loadChecksums() {
   const checksumsPath = path.join(__dirname, 'checksums.txt');
 
-  if (!fs.existsSync(checksumsPath)) {
+  // Read directly in try/catch — avoids TOCTOU race with existsSync
+  let content;
+  try {
+    content = fs.readFileSync(checksumsPath, 'utf8');
+  } catch (err) {
     throw new Error('checksums.txt not found - package may be corrupted');
   }
-
-  const content = fs.readFileSync(checksumsPath, 'utf8');
   const checksums = new Map();
 
   for (const line of content.split('\n')) {
@@ -835,7 +951,7 @@ async function downloadGPULibraries() {
   const GPU_LIBS_VERSION = '1.2.0';
   const variant = packageInfo.variant;
   const releaseUrl = `https://github.com/robertelee78/swictation/releases/download/gpu-libs-v${GPU_LIBS_VERSION}/cuda-libs-${variant}.tar.gz`;
-  const tmpDir = path.join(os.tmpdir(), 'swictation-gpu-install');
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'swictation-gpu-'));
   const tarPath = path.join(tmpDir, `cuda-libs-${variant}.tar.gz`);
 
   try {
@@ -850,15 +966,12 @@ async function downloadGPULibraries() {
     }
 
     // Create directories
-    if (!fs.existsSync(tmpDir)) {
-      fs.mkdirSync(tmpDir, { recursive: true });
-    }
     if (!fs.existsSync(gpuLibsDir)) {
       fs.mkdirSync(gpuLibsDir, { recursive: true });
     }
 
     // Check if GPU libs are already installed by checking metadata file
-    const configDir = path.join(os.homedir(), '.config', 'swictation');
+    const configDir = getConfigDir();
     const gpuPackageInfoPath = path.join(configDir, 'gpu-package-info.json');
 
     let skipDownload = false;
@@ -960,6 +1073,8 @@ async function downloadGPULibraries() {
       log('cyan', `   3. Install: cp /tmp/${variant}/libs/*.so ${gpuLibsDir}/`);
       _installWarnings.push('GPU library download failed');
     }
+  } finally {
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
   }
 }
 
@@ -976,7 +1091,7 @@ async function downloadONNXRuntimeCoreML() {
   // TODO: Upgrade to 1.23.x+ when fix (PR #26263) is released
   const ORT_VERSION = '1.22.0'; // ONNX Runtime version with CoreML support
   const releaseUrl = `https://github.com/robertelee78/swictation/releases/download/onnx-runtime-macos-v${ORT_VERSION}/libonnxruntime.dylib`;
-  const tmpDir = path.join(os.tmpdir(), 'swictation-macos-install');
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'swictation-macos-'));
   const dylibPath = path.join(tmpDir, 'libonnxruntime.dylib');
 
   // Target directory in npm package
@@ -994,16 +1109,22 @@ async function downloadONNXRuntimeCoreML() {
    */
   function verifyDylibSignature(dylibToCheck) {
     try {
-      const sigInfo = execSync(`codesign -dv "${dylibToCheck}" 2>&1`, { encoding: 'utf8' });
+      // --verify: actually validate the signature (not just display)
+      // --deep: verify nested code
+      // --strict: enforce strict validation rules
+      execFileSync('codesign', ['--verify', '--deep', '--strict', dylibToCheck], { stdio: 'pipe' });
+      // If verification passes, get the Team ID for metadata
       let teamId = null;
-      const teamMatch = sigInfo.match(/TeamIdentifier=(\S+)/);
-      if (teamMatch && teamMatch[1] !== 'not set') {
-        teamId = teamMatch[1];
-      }
-      // codesign -dv exits 0 if signature is present (even ad-hoc)
+      try {
+        const sigInfo = execSync(`codesign -dv "${dylibToCheck}" 2>&1`, { encoding: 'utf8' });
+        const teamMatch = sigInfo.match(/TeamIdentifier=(\S+)/);
+        if (teamMatch && teamMatch[1] !== 'not set') {
+          teamId = teamMatch[1];
+        }
+      } catch (e) { /* metadata extraction optional */ }
       return { valid: true, teamId };
     } catch (err) {
-      // codesign exits non-zero if no signature or corrupt binary
+      // codesign exits non-zero if signature is invalid or missing
       return { valid: false, teamId: null };
     }
   }
@@ -1173,6 +1294,8 @@ async function downloadONNXRuntimeCoreML() {
       _installWarnings.push('CoreML ONNX Runtime download failed');
     }
     throw err;
+  } finally {
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
   }
 }
 
@@ -1340,7 +1463,7 @@ function generateSystemdService(ortLibPath) {
       template = template.replace(/__INSTALL_DIR__/g, binaryPaths.binDir);
 
       // CRITICAL: Detect GPU variant to determine which ONNX Runtime to use
-      const configDir = path.join(os.homedir(), '.config', 'swictation');
+      const configDir = getConfigDir();
       const gpuPackageInfoPath = path.join(configDir, 'gpu-package-info.json');
 
       let finalOrtLibPath, finalLdLibraryPath;
@@ -1363,7 +1486,7 @@ function generateSystemdService(ortLibPath) {
       // Check multiple possible ONNX Runtime locations in priority order:
       // 1. gpu-libs directory (downloaded GPU libraries)
       // 2. Platform package lib directory (bundled with package)
-      const gpuLibsDir = path.join(os.homedir(), '.local', 'share', 'swictation', 'gpu-libs');
+      const gpuLibsDir = path.join(getDataDir(), 'gpu-libs');
       const gpuLibsOrtPath = path.join(gpuLibsDir, 'libonnxruntime.so');
       const platformOrtPath = path.join(binaryPaths.libDir, 'libonnxruntime.so');
 
@@ -1823,15 +1946,12 @@ function generateLaunchdServices(ortLibPath) {
       daemonTemplate = daemonTemplate.replace(/\{\{LOG_DIR\}\}/g, logDir);
       daemonTemplate = daemonTemplate.replace(/\{\{HOME\}\}/g, homeDir);
       daemonTemplate = daemonTemplate.replace(/\{\{ORT_DYLIB_PATH\}\}/g, ortDylibPath);
-      daemonTemplate = daemonTemplate.replace(/\{\{DYLD_LIBRARY_PATH\}\}/g, dylibPath);
 
       log('cyan', `  Daemon binary: ${daemonBinaryPath}`);
       log('cyan', `  Launcher wrapper: ${wrapperScriptPath}`);
       log('cyan', `  ORT_DYLIB_PATH: ${ortDylibPath}`);
-      log('cyan', `  DYLD_LIBRARY_PATH: ${dylibPath}`);
 
-      // Write daemon plist
-      const daemonPlistPath = path.join(launchAgentsDir, 'com.swictation.daemon.plist');
+      // Write daemon plist (uses outer daemonPlistPath declared at function scope)
       fs.writeFileSync(daemonPlistPath, daemonTemplate);
       fs.chmodSync(daemonPlistPath, 0o644); // rw-r--r--
       log('green', `✓ Generated daemon plist: ${daemonPlistPath}`);
@@ -1863,8 +1983,7 @@ function generateLaunchdServices(ortLibPath) {
 
         log('cyan', `  UI binary: ${uiPath}`);
 
-        // Write UI plist
-        const uiPlistPath = path.join(launchAgentsDir, 'com.swictation.ui.plist');
+        // Write UI plist (uses outer uiPlistPath declared at function scope)
         fs.writeFileSync(uiPlistPath, uiTemplate);
         fs.chmodSync(uiPlistPath, 0o644); // rw-r--r--
         log('green', `✓ Generated UI plist: ${uiPlistPath}`);
@@ -1885,11 +2004,10 @@ function generateLaunchdServices(ortLibPath) {
     log('cyan', '\n  Loading services with launchd...');
 
     // Load daemon service (enables auto-start on login)
-    const daemonPlistFinal = path.join(launchAgentsDir, 'com.swictation.daemon.plist');
-    if (fs.existsSync(daemonPlistFinal)) {
+    if (fs.existsSync(daemonPlistPath)) {
       try {
         // Bootstrap is the modern way to load services
-        execSync(`launchctl bootstrap gui/$(id -u) "${daemonPlistFinal}" 2>/dev/null || launchctl load "${daemonPlistFinal}"`, { shell: '/bin/bash' });
+        execSync(`launchctl bootstrap gui/$(id -u) "${daemonPlistPath}" 2>/dev/null || launchctl load "${daemonPlistPath}"`, { shell: '/bin/bash' });
         log('green', '  ✓ Daemon service loaded');
 
         // Start the daemon
@@ -1946,69 +2064,30 @@ function generateLaunchdServices(ortLibPath) {
 async function interactiveConfigMigration() {
   log('cyan', '\n📝 Checking configuration files...');
 
-  const configDir = path.join(os.homedir(), '.config', 'swictation');
+  const configDir = getConfigDir();
   const configPath = path.join(configDir, 'config.toml');
   const newConfigTemplate = path.join(__dirname, 'config', 'config.toml');
 
-  // If no existing config, just copy the template
-  if (!fs.existsSync(configPath)) {
-    if (fs.existsSync(newConfigTemplate)) {
-      try {
-        fs.copyFileSync(newConfigTemplate, configPath);
-        log('green', `✓ Created config file: ${configPath}`);
-      } catch (err) {
-        log('yellow', `⚠️  Could not create config: ${err.message}`);
-      }
+  if (!fs.existsSync(newConfigTemplate)) return;
+
+  if (fs.existsSync(configPath)) {
+    // Back up existing config before overwriting
+    const backupPath = path.join(configDir, 'config.toml.old');
+    try {
+      fs.copyFileSync(configPath, backupPath);
+      log('cyan', `  Backed up existing config to ${backupPath}`);
+    } catch (err) {
+      log('yellow', `  Could not back up config: ${err.message}`);
     }
-    return;
   }
 
-  // Check if new template exists
-  if (!fs.existsSync(newConfigTemplate)) {
-    // No template in package - daemon will generate default config on first run
-    return;
-  }
-
-  // Read both configs
-  let oldConfig, newConfig;
   try {
-    oldConfig = fs.readFileSync(configPath, 'utf8');
-    newConfig = fs.readFileSync(newConfigTemplate, 'utf8');
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.copyFileSync(newConfigTemplate, configPath);
+    log('green', `  Config written to ${configPath}`);
   } catch (err) {
-    log('yellow', `⚠️  Error reading config files: ${err.message}`);
-    return;
+    log('yellow', `  Could not write config: ${err.message}`);
   }
-
-  // If configs are identical, no action needed
-  if (oldConfig === newConfig) {
-    log('green', '✓ Config file is up to date');
-    return;
-  }
-
-  // Configs differ - offer migration options
-  log('yellow', '\n⚠️  Config file exists and differs from new template');
-  log('cyan', '\nOptions:');
-  log('cyan', '  [K] Keep    - Keep your current config (default)');
-  log('cyan', '  [N] New     - Replace with new config (backup old)');
-  log('cyan', '  [M] Merge   - Keep old, add new required fields');
-  log('cyan', '  [D] Diff    - Show differences');
-  log('cyan', '  [S] Skip    - Continue without changes');
-
-  // For non-interactive installs, default to Keep
-  if (!process.stdin.isTTY) {
-    log('green', '\n✓ Non-interactive mode: Keeping existing config');
-    log('cyan', '  Tip: Run "swictation setup" to review config changes');
-    return;
-  }
-
-  // Interactive prompt (simplified for postinstall)
-  log('yellow', '\n⚠️  Interactive mode not available during postinstall');
-  log('cyan', '   Defaulting to: Keep existing config');
-  log('cyan', '   New config template available at:');
-  log('cyan', `   ${newConfigTemplate}`);
-  log('cyan', '\n   To update config manually:');
-  log('cyan', `   diff ${configPath} ${newConfigTemplate}`);
-  log('green', '\n✓ Kept existing config');
 }
 
 /**
@@ -2046,7 +2125,7 @@ function detectGPUVRAM() {
 
     gpuInfo.gpuName = name;
     gpuInfo.vramMB = parseInt(vramMB);
-    gpuInfo.vramGB = Math.round(gpuInfo.vramMB / 1024);
+    gpuInfo.vramGB = Math.floor(gpuInfo.vramMB / 1024);
     gpuInfo.driverVersion = driver;
 
     // Try to get CUDA version
@@ -2093,7 +2172,7 @@ function detectGPUVRAM() {
     }
 
     // Save GPU info for later use by daemon
-    const configDir = path.join(os.homedir(), '.config', 'swictation');
+    const configDir = getConfigDir();
     const gpuInfoPath = path.join(configDir, 'gpu-info.json');
 
     try {
@@ -2140,7 +2219,7 @@ function detectUnifiedMemoryMacOS() {
     gpuInfo.totalMemoryGB = Math.round(gpuInfo.totalMemoryMB / 1024);
 
     // Hard gate: macOS requires 16GB+ unified memory
-    if (gpuInfo.totalMemoryGB < 16) {
+    if (gpuInfo.totalMemoryMB < 14500) {
       log('red', `\n✖ Swictation on macOS requires 16GB+ unified memory.`);
       log('red', `  Detected: ${gpuInfo.totalMemoryGB}GB total system RAM.`);
       log('red', `  The CoreML speech models need at least 16GB to run reliably.`);
@@ -2191,7 +2270,7 @@ function detectUnifiedMemoryMacOS() {
     log('cyan', `     Full ANE acceleration via coreml-native`);
 
     // Save GPU info for later use by daemon
-    const configDir = path.join(os.homedir(), '.config', 'swictation');
+    const configDir = getConfigDir();
     const gpuInfoPath = path.join(configDir, 'gpu-info.json');
 
     try {
@@ -2221,7 +2300,7 @@ async function testLoadModel(modelName, daemonBin, ortLibPath) {
   log('cyan', `  🔄 Test-loading ${modelName} model (max 30s)...`);
 
   // Create a minimal temporary config for testing
-  const configDir = path.join(os.homedir(), '.config', 'swictation');
+  const configDir = getConfigDir();
   const configPath = path.join(configDir, 'config.toml');
   const needsTempConfig = !fs.existsSync(configPath);
 
@@ -2230,7 +2309,7 @@ async function testLoadModel(modelName, daemonBin, ortLibPath) {
       fs.mkdirSync(configDir, { recursive: true });
 
       // Create a proper working config
-      const modelDir = path.join(os.homedir(), '.local', 'share', 'swictation', 'models');
+      const modelDir = path.join(getDataDir(), 'models');
       // Use platform-appropriate hotkeys in the template
       const toggleHotkey = process.platform === 'darwin' ? 'Ctrl+Shift+D' : 'Super+Shift+D';
       const properConfig = `# Swictation Configuration
@@ -2434,23 +2513,32 @@ function detectSystemCapabilities() {
 function recommendOptimalModel(capabilities) {
   // Recommendation logic based on hardware
   if (capabilities.hasGPU) {
-    if (capabilities.gpuMemoryMB >= 4000) {
+    if (capabilities.gpuMemoryMB >= 6000) {
       // High-end GPU: Recommend 1.1B model (best quality, full GPU acceleration)
       return {
         model: '1.1b',
-        reason: `GPU detected: ${capabilities.gpuName} (${Math.round(capabilities.gpuMemoryMB/1024)}GB VRAM)`,
+        reason: `GPU detected: ${capabilities.gpuName} (${Math.floor(capabilities.gpuMemoryMB/1024)}GB VRAM)`,
         description: 'Best quality - Full GPU acceleration with FP32 precision',
         size: '~75MB download (FP32 + INT8 versions)',
         performance: '62x realtime speed on GPU'
       };
-    } else {
-      // Lower VRAM: Recommend 0.6B model
+    } else if (capabilities.gpuMemoryMB >= 3500) {
+      // Mid-range VRAM: Recommend 0.6B model
       return {
         model: '0.6b',
-        reason: `GPU detected but limited VRAM (${Math.round(capabilities.gpuMemoryMB/1024)}GB)`,
+        reason: `GPU detected but limited VRAM (${Math.floor(capabilities.gpuMemoryMB/1024)}GB)`,
         description: 'Lighter model for lower VRAM systems',
         size: '~111MB',
         performance: 'Fast on GPU'
+      };
+    } else {
+      // Very low VRAM: fall through to CPU recommendation
+      return {
+        model: '0.6b',
+        reason: `GPU detected but very low VRAM (${Math.floor(capabilities.gpuMemoryMB/1024)}GB) - using CPU mode`,
+        description: 'Lighter model for low VRAM systems',
+        size: '~111MB',
+        performance: 'CPU inference'
       };
     }
   } else {
@@ -2776,7 +2864,7 @@ async function checkNvidiaHibernation() {
  * @returns {boolean}
  */
 function isModelDownloaded(modelName) {
-  const modelDir = path.join(os.homedir(), '.local', 'share', 'swictation', 'models');
+  const modelDir = path.join(getDataDir(), 'models');
 
   // Map model names to directory names
   const modelDirs = {
@@ -2876,7 +2964,7 @@ async function showNextSteps() {
   log('green', '\n✨ Swictation installed successfully!');
 
   // Try to read GPU info from detection
-  const gpuInfoPath = path.join(os.homedir(), '.config', 'swictation', 'gpu-info.json');
+  const gpuInfoPath = path.join(getConfigDir(), 'gpu-info.json');
   let gpuInfo = null;
   let recommendation;
 
@@ -2992,7 +3080,7 @@ async function showNextSteps() {
  * @param {string} testedModel - The model that was successfully tested (e.g., '0.6b-gpu', '1.1b-gpu')
  */
 function updateConfigWithTestedModel(testedModel) {
-  const configDir = path.join(os.homedir(), '.config', 'swictation');
+  const configDir = getConfigDir();
   const configPath = path.join(configDir, 'config.toml');
 
   if (!fs.existsSync(configPath)) {
@@ -3109,8 +3197,8 @@ async function main() {
     await interactiveConfigMigration();
 
     phaseLog('Downloading GPU libraries...');
-    let gpuInfo;
-    let ortLibPath;
+    let gpuInfo = { hasGPU: false, recommendedModel: 'cpu-only' };
+    let ortLibPath = null;
 
     if (process.platform === 'linux') {
       // Linux: NVIDIA GPU with CUDA
@@ -3141,6 +3229,8 @@ async function main() {
 
       // macOS ONNX Runtime path
       ortLibPath = path.join(__dirname, 'lib', 'native', 'libonnxruntime.dylib');
+    } else {
+      throw new Error(`Unsupported platform: ${process.platform} (should have been caught by checkPlatform)`);
     }
 
     // Download recommended model BEFORE testing it (fixes chicken-and-egg on fresh installs)
@@ -3170,7 +3260,7 @@ async function main() {
       gpuInfo.fallbackToCpu = testResult.fallbackToCpu || false;
 
       // Save updated GPU info with test results
-      const configDir = path.join(os.homedir(), '.config', 'swictation');
+      const configDir = getConfigDir();
       const gpuInfoPath = path.join(configDir, 'gpu-info.json');
 
       try {
@@ -3194,7 +3284,7 @@ async function main() {
     phaseLog('Platform integration...');
     // Phase: Platform-specific integration
     if (process.platform === 'linux') {
-      const waylandResults = await setupWaylandIntegration();
+      await setupWaylandIntegration();
     } else if (process.platform === 'darwin') {
       log('cyan', '');
       log('cyan', 'Accessibility Permission:');
@@ -3209,7 +3299,7 @@ async function main() {
 
     phaseLog('Verifying installation...');
     if (process.platform === 'linux') {
-      const serviceResults = await enableAndStartService();
+      await enableAndStartService();
     } else if (process.platform === 'darwin') {
       try {
         execSync('launchctl print gui/$(id -u)/com.swictation.daemon 2>/dev/null', { stdio: 'ignore', shell: '/bin/bash' });
@@ -3258,7 +3348,9 @@ async function main() {
     }
     log('green', `╚${'═'.repeat(boxW)}╝`);
 
-    const logPath = path.join(os.homedir(), '.local', 'share', 'swictation', 'install.log');
+    const logPath = process.platform === 'darwin'
+      ? path.join(os.homedir(), 'Library', 'Logs', 'swictation', 'install.log')
+      : path.join(os.homedir(), '.local', 'share', 'swictation', 'install.log');
     log('cyan', `\n  Full log: ${logPath}`);
 
   } catch (err) {
@@ -3271,7 +3363,9 @@ async function main() {
       log('green', `  Fix:   Run "swictation setup" to complete configuration manually`);
       _logToFile(`FATAL: ${err.message}\n${err.stack}`);
     }
-    const logPath = path.join(os.homedir(), '.local', 'share', 'swictation', 'install.log');
+    const logPath = process.platform === 'darwin'
+      ? path.join(os.homedir(), 'Library', 'Logs', 'swictation', 'install.log')
+      : path.join(os.homedir(), '.local', 'share', 'swictation', 'install.log');
     log('cyan', `\n  Full log: ${logPath}`);
     log('yellow', '\nSome steps may have failed, but installation can continue.');
     log('cyan', 'Run "swictation setup" to complete configuration manually.');

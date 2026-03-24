@@ -99,6 +99,7 @@ impl Pipeline {
         //   "0.6b-cpu" = Force 0.6B CPU
         //   "0.6b-gpu" = Force 0.6B GPU
         //   "1.1b-gpu" = Force 1.1B GPU
+        //   "1.1b-coreml" = Force CoreML 1.1B on macOS (alias: "coreml-native")
 
         let stt = if config.stt_model_override != "auto" {
             // MANUAL OVERRIDE: User specified exact model
@@ -148,11 +149,11 @@ impl Pipeline {
                     SttEngine::Parakeet0_6B(ort_recognizer)
                 }
                 #[cfg(all(target_os = "macos", feature = "coreml-native"))]
-                "coreml-native" => {
-                    info!("  Loading Parakeet-TDT-0.6B via native CoreML (forced)...");
+                "1.1b-coreml" | "coreml-native" => {
+                    info!("  Loading Parakeet-TDT-1.1B via native CoreML (forced)...");
                     let recognizer = CoreMLRecognizer::new(&config.stt_coreml_model_path)
                         .map_err(|e| anyhow::anyhow!("Failed to load CoreML model: {}", e))?;
-                    info!("✓ Parakeet-TDT-0.6B loaded successfully (CoreML-ANE, forced)");
+                    info!("✓ Parakeet-TDT-1.1B loaded successfully (CoreML-ANE, forced)");
                     SttEngine::CoreMLNative(recognizer)
                 }
                 _ => {
@@ -161,7 +162,7 @@ impl Pipeline {
                         Valid options: 'auto', '0.6b-cpu', '0.6b-gpu', '1.1b-gpu'{}",
                         config.stt_model_override,
                         if cfg!(all(target_os = "macos", feature = "coreml-native")) {
-                            ", 'coreml-native'"
+                            ", '1.1b-coreml' (or 'coreml-native')"
                         } else {
                             ""
                         }
@@ -182,10 +183,10 @@ impl Pipeline {
                 let coreml_model_path = config.stt_coreml_model_path.clone();
                 if coreml_model_path.join("encoder.mlmodelc").exists() {
                     info!("Native CoreML models found — using CoreML with full ANE acceleration");
-                    info!("  Loading Parakeet-TDT-0.6B via native CoreML...");
+                    info!("  Loading Parakeet-TDT-1.1B via native CoreML...");
                     match CoreMLRecognizer::new(&coreml_model_path) {
                         Ok(recognizer) => {
-                            info!("✓ Parakeet-TDT-0.6B loaded successfully (CoreML-ANE)");
+                            info!("✓ Parakeet-TDT-1.1B loaded successfully (CoreML-ANE)");
                             coreml_engine = Some(SttEngine::CoreMLNative(recognizer));
                         }
                         Err(e) => {

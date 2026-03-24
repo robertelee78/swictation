@@ -47,15 +47,11 @@
 		<key>ORT_DYLIB_PATH</key>
 		<string>{{ORT_DYLIB_PATH}}</string>
 
-		<!-- DYLD_LIBRARY_PATH: CoreML runtime + ONNX Runtime CoreML providers (for GPU acceleration)
-		     macOS equivalent of LD_LIBRARY_PATH on Linux
-		     Without this: Performance regression and potential runtime errors
-		     postinstall.js dynamically sets this to the bundled library directory -->
-		<key>DYLD_LIBRARY_PATH</key>
-		<string>{{DYLD_LIBRARY_PATH}}</string>
+		<!-- Note: DYLD_LIBRARY_PATH removed — SIP strips DYLD_* from launchd processes.
+		     The wrapper script handles library paths directly. -->
 
 		<!-- DYLD_FALLBACK_LIBRARY_PATH: Fallback search path for dylibs
-		     Ensures system libraries are found if not in DYLD_LIBRARY_PATH -->
+		     Ensures system libraries are found -->
 		<key>DYLD_FALLBACK_LIBRARY_PATH</key>
 		<string>/usr/local/lib:/usr/lib</string>
 

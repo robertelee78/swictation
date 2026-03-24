@@ -97,7 +97,7 @@ pub struct DaemonConfig {
 
     /// STT model selection override
     /// Options: "auto" (platform-adaptive), "0.6b-cpu", "0.6b-gpu", "1.1b-gpu"
-    /// macOS + coreml-native feature: also "coreml-native"
+    /// macOS + coreml-native feature: also "1.1b-coreml" (alias: "coreml-native")
     pub stt_model_override: String,
 
     /// Path to 0.6B model directory (OrtRecognizer)
@@ -191,22 +191,8 @@ impl DaemonConfig {
         Ok(())
     }
 
-    /// Get default config path
+    /// Get default config path using swictation_paths as single source of truth
     fn default_config_path() -> PathBuf {
-        let config_dir = if cfg!(target_os = "windows") {
-            dirs::config_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join("Swictation")
-        } else if cfg!(target_os = "macos") {
-            dirs::config_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join("swictation")
-        } else {
-            dirs::config_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join("swictation")
-        };
-
-        config_dir.join("config.toml")
+        swictation_paths::config_dir().join("config.toml")
     }
 }
