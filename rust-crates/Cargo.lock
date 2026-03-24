@@ -511,6 +511,8 @@ dependencies = [
 [[package]]
 name = "coreml-native"
 version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "322ddf1574fe27fb381f4c259f6e87fbb8e5ca7eba4e7dad0aa128274b95cb9f"
 dependencies = [
  "block2",
  "objc2",
