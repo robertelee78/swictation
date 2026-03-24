@@ -2721,7 +2721,7 @@ dependencies = [
 
 [[package]]
 name = "swictation-audio"
-version = "0.7.34"
+version = "0.7.35"
 dependencies = [
  "anyhow",
  "approx 0.5.1",
@@ -2737,7 +2737,7 @@ dependencies = [
 
 [[package]]
 name = "swictation-broadcaster"
-version = "0.7.34"
+version = "0.7.35"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2753,7 +2753,7 @@ dependencies = [
 
 [[package]]
 name = "swictation-context-learning"
-version = "0.7.34"
+version = "0.7.35"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2773,7 +2773,7 @@ dependencies = [
 
 [[package]]
 name = "swictation-daemon"
-version = "0.7.34"
+version = "0.7.35"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2810,7 +2810,7 @@ dependencies = [
 
 [[package]]
 name = "swictation-metrics"
-version = "0.7.34"
+version = "0.7.35"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2832,7 +2832,7 @@ dependencies = [
 
 [[package]]
 name = "swictation-paths"
-version = "0.7.34"
+version = "0.7.35"
 dependencies = [
  "anyhow",
  "dirs",
@@ -2841,7 +2841,7 @@ dependencies = [
 
 [[package]]
 name = "swictation-stt"
-version = "0.7.34"
+version = "0.7.35"
 dependencies = [
  "anyhow",
  "approx 0.5.1",
@@ -2858,7 +2858,7 @@ dependencies = [
 
 [[package]]
 name = "swictation-vad"
-version = "0.7.34"
+version = "0.7.35"
 dependencies = [
  "anyhow",
  "hound",
@@ -2871,7 +2871,7 @@ dependencies = [
 
 [[package]]
 name = "swictation-wasm-utils"
-version = "0.7.34"
+version = "0.7.35"
 dependencies = [
  "chrono",
  "console_error_panic_hook",

@@ -1,6 +1,6 @@
 [package]
 name = "swictation-ui"
-version = "0.7.34"
+version = "0.7.35"
 description = "Tauri-based UI for Swictation dictation system"
 authors = ["Swictation Team"]
 license = "MIT"
