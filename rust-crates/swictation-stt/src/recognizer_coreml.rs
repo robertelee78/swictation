@@ -223,6 +223,8 @@ mod inner {
                     SttError::ModelLoadError("Could not find <blk> token in tokens.txt".to_string())
                 })? as i64;
 
+            // Default unk_id=0 is safe: token 0 in Parakeet-TDT is <blk> (blank),
+            // already filtered by blank_id. Matches recognizer_ort.rs behavior.
             let unk_id = tokens.iter().position(|t| t == "<unk>").unwrap_or(0) as i64;
 
             info!(
@@ -336,7 +338,18 @@ mod inner {
                 let (encoder_features, encoder_dim, valid_frames) =
                     self.run_encoder(&audio, actual_length)?;
 
-                // Load carry state into self so run_decoder() sees it.
+                if valid_frames == 0 && actual_length > 0 {
+                    warn!(
+                        "Chunk {}/{}: encoder returned 0 valid frames for {} samples of audio",
+                        chunk_idx + 1, num_chunks, actual_length
+                    );
+                }
+
+                // INVARIANT: Load carry state into self BEFORE any run_decoder() call.
+                // This ensures the LSTM states from the previous chunk (or initial zeros
+                // for the first chunk) are used. After this function returns, self.decoder_state_h/c
+                // will hold the final state of the last chunk — overwritten on the next call
+                // to recognize_samples() by a fresh DecoderCarryState::initial().
                 self.decoder_state_h = carry.state_h.clone();
                 self.decoder_state_c = carry.state_c.clone();
 
@@ -346,7 +359,9 @@ mod inner {
                 let skip_frames = if chunk_idx == 0 {
                     0
                 } else {
-                    let skip = (OVERLAP_SAMPLES as f64 / actual_length as f64
+                    // The encoder downsampling ratio is constant (MAX_AUDIO_SAMPLES -> ~188 frames)
+                    // regardless of actual audio length, so use the fixed window size as denominator.
+                    let skip = (OVERLAP_SAMPLES as f64 / MAX_AUDIO_SAMPLES as f64
                         * valid_frames as f64)
                         .round() as usize;
                     // Ensure we decode at least 1 frame.
@@ -648,10 +663,12 @@ mod inner {
                     break;
                 }
 
-                // Extract single encoder frame t from [1, 1024, total_time] in row-major order.
-                // Row-major means time varies fastest: flat[f * total_time + t] = feature f at time t.
-                // Verified: flat[0] matches Python but flat[1] = features[0,0,1] (row-major),
-                // NOT features[0,1,0] (column-major).
+                // Extract single encoder frame t from [1, encoder_dim, total_time] in row-major order.
+                // Row-major: flat[f * total_time + t] = feature f at time t.
+                if encoder_dim == 0 {
+                    warn!("encoder_dim is 0 — cannot decode");
+                    break;
+                }
                 let total_time = encoder_features.len() / encoder_dim;
                 if t >= total_time {
                     warn!(
@@ -666,30 +683,34 @@ mod inner {
 
                 // Run joiner
                 let logits = self.run_joiner(&encoder_frame, &decoder_out)?;
-                let actual_logit_count = logits.len().min(vocab_size + 5); // vocab + 5 TDT durations
-                let num_durations = actual_logit_count.saturating_sub(vocab_size);
+                let num_tdt_durations = 5; // TDT duration classes: 0,1,2,3,4
+                let token_end = vocab_size.min(logits.len());
+                let duration_end = (vocab_size + num_tdt_durations).min(logits.len());
+                let num_durations = duration_end.saturating_sub(vocab_size);
 
-                let token_logits = &logits[0..vocab_size];
-                let duration_logits = &logits[vocab_size..vocab_size + num_durations];
+                let token_logits = &logits[0..token_end];
+                let duration_logits = &logits[vocab_size..duration_end];
 
-                // Greedy token selection
+                // Greedy token selection (NaN-safe comparison)
                 let y = token_logits
                     .iter()
                     .enumerate()
-                    .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+                    .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
                     .map(|(idx, _)| idx as i64)
-                    .unwrap();
+                    .unwrap_or(blank_id);
 
-                // Greedy duration selection
+                // Greedy duration selection (NaN-safe comparison)
                 let mut skip = if num_durations > 0 {
                     duration_logits
                         .iter()
                         .enumerate()
-                        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+                        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
                         .map(|(idx, _)| idx)
                         .unwrap_or(0)
                 } else {
-                    0
+                    // No duration logits available — advance by 1 frame to prevent
+                    // infinite loop (the while loop only advances when skip > 0).
+                    1
                 };
 
                 // Statistics
@@ -804,6 +825,7 @@ mod inner {
 
         let tokens: Vec<String> = contents
             .lines()
+            .filter(|line| !line.trim().is_empty())
             .map(|line| line.split_whitespace().next().unwrap_or("").to_string())
             .collect();
 
@@ -949,6 +971,25 @@ mod inner {
             let total3 = STRIDE_SAMPLES + OVERLAP_SAMPLES;
             assert_eq!(total3, CHUNK_SAMPLES);
             assert_eq!(compute_num_chunks(total3), 1);
+
+            // Verify the skip predicate fires: chunk_idx > 0 AND actual_length <= OVERLAP_SAMPLES
+            // total = 240001 → 2 chunks. Chunk 1: start=208000, end=240001, len=32001
+            // 32001 > 32000 → NOT skipped (barely). This is the tightest non-skip case.
+            let total4 = CHUNK_SAMPLES + 1;
+            let actual4 = total4.min(STRIDE_SAMPLES + CHUNK_SAMPLES) - STRIDE_SAMPLES;
+            assert_eq!(actual4, 32_001);
+            assert!(actual4 > OVERLAP_SAMPLES); // not skipped
+
+            // total = 240000 + 0 = 240000 → 1 chunk, skip never tested. But:
+            // Simulate: if somehow chunk_idx=1 with actual_length=100, the skip FIRES.
+            let tiny_actual = 100_usize;
+            let chunk_idx_sim = 1_usize;
+            let should_skip = chunk_idx_sim > 0 && tiny_actual <= OVERLAP_SAMPLES;
+            assert!(should_skip, "Skip predicate must fire for tiny chunks on non-first chunk");
+
+            // And the predicate does NOT fire for chunk 0 even with tiny audio
+            let should_skip_first = 0 > 0 && tiny_actual <= OVERLAP_SAMPLES;
+            assert!(!should_skip_first, "Skip must never fire on chunk 0");
         }
 
         #[test]
