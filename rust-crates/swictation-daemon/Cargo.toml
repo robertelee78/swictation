@@ -1,6 +1,6 @@
 [package]
 name = "swictation-daemon"
-version = "0.7.30"
+version = "0.7.31"
 edition = "2021"
 
 [lib]

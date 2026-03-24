@@ -94,18 +94,14 @@ You can add this to your Login Items for auto-start:
 
 ## Hotkey Configuration
 
-The default hotkey is **Cmd+Shift+D** (⌘⇧D) to toggle dictation.
+The default hotkey is **Ctrl+Shift+D** to toggle dictation.
 
 To customize, edit `~/.config/swictation/config.toml`:
 
 ```toml
-[hotkey]
-enabled = true
-modifiers = ["super", "shift"]  # Cmd+Shift
-key = "d"
+[hotkeys]
+toggle = "Ctrl+Shift+D"
 ```
-
-Available modifiers: `super` (Cmd), `shift`, `alt` (Option), `ctrl`
 
 ## GPU Acceleration
 

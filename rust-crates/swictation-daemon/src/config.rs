@@ -41,6 +41,7 @@ fn get_default_vad_model_path() -> PathBuf {
 
 /// Hotkey configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct HotkeyConfig {
     /// Toggle hotkey (default: "Ctrl+Shift+D" on macOS, "Super+Shift+D" on Linux)
     /// User-configurable via UI settings
@@ -106,6 +107,7 @@ pub struct DaemonConfig {
     pub stt_1_1b_model_path: PathBuf,
 
     /// Path to CoreML model directory (macOS native, optional)
+    #[serde(default = "get_default_coreml_model_path")]
     pub stt_coreml_model_path: PathBuf,
 
     /// Number of threads for ONNX Runtime

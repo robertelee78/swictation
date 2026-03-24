@@ -429,19 +429,36 @@ async fn daemon_main(
 
         let vram_mb = crate::gpu::get_gpu_memory_mb().map(|(total, _free)| total);
 
-        if config.stt_model_override != "auto" {
+        let model_verified = if config.stt_model_override != "auto" {
             info!("  Override active: {}", config.stt_model_override);
-            match config.stt_model_override.as_str() {
-                "1.1b-gpu" => info!("  Would load: Parakeet-TDT-1.1B-INT8 (GPU, forced)"),
-                "0.6b-gpu" => info!("  Would load: Parakeet-TDT-0.6B (GPU, forced)"),
-                "0.6b-cpu" => info!("  Would load: Parakeet-TDT-0.6B (CPU, forced)"),
+            let verified = match config.stt_model_override.as_str() {
+                "1.1b-gpu" => {
+                    info!("  Would load: Parakeet-TDT-1.1B-INT8 (GPU, forced)");
+                    info!("    Path: {}", config.stt_1_1b_model_path.display());
+                    config.stt_1_1b_model_path.join("encoder.int8.onnx").exists()
+                }
+                "0.6b-gpu" => {
+                    info!("  Would load: Parakeet-TDT-0.6B (GPU, forced)");
+                    info!("    Path: {}", config.stt_0_6b_model_path.display());
+                    config.stt_0_6b_model_path.join("encoder.onnx").exists()
+                }
+                "0.6b-cpu" => {
+                    info!("  Would load: Parakeet-TDT-0.6B (CPU, forced)");
+                    info!("    Path: {}", config.stt_0_6b_model_path.display());
+                    config.stt_0_6b_model_path.join("encoder.onnx").exists()
+                }
                 "1.1b-coreml" => {
                     info!("  Would load: Parakeet-TDT-1.1B (CoreML, forced)");
                     info!("    Path: {}", config.stt_coreml_model_path.display());
                     info!("    Reason: Native Apple Neural Engine acceleration");
+                    config.stt_coreml_model_path.join("encoder.mlmodelc").exists()
                 }
-                _ => error!("  Invalid override value!"),
-            }
+                _ => {
+                    error!("  Invalid override value!");
+                    false
+                }
+            };
+            verified
         } else {
             info!("  Mode: auto (VRAM-based)");
             if let Some(vram) = vram_mb {
@@ -450,25 +467,35 @@ async fn daemon_main(
                     info!("  Would load: Parakeet-TDT-1.1B-INT8 (GPU)");
                     info!("    Path: {}", config.stt_1_1b_model_path.display());
                     info!("    Reason: ≥6GB VRAM available");
+                    config.stt_1_1b_model_path.join("encoder.int8.onnx").exists()
                 } else if vram >= 3500 {
                     info!("  Would load: Parakeet-TDT-0.6B (GPU)");
                     info!("    Path: {}", config.stt_0_6b_model_path.display());
                     info!("    Reason: ≥3.5GB VRAM available");
+                    config.stt_0_6b_model_path.join("encoder.onnx").exists()
                 } else {
                     info!("  Would load: Parakeet-TDT-0.6B (CPU)");
                     info!("    Path: {}", config.stt_0_6b_model_path.display());
                     info!("    Reason: <3.5GB VRAM ({}MB), using CPU fallback", vram);
+                    config.stt_0_6b_model_path.join("encoder.onnx").exists()
                 }
             } else {
                 info!("  Detected: No GPU");
                 info!("  Would load: Parakeet-TDT-0.6B (CPU)");
                 info!("    Path: {}", config.stt_0_6b_model_path.display());
                 info!("    Reason: No NVIDIA GPU detected");
+                config.stt_0_6b_model_path.join("encoder.onnx").exists()
             }
-        }
+        };
 
-        info!("✅ Dry-run complete (no models loaded)");
-        return Ok(());
+        if model_verified {
+            info!("    Model files verified on disk");
+            info!("✅ Dry-run complete (no models loaded)");
+            return Ok(());
+        } else {
+            error!("    Model files NOT found at expected path");
+            return Err(anyhow::anyhow!("Model files not found for dry-run verification"));
+        }
     }
 
     // Initialize daemon with models loaded
