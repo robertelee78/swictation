@@ -31,7 +31,7 @@ Pure Rust daemon with VAD-triggered auto-transcription, sub-second latency, and 
 #### macOS
 - **Apple Silicon** (M1/M2/M3/M4) - Intel Macs not supported
 - **macOS 14 Sonoma** or **macOS 15 Sequoia** (required for CoreML)
-- **8GB+ RAM minimum** (16GB+ recommended for 1.1B model)
+- **16GB+ RAM minimum**
 - **Node.js 18+**
 - **Accessibility permissions** (granted during setup)
 

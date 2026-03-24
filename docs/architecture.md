@@ -2,6 +2,8 @@
 
 Detailed technical architecture documentation for the Swictation voice dictation system.
 
+> **Recent Changes (2026-03-23):** CoreML recognizer rewritten with windowed chunking for arbitrary-length audio (Section 4). macOS text injection overhauled to batched CGEvent delivery (Section 6). Tauri desktop application added (Section 7). npm postinstall hardened with resilient downloads, phase tracking, and structured error codes. Security: tar, ureq, lru crates updated; unused `statistical` crate removed.
+
 ---
 
 ## System Overview
@@ -585,6 +587,66 @@ Audio → Mel Features → CoreMlRecognizer → coreml-native → CoreML Framewo
 
 The `recognizer_coreml.rs` module wraps the `coreml-native` crate and presents the same `recognize()` interface as `OrtRecognizer`.
 
+#### Windowed Chunking for Arbitrary-Length Audio
+
+Prior to this rewrite the CoreML encoder had a hard 15-second input limit (240,000 samples). Audio longer than that was silently truncated. The recognizer now processes audio of any length via overlapping chunks whose LSTM state is carried forward across boundaries.
+
+**Key constants (source: `recognizer_coreml.rs`):**
+
+| Constant | Value | Meaning |
+|----------|-------|---------|
+| `CHUNK_SAMPLES` | 240,000 | Encoder input window (15 s @ 16 kHz) |
+| `OVERLAP_SAMPLES` | 32,000 | Boundary overlap (2 s) — provides acoustic context |
+| `STRIDE_SAMPLES` | 208,000 | Distance between chunk starts (13 s) |
+
+**Decoder carry-over state (`DecoderCarryState`, ~5.5 KB per chunk boundary):**
+
+```rust
+struct DecoderCarryState {
+    state_h: Vec<f32>,      // LSTM hidden state [2, 1, hidden_size] flattened
+    state_c: Vec<f32>,      // LSTM cell state   [2, 1, hidden_size] flattened
+    decoder_out: Vec<f32>,  // Last decoder embedding (empty = bootstrap from blank_id)
+    last_token: i64,        // Last emitted non-blank token
+}
+```
+
+**Processing flow:**
+
+```
+Audio samples (arbitrary length)
+        │
+        ▼
+┌───────────────────────────────────────────────┐
+│  Split into stride-based chunks               │
+│  chunk[0]: samples[0 .. 240000]               │
+│  chunk[1]: samples[208000 .. 448000]          │
+│  chunk[N]: samples[N*208000 .. N*208000+240000]│
+└───────────────────┬───────────────────────────┘
+                    │  (sequential, per chunk)
+                    ▼
+┌───────────────────────────────────────────────┐
+│  Encoder  →  Encoded frames (all 15s)         │
+│  Decoder  →  Skip overlap frames (avoid dup.) │
+│  LSTM state carried forward (DecoderCarryState)│
+└───────────────────┬───────────────────────────┘
+                    │  (accumulate tokens)
+                    ▼
+              Joined text output
+```
+
+**Edge case handling:**
+
+- Empty audio: returns `""` immediately without model invocation
+- Audio ≤ 15 s: single-chunk path, same behavior as before
+- Trailing chunk < 2 s (32,000 samples): skipped to avoid padding artifacts
+- Overlap frames: decoder advances past the 2-second overlap region on all chunks after the first, preventing duplicate tokens at boundaries
+
+**Performance characteristics:**
+
+- Memory per chunk: constant (encoder re-uses the same 15 s allocation)
+- Scaling: linear — 30 s audio → 2 chunks, 60 s → 4 chunks, 5 min → ~22 chunks
+- Public API unchanged: `recognize_samples(&mut self, samples: &[f32]) -> Result<String>`
+
 ---
 
 ### 5. Text Transformation (MidStream)
@@ -876,7 +938,7 @@ protocol that wtype requires. ydotool uses kernel uinput instead.
 
 **Text injection tools support full Unicode, but STT output is ASCII-only:**
 
-The text injection layer (xdotool/wtype/ydotool) can technically inject any Unicode character. However, **Swictation's speech-to-text engine (Whisper) only outputs ASCII characters**. End-to-end, users will only see:
+The text injection layer (xdotool/wtype/ydotool) can technically inject any Unicode character. However, **Swictation's speech-to-text engine (Parakeet-TDT) only outputs ASCII characters**. End-to-end, users will only see:
 
 - ✅ **ASCII (basic Latin)** - A-Z, a-z, 0-9, punctuation
 - ❌ **Latin Extended** - Accented characters (café → cafe)
@@ -1014,6 +1076,49 @@ pub fn detect_display_server() -> DisplayServerInfo {
 - **Tests:** `tests/display_server_detection.rs` (285 lines)
 - **Documentation:** `docs/display-servers.md` (comprehensive guide)
 
+#### macOS Text Injection
+
+On macOS, text injection uses Core Graphics `CGEventKeyboardSetUnicodeString` instead of spawning external tools. The implementation was rewritten from per-character event posting to **batched CGEvent delivery**.
+
+**Key constants:**
+
+| Constant | Value | Rationale |
+|----------|-------|-----------|
+| `BATCH_UTF16_LIMIT` | 20 | Apple's documented maximum UniChar per CGEvent |
+| `BATCH_DELAY_MS` | 5 | Conservative inter-chunk delay (WindowServer dispatch) |
+
+**How batching works:**
+
+The input string is encoded as UTF-16. The encoder walks the code-unit slice and accumulates units into a batch. Before committing a batch it calls `is_high_surrogate()` to ensure a surrogate pair is never split across two events — characters outside the Basic Multilingual Plane (U+10000+) are kept intact.
+
+Each batch is delivered by a single `CGEventKeyboardSetUnicodeString` + `CGEventPost` call pair, so the WindowServer receives the entire batch as one atomic event.
+
+```
+text → UTF-16 code units
+     → batch (≤20 units, surrogate-safe)
+     → CGEventKeyboardSetUnicodeString(event, len, units)
+     → CGEventPost(kCGHIDEventTap, event)
+     → 5 ms delay
+     → repeat for remaining batches
+```
+
+**Performance improvement over per-character approach:**
+
+| Metric | Before (per-character) | After (batched) |
+|--------|----------------------|-----------------|
+| HID events for 100 chars | 100 | 6 |
+| Approximate time (100 chars) | ~150 ms | ~25 ms |
+| Speedup | — | ~6x |
+| Dropped spaces under load | Yes (race condition) | No (atomic delivery) |
+
+**Permissions model:**
+
+The injector calls `AXIsProcessTrustedWithOptions` on first use to verify Accessibility permission. A reliable secondary check attempts `CGEventTapCreate` — which returns `NULL` without Accessibility permission even when `AXIsProcessTrusted()` returns a stale cached `true`. If permissions are absent the daemon surfaces a clear prompt directing the user to System Settings > Privacy & Security > Accessibility.
+
+**Key files:**
+
+- `rust-crates/swictation-daemon/src/macos_text_inject.rs` — `MacOSTextInjector` struct and batching logic
+
 ---
 
 ## Data Flow
@@ -1141,7 +1246,7 @@ pub fn detect_display_server() -> DisplayServerInfo {
 |--------|-------|-------|
 | WER (Word Error Rate) | 5.77-8% | Adaptive: 5.77% (1.1B GPU), 7-8% (0.6B) |
 | VAD Accuracy | 16% better | Silero v6 vs v5 on noise |
-| Character Support | ASCII only | Whisper STT limitation |
+| Character Support | ASCII only | Parakeet-TDT STT limitation |
 | Injection Success | 100% | X11/Wayland compositors |
 
 ---
@@ -1157,8 +1262,17 @@ rust-crates/
 ├── swictation-metrics/     # Performance tracking
 └── swictation-broadcaster/ # Real-time metrics broadcast
 
+tauri-ui/                   # Desktop application (Tauri 2, macOS/Linux)
+├── src/                    # Frontend (TypeScript/React)
+└── src-tauri/              # Rust backend (tray, IPC, database)
+
 external/midstream/         # Text transformation (Git submodule)
 └── crates/text-transform/  # Voice commands → symbols
+
+npm-package/                # npm distribution wrapper
+├── postinstall.js          # First-time install orchestrator (8 phases)
+├── src/download.js         # Resilient downloader with retry + resume
+└── src/install-error.js    # Structured error classification (SW-E001–E010)
 ```
 
 ---
@@ -1212,6 +1326,51 @@ Built using Docker with reproducible environment:
 - Verification: `cuobjdump` confirms all architectures present
 - Build location: `docker/onnxruntime-builder/`
 
+### Resilient npm Postinstall
+
+The `npm-package/postinstall.js` script was overhauled to provide production-grade reliability. It is the sole entry point for first-time installation on both Linux and macOS.
+
+**Phase tracking:** The install is divided into 8 phases, each announced with a `[N/8] Phase Name` banner printed to stdout and teed to a persistent log at `~/.local/share/swictation/install.log`. The log captures platform, Node version, and timestamped output for every phase.
+
+**Download resilience (`npm-package/src/download.js`):**
+
+```
+downloadWithRetry(url, dest, options)
+  attempt 1 → fail
+  wait 2 s (backoff × 4 per attempt)
+  attempt 2 → fail
+  wait 8 s
+  attempt 3 → succeed
+```
+
+- Exponential backoff: delays of 2 s, 8 s, 32 s (base 2 s, multiplier 4)
+- HTTP Range resume: if a partial file exists from a previous attempt, the download resumes from the byte offset rather than restarting
+- `ProgressReporter` class renders a `[=====>   ] N% speed ETA` bar on TTY; prints at 10% intervals on non-TTY (CI-friendly)
+
+**Disk space validation:** Before initiating any download the script measures available disk space and compares it against the expected artifact size plus a 10% safety buffer. If space is insufficient, installation fails immediately with actionable guidance rather than partway through a multi-gigabyte download.
+
+**Structured error classification (`npm-package/src/install-error.js`):**
+
+| Code | Summary |
+|------|---------|
+| SW-E001 | Unsupported platform or architecture |
+| SW-E002 | Insufficient disk space |
+| SW-E003 | Download failed (network) |
+| SW-E004 | Checksum verification failed |
+| SW-E005 | GPU detection failed |
+| SW-E006 | Service setup failed (permission) |
+| SW-E007 | Python/hf CLI not found |
+| SW-E008 | Model download failed |
+| SW-E009 | Binary not found in platform package |
+| SW-E010 | ONNX Runtime load failed |
+
+Each `InstallError` carries a `code`, human-readable `cause` (mapped from Node.js errno), a `fix` suggestion (platform-aware), and a help URL pointing to the wiki (`https://github.com/robertelee78/swictation/wiki/errors#<code>`).
+
+**macOS CoreML model pipeline:** Three-tier fallback for downloading `.mlmodelc` bundles:
+1. `hf` CLI (Hugging Face) — preferred when available
+2. Auto-install `hf` CLI then retry
+3. Direct HTTPS download from GitHub releases
+
 ---
 
 ## Scaling Considerations
@@ -1230,7 +1389,7 @@ Built using Docker with reproducible environment:
 1. **Multi-Mode Text Transformation** - Add command-line, coding, email, and math modes (tasks 8eacc3e8, f53ea439)
 2. **AMD GPU Support** - ROCm execution provider for Radeon GPUs
 3. **DirectML** - Windows GPU acceleration (Intel/AMD/NVIDIA)
-4. **CoreML/Metal** - macOS Apple Silicon support (M1/M2/M3)
+4. **CoreML/Metal** - macOS Apple Silicon support (M1/M2/M3) — **implemented** (see Section 4)
 5. **Multi-language** - Expose Parakeet's multilingual capabilities
 6. **Custom Models** - Support for other ONNX STT models
 7. **IPC Authentication** - Add authentication to metrics Unix socket (security)
@@ -1257,6 +1416,19 @@ Built using Docker with reproducible environment:
 - No network exposure
 - systemd sandboxing available
 - No privileged operations required
+
+### Dependency Security Updates
+
+Recent supply-chain hardening applied to Cargo dependencies:
+
+| Crate | Change | Advisory |
+|-------|--------|----------|
+| `tar` | 0.4.44 → 0.4.45 | Symlink chmod race + PAX header fixes |
+| `ureq` | 3.1.2 → 3.3.0 | Removed `rustls-pemfile` transitive dep (RUSTSEC-2025-0134) |
+| `lru` | 0.12 → 0.16.3 | RUSTSEC-2026-0002 |
+| `statistical` | removed | Unused crate carrying RUSTSEC-2025-0124 |
+
+An `audit.toml` file was added to manage advisories for transitive dependencies that cannot be immediately updated, providing a documented record of accepted risk with justification.
 
 ---
 
@@ -1321,34 +1493,117 @@ WantedBy=default.target
 
 ---
 
-### Menu Bar / System Tray Architecture
+## 7. Tauri Desktop Application
 
-The system tray provides daemon state visualization and control:
+The Tauri-based desktop application (`tauri-ui/`) provides a native menu-bar tray icon and metrics window. It replaces the legacy Python/PySide6 tray on macOS and runs alongside it on Linux.
 
-**macOS:** Native Tauri 2 `TrayIconBuilder` (pure Rust, NSStatusItem)
-**Linux:** Python/PySide6 QSystemTrayIcon (legacy, to be migrated to Tauri)
+### Tray Icon and Window Management
 
-Both implementations use the same daemon IPC protocol:
+**Activation policy (macOS):** The app sets `ActivationPolicy::Accessory` at startup so it never appears in the Dock. The main window is hidden on close (not destroyed), preserving session state.
 
 ```
-Tray App ──(1s poll)──► Unix Socket (swictation.sock)
-         ◄────────────── {"status": "success", "state": "idle|recording"}
-
-Tray App ──(on click)──► {"action": "toggle"}
-         ◄────────────── {"status": "success", "message": "Recording started"}
+┌─────────────────────────────────────────┐
+│  TrayIconBuilder (Tauri 2)              │
+│  ├── idle_icon        (template=true)   │ ← gray; system adapts to light/dark
+│  ├── recording_icon   (template=false)  │ ← solid red pixels, alpha-preserved
+│  └── disconnected_icon (template=true)  │ ← grayscale, 50% alpha opacity
+└─────────────────────────────────────────┘
 ```
 
-**Tray States:**
-- **Idle:** Normal icon, daemon running
-- **Recording:** Red overlay icon, actively capturing
-- **Disconnected:** Grayed icon, daemon not running
+**Icon rendering details:**
+
+| State | Template | Appearance |
+|-------|----------|------------|
+| Idle | `true` | Gray mask — system adapts to menu bar color scheme |
+| Recording | `false` | Solid red (R=220, G=40, B=40); background forced transparent |
+| Disconnected | `true` | Luminance-averaged grayscale at 50% alpha |
+
+The recording icon cannot use `icon_as_template(true)` because macOS discards all RGB data for template icons. The `create_recording_icon()` function renders pixel colors directly so the red tint is preserved.
+
+**Headless mode:** Setting `SWICTATION_NO_TRAY=1` in the environment skips tray icon creation entirely, enabling server-side or headless operation.
+
+**Platform behavior differences:**
+
+| Interaction | macOS | Linux |
+|-------------|-------|-------|
+| Left click | Shows tray menu (native macOS behavior) | Toggles recording |
+| Middle click | Toggles main window visibility | Toggles main window visibility |
+| Right click | Shows tray menu | Shows tray menu |
+
+### Daemon IPC (`daemon_ipc.rs`)
+
+The UI communicates with the daemon over a Unix domain socket using a simple JSON protocol. The module (`tauri-ui/src-tauri/src/socket/daemon_ipc.rs`) provides two async functions:
+
+```rust
+/// Query the daemon's current state. Returns Disconnected if socket unreachable.
+pub async fn query_daemon_state() -> DaemonState;
+
+/// Send a toggle command. Returns the resulting DaemonState.
+pub async fn toggle_recording() -> Result<DaemonState, String>;
+```
+
+**Protocol (JSON over Unix socket):**
+
+```
+UI ──► {"action": "status"}
+    ◄── {"status": "success", "state": "idle|recording"}
+
+UI ──► {"action": "toggle"}
+    ◄── {"status": "success", "message": "Recording started"}
+```
+
+**Connection parameters:** 500 ms connect timeout, 500 ms read timeout. Both timeouts return `DaemonState::Disconnected` rather than propagating an error, so the tray degrades gracefully when the daemon is not running.
+
+### State Polling Loop
+
+A background async task polls the daemon at a 1-second interval:
+
+```
+every 1 s:
+    new_state = query_daemon_state()
+    if new_state != current_state:
+        update tray icon + tooltip
+        emit "daemon-state-changed" event to frontend
+        if transition → Recording: emit "recording-notification"
+        if transition Recording → Idle: emit "recording-notification"
+```
+
+Notifications mirror the Python tray's `showMessage` behavior so the user experience is consistent across platforms.
+
+### DMG Bundling
+
+The macOS release artifact is a `.dmg` containing the signed `.app` bundle. Notable details:
+
+- `icon.icns` is a 1.8 MB multi-resolution file covering all macOS icon sizes (16–1024 px)
+- The Tauri build target is narrowed to `["app", "dmg"]` to avoid generating unused `.tar.gz` artifacts
+- Stale `.app` and `.dmg` files from previous builds are removed before each packaging run to prevent incremental build confusion
+
+### Workspace Structure
+
+```
+tauri-ui/
+├── src/                        # Frontend (TypeScript/React)
+└── src-tauri/
+    ├── src/
+    │   ├── main.rs             # App setup, tray, state polling
+    │   ├── commands.rs         # Tauri command handlers
+    │   ├── database.rs         # SQLite via rusqlite
+    │   ├── models.rs           # Data types
+    │   ├── utils.rs            # Path helpers
+    │   └── socket/
+    │       ├── mod.rs          # MetricsSocket (live metrics stream)
+    │       └── daemon_ipc.rs   # IPC client (toggle/status)
+    └── icons/
+        ├── tray-48.png         # Source for all tray icon variants
+        └── icon.icns           # 1.8 MB multi-size app icon
+```
 
 **Key Files:**
-- `tauri-ui/src-tauri/src/main.rs` - Tray icon setup, polling task, menu events
-- `tauri-ui/src-tauri/src/socket/daemon_ipc.rs` - IPC socket client for daemon commands
-- `src/ui/swictation_tray.py` - Python tray app (Linux only)
-- `rust-crates/swictation-daemon/src/ipc.rs` - Daemon IPC server
+- `tauri-ui/src-tauri/src/main.rs` — Tray icon setup, icon rendering, polling task, menu events
+- `tauri-ui/src-tauri/src/socket/daemon_ipc.rs` — IPC socket client for daemon commands
+- `src/ui/swictation_tray.py` — Python tray app (Linux only, legacy)
+- `rust-crates/swictation-daemon/src/ipc.rs` — Daemon IPC server
 
 ---
 
-**Last Updated:** 2026-03-23 (Native CoreML STT, macOS menu bar tray, version 0.7.29)
+**Last Updated:** 2026-03-23 (CoreML windowed chunking, macOS batched CGEvent injection, Tauri desktop UI, resilient npm postinstall, version 0.7.29)
