@@ -87,6 +87,29 @@ extern "C" {
 /// When set to true, shows system dialog for granting accessibility
 static KAXTRUSTED_CHECK_OPTION_PROMPT: &str = "AXTrustedCheckOptionPrompt";
 
+/// Maximum UTF-16 code units per CGEvent.
+///
+/// Apple's `CGEventKeyboardSetUnicodeString` documentation specifies a limit
+/// of 20 UniChar per event. Exceeding this may cause the extra characters to
+/// be silently dropped on some macOS versions.
+const BATCH_UTF16_LIMIT: usize = 20;
+
+/// Delay in milliseconds between batched CGEvent chunks.
+///
+/// Each chunk is delivered atomically by WindowServer, so we only need enough
+/// delay for the event to be dispatched before posting the next one.
+/// 5 ms is conservative — each chunk carries up to 20 characters, so even a
+/// 100-character string only takes ~25 ms total (vs. 300 ms with the old
+/// per-character approach).
+const BATCH_DELAY_MS: u64 = 5;
+
+/// Returns `true` if the UTF-16 code unit is a high surrogate (first half of
+/// a surrogate pair for characters outside the Basic Multilingual Plane).
+#[inline]
+fn is_high_surrogate(code_unit: u16) -> bool {
+    (0xD800..=0xDBFF).contains(&code_unit)
+}
+
 /// No-op callback for CGEventTap validation
 /// This callback does nothing — it simply returns the event unchanged.
 /// Required because CGEventTapCreate does not accept NULL callbacks.
@@ -336,49 +359,81 @@ impl MacOSTextInjector {
 
     /// Inject plain text (no key markers)
     ///
-    /// Uses CGEventKeyboardSetUnicodeString to inject Unicode text
-    /// character by character.
+    /// Uses CGEventKeyboardSetUnicodeString to inject Unicode text in batched
+    /// chunks. Each CGEvent carries up to [`BATCH_UTF16_LIMIT`] UTF-16 code
+    /// units, drastically reducing the number of HID events compared to
+    /// character-by-character injection.
+    ///
+    /// ## Why batching matters
+    ///
+    /// The previous character-by-character approach posted 2 CGEvents per
+    /// character (key down + key up) with a 3 ms inter-character delay.
+    /// macOS WindowServer processes HID events asynchronously, and under load
+    /// individual events — especially space characters — could be dropped or
+    /// coalesced, producing output with missing spaces.
+    ///
+    /// By packing multiple characters into a single CGEvent via
+    /// `CGEventKeyboardSetUnicodeString`, the WindowServer receives each chunk
+    /// atomically. Spaces inside a chunk cannot be dropped independently.
+    ///
+    /// ## Chunk size
+    ///
+    /// Apple's `CGEventKeyboardSetUnicodeString` accepts up to 20 UniChar
+    /// (UTF-16 code units) per event. We respect this limit and never split
+    /// a surrogate pair across chunk boundaries.
     fn inject_plain_text(&self, text: &str) -> Result<()> {
         if text.is_empty() {
             return Ok(());
         }
 
-        debug!("Injecting {} characters", text.chars().count());
+        let char_count = text.chars().count();
+        debug!("Injecting {} characters (batched)", char_count);
 
-        // Inject each character
-        for ch in text.chars() {
-            // Convert character to UTF-16 (macOS native encoding)
-            // A single char encodes to at most 2 UTF-16 code units (surrogate pair)
-            let mut utf16_buf = [0u16; 2];
-            let utf16 = ch.encode_utf16(&mut utf16_buf);
+        // Encode entire string to UTF-16 up-front
+        let utf16_all: Vec<u16> = text.encode_utf16().collect();
 
-            // Create key down event (Arc clone is cheap, inner clone only if needed)
+        // Post chunks of up to BATCH_UTF16_LIMIT UTF-16 code units.
+        // We must not split a surrogate pair (high surrogate 0xD800..0xDBFF
+        // followed by low surrogate 0xDC00..0xDFFF) across chunk boundaries.
+        let mut offset = 0;
+        while offset < utf16_all.len() {
+            let remaining = utf16_all.len() - offset;
+            let mut chunk_len = remaining.min(BATCH_UTF16_LIMIT);
+
+            // If we'd split a surrogate pair, back off by one code unit so
+            // the high surrogate moves to the next chunk.
+            if chunk_len < remaining && is_high_surrogate(utf16_all[offset + chunk_len - 1]) {
+                chunk_len -= 1;
+            }
+
+            let chunk = &utf16_all[offset..offset + chunk_len];
+
+            // Key down event carrying the chunk's Unicode content
             let event = CGEvent::new_keyboard_event((*self.event_source).clone(), 0, true)
                 .map_err(|_| anyhow::anyhow!("Failed to create key down event"))?;
 
-            // Set Unicode string content via FFI
             unsafe {
                 CGEventKeyboardSetUnicodeString(
                     event.as_ptr() as *mut c_void,
-                    utf16.len() as c_long,
-                    utf16.as_ptr(),
+                    chunk.len() as c_long,
+                    chunk.as_ptr(),
                 );
             }
 
-            // Post key down event
             event.post(CGEventTapLocation::HID);
 
-            // Create key up event
+            // Key up event (no Unicode payload needed)
             let event_up = CGEvent::new_keyboard_event((*self.event_source).clone(), 0, false)
                 .map_err(|_| anyhow::anyhow!("Failed to create key up event"))?;
 
-            // Post key up event
             event_up.post(CGEventTapLocation::HID);
 
-            // Delay between characters for macOS WindowServer to process each event.
-            // 100μs was too fast — caused event queue interleaving with sequential injections.
-            // 3ms gives WindowServer time to fully dispatch each keystroke.
-            std::thread::sleep(std::time::Duration::from_millis(3));
+            // Inter-chunk delay for WindowServer to dispatch the event.
+            // Each chunk is processed atomically, so we only need to wait
+            // once per chunk rather than once per character.
+            std::thread::sleep(std::time::Duration::from_millis(BATCH_DELAY_MS));
+
+            offset += chunk_len;
         }
 
         Ok(())
