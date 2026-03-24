@@ -313,6 +313,120 @@ fn main() -> Result<()> {
 
     info!("Starting Swictation Daemon v{}", env!("CARGO_PKG_VERSION"));
 
+    // DRY-RUN MODE: Handle early, before any macOS event loop or hotkey setup.
+    // The dry-run only verifies file existence — it doesn't need permissions,
+    // hotkeys, or the Carbon event loop. Running it here avoids the macOS
+    // architecture where daemon_main runs on a background thread while the
+    // main thread enters RunApplicationEventLoop() and never exits.
+    if cli.dry_run {
+        let mut config = DaemonConfig::load().context("Failed to load configuration")?;
+        info!("Configuration loaded from {}", config.config_path.display());
+
+        // Apply CLI overrides
+        if let Some(ref model) = cli.test_model {
+            info!("🧪 CLI override: forcing model '{}'", model);
+            config.stt_model_override = model.clone();
+        }
+
+        // Detect GPU provider
+        let gpu_provider = detect_gpu_provider();
+        match &gpu_provider {
+            Some(provider) => info!("🎮 GPU detected: {}", provider),
+            None => warn!("⚠️ No GPU detected, using CPU (slower)"),
+        }
+
+        info!("🧪 DRY-RUN MODE: Showing model selection without loading");
+
+        let vram_mb = crate::gpu::get_gpu_memory_mb().map(|(total, _free)| total);
+
+        let model_verified = if config.stt_model_override != "auto" {
+            info!("  Override active: {}", config.stt_model_override);
+            let verified = match config.stt_model_override.as_str() {
+                "1.1b-gpu" => {
+                    info!("  Would load: Parakeet-TDT-1.1B-INT8 (GPU, forced)");
+                    info!("    Path: {}", config.stt_1_1b_model_path.display());
+                    config
+                        .stt_1_1b_model_path
+                        .join("encoder.int8.onnx")
+                        .exists()
+                }
+                "0.6b-gpu" => {
+                    info!("  Would load: Parakeet-TDT-0.6B (GPU, forced)");
+                    info!("    Path: {}", config.stt_0_6b_model_path.display());
+                    config.stt_0_6b_model_path.join("encoder.onnx").exists()
+                }
+                "0.6b-cpu" => {
+                    info!("  Would load: Parakeet-TDT-0.6B (CPU, forced)");
+                    info!("    Path: {}", config.stt_0_6b_model_path.display());
+                    config.stt_0_6b_model_path.join("encoder.onnx").exists()
+                }
+                "1.1b-coreml" | "coreml-native" => {
+                    info!("  Would load: Parakeet-TDT-1.1B (CoreML, forced)");
+                    info!("    Path: {}", config.stt_coreml_model_path.display());
+                    info!("    Reason: Native Apple Neural Engine acceleration");
+                    config
+                        .stt_coreml_model_path
+                        .join("encoder.mlmodelc")
+                        .exists()
+                }
+                _ => {
+                    error!("  Invalid override value!");
+                    false
+                }
+            };
+            verified
+        } else {
+            info!("  Mode: auto (VRAM-based)");
+            if let Some(vram) = vram_mb {
+                info!("  Detected: {}MB VRAM", vram);
+                if vram >= 6000 {
+                    info!("  Would load: Parakeet-TDT-1.1B-INT8 (GPU)");
+                    info!("    Path: {}", config.stt_1_1b_model_path.display());
+                    info!("    Reason: ≥6GB VRAM available");
+                    config
+                        .stt_1_1b_model_path
+                        .join("encoder.int8.onnx")
+                        .exists()
+                } else if vram >= 3500 {
+                    info!("  Would load: Parakeet-TDT-0.6B (GPU)");
+                    info!("    Path: {}", config.stt_0_6b_model_path.display());
+                    info!("    Reason: ≥3.5GB VRAM available");
+                    config.stt_0_6b_model_path.join("encoder.onnx").exists()
+                } else {
+                    info!("  Would load: Parakeet-TDT-0.6B (CPU)");
+                    info!("    Path: {}", config.stt_0_6b_model_path.display());
+                    info!("    Reason: <3.5GB VRAM ({}MB), using CPU fallback", vram);
+                    config.stt_0_6b_model_path.join("encoder.onnx").exists()
+                }
+            } else {
+                info!("  Detected: No GPU");
+                info!("  Would load: Parakeet-TDT-0.6B (CPU)");
+                info!("    Path: {}", config.stt_0_6b_model_path.display());
+                info!("    Reason: No NVIDIA GPU detected");
+                config.stt_0_6b_model_path.join("encoder.onnx").exists()
+            }
+        };
+
+        if model_verified {
+            info!("    Model files verified on disk");
+            info!("✅ Dry-run complete (no models loaded)");
+            return Ok(());
+        } else {
+            error!("    Model files NOT found at expected path");
+            error!("Looked for models at:");
+            error!("  0.6B: {}", config.stt_0_6b_model_path.display());
+            error!("  1.1B: {}", config.stt_1_1b_model_path.display());
+            error!("  CoreML: {}", config.stt_coreml_model_path.display());
+            error!("  VAD: {}", config.vad_model_path.display());
+            error!("");
+            error!("If paths look wrong, check your config at:");
+            error!("  {}", config.config_path.display());
+            return Err(anyhow::anyhow!(
+                "Model files not found for dry-run verification"
+            ));
+        }
+    }
+
     // macOS: Request permissions on main thread (system dialogs need it)
     #[cfg(target_os = "macos")]
     {
@@ -421,92 +535,6 @@ async fn daemon_main(
     match &gpu_provider {
         Some(provider) => info!("🎮 GPU detected: {}", provider),
         None => warn!("⚠️ No GPU detected, using CPU (slower)"),
-    }
-
-    // DRY-RUN MODE: Show model selection and exit
-    if cli.dry_run {
-        info!("🧪 DRY-RUN MODE: Showing model selection without loading");
-
-        let vram_mb = crate::gpu::get_gpu_memory_mb().map(|(total, _free)| total);
-
-        let model_verified = if config.stt_model_override != "auto" {
-            info!("  Override active: {}", config.stt_model_override);
-            let verified = match config.stt_model_override.as_str() {
-                "1.1b-gpu" => {
-                    info!("  Would load: Parakeet-TDT-1.1B-INT8 (GPU, forced)");
-                    info!("    Path: {}", config.stt_1_1b_model_path.display());
-                    config
-                        .stt_1_1b_model_path
-                        .join("encoder.int8.onnx")
-                        .exists()
-                }
-                "0.6b-gpu" => {
-                    info!("  Would load: Parakeet-TDT-0.6B (GPU, forced)");
-                    info!("    Path: {}", config.stt_0_6b_model_path.display());
-                    config.stt_0_6b_model_path.join("encoder.onnx").exists()
-                }
-                "0.6b-cpu" => {
-                    info!("  Would load: Parakeet-TDT-0.6B (CPU, forced)");
-                    info!("    Path: {}", config.stt_0_6b_model_path.display());
-                    config.stt_0_6b_model_path.join("encoder.onnx").exists()
-                }
-                "1.1b-coreml" => {
-                    info!("  Would load: Parakeet-TDT-1.1B (CoreML, forced)");
-                    info!("    Path: {}", config.stt_coreml_model_path.display());
-                    info!("    Reason: Native Apple Neural Engine acceleration");
-                    config
-                        .stt_coreml_model_path
-                        .join("encoder.mlmodelc")
-                        .exists()
-                }
-                _ => {
-                    error!("  Invalid override value!");
-                    false
-                }
-            };
-            verified
-        } else {
-            info!("  Mode: auto (VRAM-based)");
-            if let Some(vram) = vram_mb {
-                info!("  Detected: {}MB VRAM", vram);
-                if vram >= 6000 {
-                    info!("  Would load: Parakeet-TDT-1.1B-INT8 (GPU)");
-                    info!("    Path: {}", config.stt_1_1b_model_path.display());
-                    info!("    Reason: ≥6GB VRAM available");
-                    config
-                        .stt_1_1b_model_path
-                        .join("encoder.int8.onnx")
-                        .exists()
-                } else if vram >= 3500 {
-                    info!("  Would load: Parakeet-TDT-0.6B (GPU)");
-                    info!("    Path: {}", config.stt_0_6b_model_path.display());
-                    info!("    Reason: ≥3.5GB VRAM available");
-                    config.stt_0_6b_model_path.join("encoder.onnx").exists()
-                } else {
-                    info!("  Would load: Parakeet-TDT-0.6B (CPU)");
-                    info!("    Path: {}", config.stt_0_6b_model_path.display());
-                    info!("    Reason: <3.5GB VRAM ({}MB), using CPU fallback", vram);
-                    config.stt_0_6b_model_path.join("encoder.onnx").exists()
-                }
-            } else {
-                info!("  Detected: No GPU");
-                info!("  Would load: Parakeet-TDT-0.6B (CPU)");
-                info!("    Path: {}", config.stt_0_6b_model_path.display());
-                info!("    Reason: No NVIDIA GPU detected");
-                config.stt_0_6b_model_path.join("encoder.onnx").exists()
-            }
-        };
-
-        if model_verified {
-            info!("    Model files verified on disk");
-            info!("✅ Dry-run complete (no models loaded)");
-            return Ok(());
-        } else {
-            error!("    Model files NOT found at expected path");
-            return Err(anyhow::anyhow!(
-                "Model files not found for dry-run verification"
-            ));
-        }
     }
 
     // Initialize daemon with models loaded
