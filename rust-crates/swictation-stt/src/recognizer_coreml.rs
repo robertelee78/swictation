@@ -285,8 +285,11 @@ mod inner {
             }
 
             let total_samples = samples.len();
-            info!("Processing {} audio samples via CoreML ({:.1}s)",
-                total_samples, total_samples as f64 / 16_000.0);
+            info!(
+                "Processing {} audio samples via CoreML ({:.1}s)",
+                total_samples,
+                total_samples as f64 / 16_000.0
+            );
 
             // Compute chunk count using stride-based windowing.
             // First chunk starts at 0; subsequent chunks advance by STRIDE_SAMPLES.
@@ -296,11 +299,13 @@ mod inner {
                 1 + (total_samples - CHUNK_SAMPLES).div_ceil(STRIDE_SAMPLES)
             };
 
-            info!("Windowed chunking: {} chunk(s), window={}s, overlap={}s, stride={}s",
+            info!(
+                "Windowed chunking: {} chunk(s), window={}s, overlap={}s, stride={}s",
                 num_chunks,
                 CHUNK_SAMPLES as f64 / 16_000.0,
                 OVERLAP_SAMPLES as f64 / 16_000.0,
-                STRIDE_SAMPLES as f64 / 16_000.0);
+                STRIDE_SAMPLES as f64 / 16_000.0
+            );
 
             // Initialize decoder carry state ONCE for the entire utterance.
             let hidden_size = self.config.decoder_hidden_size;
@@ -316,8 +321,12 @@ mod inner {
                 // Skip tiny last chunks entirely if their audio falls within the
                 // overlap region already encoded by the previous chunk.
                 if chunk_idx > 0 && actual_length <= OVERLAP_SAMPLES {
-                    info!("Chunk {}/{}: skipping — {} samples within overlap region",
-                        chunk_idx + 1, num_chunks, actual_length);
+                    info!(
+                        "Chunk {}/{}: skipping — {} samples within overlap region",
+                        chunk_idx + 1,
+                        num_chunks,
+                        actual_length
+                    );
                     continue;
                 }
 
@@ -330,9 +339,15 @@ mod inner {
                     padded
                 };
 
-                info!("Chunk {}/{}: samples[{}..{}] ({} samples, {:.1}s)",
-                    chunk_idx + 1, num_chunks, start, end, actual_length,
-                    actual_length as f64 / 16_000.0);
+                info!(
+                    "Chunk {}/{}: samples[{}..{}] ({} samples, {:.1}s)",
+                    chunk_idx + 1,
+                    num_chunks,
+                    start,
+                    end,
+                    actual_length,
+                    actual_length as f64 / 16_000.0
+                );
 
                 // Run the fused preprocessor+encoder on this chunk.
                 let (encoder_features, encoder_dim, valid_frames) =
@@ -341,7 +356,9 @@ mod inner {
                 if valid_frames == 0 && actual_length > 0 {
                     warn!(
                         "Chunk {}/{}: encoder returned 0 valid frames for {} samples of audio",
-                        chunk_idx + 1, num_chunks, actual_length
+                        chunk_idx + 1,
+                        num_chunks,
+                        actual_length
                     );
                 }
 
@@ -377,8 +394,13 @@ mod inner {
                     skip_frames,
                 )?;
 
-                info!("Chunk {}/{}: {} tokens (skipped {} overlap frames)",
-                    chunk_idx + 1, num_chunks, chunk_tokens.len(), skip_frames);
+                info!(
+                    "Chunk {}/{}: {} tokens (skipped {} overlap frames)",
+                    chunk_idx + 1,
+                    num_chunks,
+                    chunk_tokens.len(),
+                    skip_frames
+                );
 
                 all_tokens.extend(chunk_tokens);
                 carry = final_carry;
@@ -704,7 +726,9 @@ mod inner {
                     duration_logits
                         .iter()
                         .enumerate()
-                        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+                        .max_by(|(_, a), (_, b)| {
+                            a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+                        })
                         .map(|(idx, _)| idx)
                         .unwrap_or(0)
                 } else {
@@ -985,7 +1009,10 @@ mod inner {
             let tiny_actual = 100_usize;
             let chunk_idx_sim = 1_usize;
             let should_skip = chunk_idx_sim > 0 && tiny_actual <= OVERLAP_SAMPLES;
-            assert!(should_skip, "Skip predicate must fire for tiny chunks on non-first chunk");
+            assert!(
+                should_skip,
+                "Skip predicate must fire for tiny chunks on non-first chunk"
+            );
 
             // And the predicate does NOT fire for chunk 0 even with tiny audio
             let should_skip_first = 0 > 0 && tiny_actual <= OVERLAP_SAMPLES;
