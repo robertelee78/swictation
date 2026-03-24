@@ -534,6 +534,15 @@ async fn daemon_main(
                     error!("Or download all models:");
                     error!("  swictation download-models");
                     error!("");
+                    error!("Looked for models at:");
+                    error!("  0.6B: {}", config.stt_0_6b_model_path.display());
+                    error!("  1.1B: {}", config.stt_1_1b_model_path.display());
+                    error!("  CoreML: {}", config.stt_coreml_model_path.display());
+                    error!("  VAD: {}", config.vad_model_path.display());
+                    error!("");
+                    error!("If paths look wrong, check your config at:");
+                    error!("  {}", config.config_path.display());
+                    error!("");
 
                     return Err(
                         e.context("AI models not found - run 'swictation download-model' first")

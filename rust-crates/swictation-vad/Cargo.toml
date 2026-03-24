@@ -1,6 +1,6 @@
 [package]
 name = "swictation-vad"
-version = "0.7.33"
+version = "0.7.34"
 edition = "2021"
 description = "Voice Activity Detection (VAD) for Swictation using Silero VAD"
 license = "Apache-2.0"
