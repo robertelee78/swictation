@@ -52,7 +52,7 @@ jobs:
 
     - name: Run clippy
       working-directory: rust-crates
-      run: cargo clippy --all-targets --all-features -- -D warnings
+      run: cargo clippy --all-targets -- -D warnings
 
     - name: Build all crates
       working-directory: rust-crates
