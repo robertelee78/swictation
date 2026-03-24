@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "build:release": "npm run build && cd src-tauri && cargo build --release --features custom-protocol",
+    "pretauri": "rm -f src-tauri/target/release/bundle/macos/rw.*.dmg src-tauri/target/release/bundle/dmg/Swictation*.dmg 2>/dev/null; true",
     "verify": "../scripts/verify-before-push.sh",
     "preview": "vite preview",
     "tauri": "tauri"
