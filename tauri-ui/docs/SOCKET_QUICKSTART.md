@@ -117,5 +117,9 @@ swictation-daemon
 
 ## Socket Paths
 
-- Metrics: `/tmp/swictation_metrics.sock` (read-only)
-- Commands: `/tmp/swictation.sock` (write-only)
+- Metrics (read-only):
+  - macOS: `~/Library/Application Support/swictation/swictation_metrics.sock`
+  - Linux: `$XDG_RUNTIME_DIR/swictation_metrics.sock` (fallback: `~/.local/share/swictation/swictation_metrics.sock`)
+- Commands (write-only):
+  - macOS: `~/Library/Application Support/swictation/swictation.sock`
+  - Linux: `$XDG_RUNTIME_DIR/swictation.sock` (fallback: `~/.local/share/swictation/swictation.sock`)

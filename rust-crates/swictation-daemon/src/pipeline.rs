@@ -729,10 +729,9 @@ impl Pipeline {
             );
 
             // DEBUG: Save flushed audio to file for analysis
-            match save_audio_debug(&speech_samples, "/tmp/swictation_flushed_audio.wav") {
-                Ok(()) => {
-                    eprintln!("DEBUG: Saved flushed audio to /tmp/swictation_flushed_audio.wav")
-                }
+            let debug_path = std::env::temp_dir().join("swictation_flushed_audio.wav");
+            match save_audio_debug(&speech_samples, debug_path.to_str().unwrap_or("/dev/null")) {
+                Ok(()) => eprintln!("DEBUG: Saved flushed audio to {}", debug_path.display()),
                 Err(e) => eprintln!("DEBUG: Failed to save audio: {}", e),
             }
 

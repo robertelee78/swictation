@@ -282,7 +282,9 @@ Uses CoreML execution provider with FP16 models for optimal performance.
 
 ### Metrics API
 
-Real-time monitoring via Unix socket (`/tmp/swictation_metrics.sock`):
+Real-time monitoring via Unix socket (platform-specific path, see `swictation-paths` crate):
+- macOS: `~/Library/Application Support/swictation/swictation_metrics.sock`
+- Linux: `$XDG_RUNTIME_DIR/swictation_metrics.sock` (fallback: `~/.local/share/swictation/swictation_metrics.sock`)
 - Audio levels, VAD probabilities, transcription latency
 - Session database: `~/.local/share/swictation/metrics.db`
 

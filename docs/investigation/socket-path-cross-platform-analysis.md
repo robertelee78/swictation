@@ -1,5 +1,7 @@
 # Socket Path Cross-Platform Analysis
 
+> **Note:** Socket paths in this document reflect the old `/tmp` layout where mentioned as bugs/issues. Current paths are platform-specific — see `swictation-paths` crate. macOS: `~/Library/Application Support/swictation/swictation.sock`, Linux: `$XDG_RUNTIME_DIR/swictation.sock` (fallback: `~/.local/share/swictation/swictation.sock`).
+
 **Investigation Date:** 2025-11-28
 **Project:** Swictation
 **Task:** Cross-platform socket path handling assessment

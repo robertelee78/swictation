@@ -81,7 +81,7 @@ struct SwictationDaemon {
 - Global hotkey via global-hotkey crate (cross-platform)
 - Pure Rust - zero Python runtime
 - Graceful shutdown with signal handling
-- Real-time metrics broadcasting via Unix socket (`/tmp/swictation_metrics.sock`)
+- Real-time metrics broadcasting via Unix socket (platform-specific path, see `swictation-paths` crate; macOS: `~/Library/Application Support/swictation/swictation_metrics.sock`, Linux: `$XDG_RUNTIME_DIR/swictation_metrics.sock`)
 
 **Performance (Adaptive Model Selection):**
 - Startup time: 1-3s (model loading + GPU detection)

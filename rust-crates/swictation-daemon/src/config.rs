@@ -7,20 +7,14 @@ use std::path::PathBuf;
 
 use crate::socket_utils;
 
-/// Get default model directory using XDG Base Directory spec
-/// Falls back to ~/.local/share/swictation/models/
+/// Get default model directory using platform-appropriate paths via swictation_paths.
+/// On macOS: ~/Library/Application Support/swictation/models/
+/// On Linux: $XDG_DATA_HOME/swictation/models/ or ~/.local/share/swictation/models/
 /// Can be overridden with SWICTATION_MODEL_PATH environment variable
 fn get_default_model_dir() -> PathBuf {
     env::var("SWICTATION_MODEL_PATH")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            let home = env::var("HOME").expect("HOME environment variable not set");
-            PathBuf::from(home)
-                .join(".local")
-                .join("share")
-                .join("swictation")
-                .join("models")
-        })
+        .unwrap_or_else(|_| swictation_paths::models_dir())
 }
 
 /// Get default path for 0.6B model

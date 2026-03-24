@@ -105,7 +105,7 @@ React/TypeScript Frontend
     ↕ (Tauri Commands & Events)
 Rust Backend (main.rs + modules)
     ├── Database Queries → ~/.local/share/swictation/metrics.db
-    └── Socket Client → /tmp/swictation_metrics.sock
+    └── Socket Client → platform-specific socket path (macOS: ~/Library/Application Support/swictation/swictation_metrics.sock; Linux: $XDG_RUNTIME_DIR/swictation_metrics.sock)
             ↕
     Broadcaster (rust-crates/swictation-broadcaster)
 
@@ -156,7 +156,7 @@ TESTING
 
 Verify prerequisites:
   - Database exists: ~/.local/share/swictation/metrics.db
-  - Socket exists: /tmp/swictation_metrics.sock
+  - Socket exists at platform path (macOS: ~/Library/Application Support/swictation/swictation_metrics.sock; Linux: $XDG_RUNTIME_DIR/swictation_metrics.sock)
   - Daemon running: swictation-daemon
 
 Test commands in DevTools:
@@ -165,7 +165,8 @@ Test commands in DevTools:
     .catch(console.error);
 
 Test socket:
-  nc -U /tmp/swictation_metrics.sock
+  nc -U ~/Library/Application\ Support/swictation/swictation_metrics.sock  # macOS
+  # Linux: nc -U $XDG_RUNTIME_DIR/swictation_metrics.sock
 
 ================================================================================
 DOCUMENTATION

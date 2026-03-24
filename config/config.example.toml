@@ -3,7 +3,11 @@
 # All values shown here are the defaults.
 
 # Unix socket path for IPC communication
-socket_path = "/run/user/1000/swictation.sock"  # or /tmp/swictation.sock
+# The daemon auto-detects the correct path — override only if needed:
+#   macOS:         ~/Library/Application Support/swictation/swictation.sock
+#   Linux primary: $XDG_RUNTIME_DIR/swictation.sock  (e.g. /run/user/1000/swictation.sock)
+#   Linux fallback: ~/.local/share/swictation/swictation.sock
+# socket_path = "/run/user/1000/swictation.sock"
 
 # Path to Silero VAD ONNX model
 vad_model_path = "~/.local/share/swictation/models/silero-vad/silero_vad.onnx"

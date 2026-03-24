@@ -297,7 +297,7 @@ export interface ConnectionStatus {
 ### 2. Real-time Metrics Update
 
 ```
-Daemon → Socket (/tmp/swictation_metrics.sock)
+Daemon → Socket (platform-specific swictation_metrics.sock)
   ↓
 SocketConnection.read_events()
   ↓
@@ -425,7 +425,7 @@ CREATE INDEX idx_metrics_session ON metrics(session_id);
 ## Security Considerations
 
 ### 1. File System Access
-- **Restricted**: Only `~/.local/share/swictation/*` and `/tmp/swictation_metrics.sock`
+- **Restricted**: Only `~/.local/share/swictation/*` and the platform-specific socket path (see `swictation-paths` crate)
 - **Configured**: Via `tauri.conf.json` allowlist
 - **No writes**: Database access is read-only
 

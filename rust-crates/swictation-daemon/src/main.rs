@@ -1,7 +1,7 @@
 //! Swictation Daemon - Pure Rust Voice-to-Text Pipeline
 //!
 //! Runs as a background service (systemd), keeping models loaded in memory.
-//! Communicates via Unix socket (/tmp/swictation.sock) for toggle commands.
+//! Communicates via Unix socket (platform path from swictation_paths) for toggle commands.
 //! Sway hotkey → socket toggle → start/stop recording (zero latency)
 
 mod capitalization;

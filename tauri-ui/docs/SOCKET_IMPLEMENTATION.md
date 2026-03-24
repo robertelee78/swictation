@@ -15,8 +15,8 @@ Complete async Unix socket implementation (318 lines) with:
 - **Error Handling**: Comprehensive error handling with `anyhow` and `tracing`
 - **Tauri Integration**: Seamless event emission to frontend via `AppHandle::emit()`
 - **Bidirectional Communication**:
-  - Read from `/tmp/swictation_metrics.sock` (metrics)
-  - Write to `/tmp/swictation.sock` (commands)
+  - Read from platform-specific metrics socket (macOS: `~/Library/Application Support/swictation/swictation_metrics.sock`; Linux: `$XDG_RUNTIME_DIR/swictation_metrics.sock`)
+  - Write to platform-specific command socket (macOS: `~/Library/Application Support/swictation/swictation.sock`; Linux: `$XDG_RUNTIME_DIR/swictation.sock`)
 
 #### Public API:
 ```rust
@@ -73,13 +73,13 @@ Comprehensive 340-line test script with interactive and CLI modes.
 ## Socket Protocol
 
 ### Metrics Socket
-- **Path**: `/tmp/swictation_metrics.sock`
+- **Path**: platform-specific (macOS: `~/Library/Application Support/swictation/swictation_metrics.sock`; Linux: `$XDG_RUNTIME_DIR/swictation_metrics.sock`)
 - **Type**: Unix domain socket (SOCK_STREAM)
 - **Direction**: Daemon → UI (read-only for UI)
 - **Format**: Newline-delimited JSON
 
 ### Command Socket
-- **Path**: `/tmp/swictation.sock`
+- **Path**: platform-specific (macOS: `~/Library/Application Support/swictation/swictation.sock`; Linux: `$XDG_RUNTIME_DIR/swictation.sock`)
 - **Type**: Unix domain socket (SOCK_STREAM)
 - **Direction**: UI → Daemon (write-only for UI)
 - **Format**: Newline-delimited text commands

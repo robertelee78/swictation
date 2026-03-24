@@ -1,5 +1,7 @@
 # Deadlock Analysis: macOS Socket Toggle Hang
 
+> **Note:** Socket paths in this document reflect the old `/tmp` layout. Current paths are platform-specific — see `swictation-paths` crate. macOS: `~/Library/Application Support/swictation/swictation.sock`, Linux: `$XDG_RUNTIME_DIR/swictation.sock` (fallback: `~/.local/share/swictation/swictation.sock`).
+
 ## Executive Summary
 
 **DEADLOCK IDENTIFIED**: The socket toggle command hangs due to a lock acquisition deadlock in the broadcaster system. The issue occurs when `toggle()` calls `broadcast_state_change()` while holding internal RwLocks.

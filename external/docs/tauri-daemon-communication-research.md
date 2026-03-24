@@ -413,7 +413,7 @@ useEffect(() => {
 ./swictation-daemon
 
 # Terminal 2: Listen directly with netcat
-nc -U /tmp/swictation_metrics.sock
+nc -U "${XDG_RUNTIME_DIR:-$HOME/.local/share/swictation}/swictation_metrics.sock"
 
 # You should see JSON events like:
 # {"type":"metrics_update","state":"idle",...}

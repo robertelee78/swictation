@@ -6,8 +6,16 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-METRICS_SOCKET="/tmp/swictation_metrics.sock"
-COMMAND_SOCKET="/tmp/swictation.sock"
+# Detect platform-specific socket paths
+if [ "$(uname)" = "Darwin" ]; then
+    # macOS: sockets live in Application Support
+    _SWICTATION_DIR="$HOME/Library/Application Support/swictation"
+else
+    # Linux: prefer XDG_RUNTIME_DIR, fall back to ~/.local/share/swictation
+    _SWICTATION_DIR="${XDG_RUNTIME_DIR:-$HOME/.local/share/swictation}"
+fi
+METRICS_SOCKET="${_SWICTATION_DIR}/swictation_metrics.sock"
+COMMAND_SOCKET="${_SWICTATION_DIR}/swictation.sock"
 
 # Colors
 RED='\033[0;31m'

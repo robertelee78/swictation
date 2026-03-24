@@ -158,7 +158,7 @@ CREATE TABLE transcriptions (
 **Key Components**:
 
 - **client.rs**: Socket connection management
-  - Connect to `/tmp/swictation_metrics.sock`
+  - Connect to platform-specific socket path (macOS: `~/Library/Application Support/swictation/swictation_metrics.sock`; Linux: `$XDG_RUNTIME_DIR/swictation_metrics.sock`)
   - Reconnection logic
   - Message parsing
 
@@ -538,7 +538,8 @@ npm run tauri:build
 
 ### Database Location
 - Linux: `~/.local/share/swictation/metrics.db`
-- Socket: `/tmp/swictation_metrics.sock`
+- Socket (macOS): `~/Library/Application Support/swictation/swictation_metrics.sock`
+- Socket (Linux): `$XDG_RUNTIME_DIR/swictation_metrics.sock` (fallback: `~/.local/share/swictation/swictation_metrics.sock`)
 
 ---
 

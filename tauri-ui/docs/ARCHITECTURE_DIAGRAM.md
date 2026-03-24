@@ -30,8 +30,8 @@
 │             ▼                                                     │
 │  ┌──────────────────────────┐   ┌──────────────────────────┐    │
 │  │   SQLite Database        │   │   Unix Socket            │    │
-│  │  ~/.local/share/         │   │  /tmp/swictation_        │    │
-│  │  swictation/metrics.db   │   │  metrics.sock            │    │
+│  │  ~/.local/share/         │   │  (platform-specific path)│    │
+│  │  swictation/metrics.db   │   │  swictation_metrics.sock │    │
 │  └──────────────────────────┘   └──────────────────────────┘    │
 │                                                                    │
 └───────────────────────────────────────────────────────────────────┘
@@ -269,7 +269,7 @@
        ▼
 ┌────────────────────────┐
 │  Unix Socket           │
-│  /tmp/swictation_...   │
+│  (platform-specific)   │
 └────────┬───────────────┘
          │
          │ Read

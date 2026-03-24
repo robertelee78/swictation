@@ -414,7 +414,7 @@ npm run tauri:build
 
 ### Unix Socket
 
-- **Path**: `/tmp/swictation_metrics.sock`
+- **Path**: platform-specific (macOS: `~/Library/Application Support/swictation/swictation_metrics.sock`; Linux: `$XDG_RUNTIME_DIR/swictation_metrics.sock`)
 - **Type**: Unix domain socket
 - **Protocol**: Line-delimited JSON
 - **Owner**: Swictation daemon

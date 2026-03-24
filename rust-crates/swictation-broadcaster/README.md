@@ -4,7 +4,7 @@ Real-time metrics broadcaster for Swictation UI clients via Unix socket.
 
 ## Features
 
-- **Unix Domain Socket Server** - Listens on `/tmp/swictation_metrics.sock`
+- **Unix Domain Socket Server** - Listens on `$XDG_RUNTIME_DIR/swictation_metrics.sock` (Linux; fallback: `~/.local/share/swictation/swictation_metrics.sock`)
 - **Newline-Delimited JSON Protocol** - Simple, parseable event streaming
 - **Multiple Concurrent Clients** - Thread-safe client connection management
 - **Session-Based Transcription Buffer** - RAM-only storage, cleared on new session
@@ -77,7 +77,9 @@ use swictation_metrics::DaemonState;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create and start broadcaster
-    let broadcaster = MetricsBroadcaster::new("/tmp/swictation_metrics.sock").await?;
+    // Socket path resolved at runtime via socket_paths module (XDG_RUNTIME_DIR or ~/.local/share/swictation)
+    let socket_path = get_metrics_socket_path(); // e.g. $XDG_RUNTIME_DIR/swictation_metrics.sock
+    let broadcaster = MetricsBroadcaster::new(&socket_path).await?;
     broadcaster.start().await?;
 
     // Start session (clears buffer)
@@ -148,7 +150,9 @@ All operations are thread-safe using:
 swictation-broadcaster = { path = "../swictation-broadcaster" }
 
 // In daemon main loop
-let broadcaster = MetricsBroadcaster::new("/tmp/swictation_metrics.sock").await?;
+// Socket path resolved at runtime via socket_paths module (XDG_RUNTIME_DIR or ~/.local/share/swictation)
+let socket_path = get_metrics_socket_path();
+let broadcaster = MetricsBroadcaster::new(&socket_path).await?;
 broadcaster.start().await?;
 
 // Per-segment callback

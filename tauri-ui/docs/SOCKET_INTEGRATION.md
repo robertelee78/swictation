@@ -9,7 +9,7 @@ The `socket.rs` module provides a robust Unix socket connection handler for real
 ```
 ┌─────────────────┐         Unix Socket          ┌──────────────────┐
 │ Swictation      │◄────────────────────────────►│  MetricsSocket   │
-│ Daemon          │  /tmp/swictation_metrics.sock│  (socket.rs)     │
+│ Daemon          │  platform-specific sock path │  (socket.rs)     │
 │                 │                               │                  │
 │ - Session mgmt  │                               │ - Auto-reconnect │
 │ - Transcription │                               │ - Event parsing  │
@@ -30,8 +30,12 @@ The `socket.rs` module provides a robust Unix socket connection handler for real
 ## Socket Protocol
 
 ### Connection Details
-- **Metrics Socket**: `/tmp/swictation_metrics.sock` (read-only, metrics broadcast)
-- **Command Socket**: `/tmp/swictation.sock` (write, daemon control)
+- **Metrics Socket** (read-only, metrics broadcast):
+  - macOS: `~/Library/Application Support/swictation/swictation_metrics.sock`
+  - Linux: `$XDG_RUNTIME_DIR/swictation_metrics.sock` (fallback: `~/.local/share/swictation/swictation_metrics.sock`)
+- **Command Socket** (write, daemon control):
+  - macOS: `~/Library/Application Support/swictation/swictation.sock`
+  - Linux: `$XDG_RUNTIME_DIR/swictation.sock` (fallback: `~/.local/share/swictation/swictation.sock`)
 - **Format**: Newline-delimited JSON
 - **Reconnect Delay**: 5 seconds on disconnect
 
@@ -426,14 +430,16 @@ swictation-daemon --config ~/.config/swictation/config.toml
 cargo tauri dev
 
 # Monitor socket traffic
-socat -v UNIX-CONNECT:/tmp/swictation_metrics.sock -
+socat -v UNIX-CONNECT:"$HOME/Library/Application Support/swictation/swictation_metrics.sock" -  # macOS
+# Linux: socat -v UNIX-CONNECT:${XDG_RUNTIME_DIR:-$HOME/.local/share/swictation}/swictation_metrics.sock -
 ```
 
 ### Event Simulation
 
 ```bash
 # Send test events to socket
-echo '{"type":"metrics_update","state":"recording","wpm":120.5,"words":100,"latency_ms":150,"segments":10,"duration_s":60.5,"gpu_memory_mb":2048.0,"cpu_percent":45.2}' | socat - UNIX-CONNECT:/tmp/swictation_metrics.sock
+echo '{"type":"metrics_update","state":"recording","wpm":120.5,"words":100,"latency_ms":150,"segments":10,"duration_s":60.5,"gpu_memory_mb":2048.0,"cpu_percent":45.2}' | socat - UNIX-CONNECT:"$HOME/Library/Application Support/swictation/swictation_metrics.sock"  # macOS
+# Linux: ... | socat - UNIX-CONNECT:${XDG_RUNTIME_DIR:-$HOME/.local/share/swictation}/swictation_metrics.sock
 ```
 
 ## Performance Considerations
@@ -457,7 +463,7 @@ echo '{"type":"metrics_update","state":"recording","wpm":120.5,"words":100,"late
 
 ### Socket not found
 ```
-Error: Metrics socket does not exist: /tmp/swictation_metrics.sock
+Error: Metrics socket does not exist: (platform-specific path, see `swictation-paths` crate)
 ```
 **Solution**: Ensure daemon is running:
 ```bash
@@ -472,8 +478,9 @@ Error: Permission denied (os error 13)
 ```
 **Solution**: Check socket permissions:
 ```bash
-ls -l /tmp/swictation_metrics.sock
-chmod 666 /tmp/swictation_metrics.sock  # If needed
+ls -l ~/Library/Application\ Support/swictation/swictation_metrics.sock   # macOS
+ls -l ${XDG_RUNTIME_DIR:-$HOME/.local/share/swictation}/swictation_metrics.sock  # Linux
+chmod 600 <socket-path>  # If needed (restrict to owner)
 ```
 
 ### Connection timeouts

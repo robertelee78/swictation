@@ -19,6 +19,17 @@ log_check() {
     echo -e "${CYAN}→${NC} $1"
 }
 
+# Resolve the IPC socket path using XDG_RUNTIME_DIR with fallback
+get_socket_path() {
+    if [ -n "${XDG_RUNTIME_DIR:-}" ]; then
+        echo "${XDG_RUNTIME_DIR}/swictation.sock"
+    else
+        echo "${HOME}/.local/share/swictation/swictation.sock"
+    fi
+}
+
+SOCKET_PATH="$(get_socket_path)"
+
 log_pass() {
     echo -e "${GREEN}  ✓${NC} $1"
     ((CHECKS_PASSED++))
@@ -159,7 +170,7 @@ elif [ "$DESKTOP" = "sway" ]; then
     else
         log_warn "Sway hotkeys not found in config"
         log_info "Add to ~/.config/sway/config:"
-        log_info "  bindsym \$mod+Shift+d exec sh -c 'echo \"{\\\"action\\\": \\\"toggle\\\"}\" | nc -U /tmp/swictation.sock'"
+        log_info "  bindsym \$mod+Shift+d exec sh -c 'echo \"{\\\"action\\\": \\\"toggle\\\"}\" | nc -U \${XDG_RUNTIME_DIR:-\$HOME/.local/share/swictation}/swictation.sock'"
     fi
 fi
 
@@ -189,12 +200,13 @@ fi
 
 # 6. IPC Socket
 log_check "IPC Socket"
-if [ -S /tmp/swictation.sock ]; then
+log_info "Socket path: $SOCKET_PATH"
+if [ -S "$SOCKET_PATH" ]; then
     log_pass "IPC socket exists"
 
     # Test socket connection
     if command -v nc &> /dev/null; then
-        RESPONSE=$(echo '{"action": "status"}' | nc -U /tmp/swictation.sock 2>/dev/null || echo "")
+        RESPONSE=$(echo '{"action": "status"}' | nc -U "$SOCKET_PATH" 2>/dev/null || echo "")
         if echo "$RESPONSE" | grep -q "status"; then
             log_pass "IPC socket responding"
         else

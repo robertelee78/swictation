@@ -514,7 +514,8 @@ function HistoryView() {
 ## Database Paths
 
 - **Linux/macOS**: `~/.local/share/swictation/metrics.db`
-- **Socket**: `/tmp/swictation_metrics.sock`
+- **Socket (macOS)**: `~/Library/Application Support/swictation/swictation_metrics.sock`
+- **Socket (Linux)**: `$XDG_RUNTIME_DIR/swictation_metrics.sock` (fallback: `~/.local/share/swictation/swictation_metrics.sock`)
 
 ## Type Definitions
 
@@ -538,7 +539,8 @@ sqlite3 ~/.local/share/swictation/metrics.db
 
 ### Test Socket Connection
 ```bash
-nc -U /tmp/swictation_metrics.sock
+nc -U ~/Library/Application\ Support/swictation/swictation_metrics.sock   # macOS
+# Linux: nc -U $XDG_RUNTIME_DIR/swictation_metrics.sock
 # Should see JSON events streaming
 ```
 

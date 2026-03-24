@@ -191,7 +191,7 @@ Options considered:
 **We will connect to the daemon's existing Unix socket for real-time updates.**
 
 Socket details:
-- Path: `/tmp/swictation_metrics.sock`
+- Path: platform-specific (macOS: `~/Library/Application Support/swictation/swictation_metrics.sock`; Linux: `$XDG_RUNTIME_DIR/swictation_metrics.sock`)
 - Protocol: Line-delimited JSON
 - Connection: Persistent with auto-reconnect
 

@@ -48,7 +48,7 @@ For detailed architecture documentation, see:
 ### Runtime Requirements
 - Swictation daemon must be running
 - Database at: `~/.local/share/swictation/metrics.db`
-- Socket at: `/tmp/swictation_metrics.sock`
+- Socket at: `~/Library/Application Support/swictation/swictation_metrics.sock` (macOS) or `$XDG_RUNTIME_DIR/swictation_metrics.sock` (Linux)
 
 ## Installation
 
@@ -209,7 +209,9 @@ export SWICTATION_DB_PATH="/custom/path/metrics.db"
 
 ### Socket Path
 
-Default: `/tmp/swictation_metrics.sock`
+Default: platform-specific socket path (see `swictation-paths` crate)
+- **macOS**: `~/Library/Application Support/swictation/swictation_metrics.sock`
+- **Linux**: `$XDG_RUNTIME_DIR/swictation_metrics.sock` (fallback: `~/.local/share/swictation/swictation_metrics.sock`)
 
 To change, set environment variable:
 ```bash
@@ -233,7 +235,7 @@ export SWICTATION_SOCKET_PATH="/custom/path/metrics.sock"
 
 **Solution**:
 - Ensure daemon is running: `systemctl --user status swictation`
-- Check socket exists: `ls -l /tmp/swictation_metrics.sock`
+- Check socket exists: `ls -l ~/Library/Application\ Support/swictation/swictation_metrics.sock` (macOS) or `ls -l $XDG_RUNTIME_DIR/swictation_metrics.sock` (Linux)
 - Check permissions: Socket should be readable by user
 
 ### Application Won't Start

@@ -6,7 +6,7 @@
 //!
 //! # Features
 //!
-//! - Unix domain socket server (`/tmp/swictation_metrics.sock`)
+//! - Unix domain socket server (platform path via swictation_paths::metrics_socket_path())
 //! - Newline-delimited JSON protocol
 //! - Multiple concurrent client connections
 //! - Session-based transcription buffer (RAM only)
@@ -30,7 +30,7 @@
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     // Create and start broadcaster
-//!     let broadcaster = MetricsBroadcaster::new("/tmp/swictation_metrics.sock").await?;
+//!     let broadcaster = MetricsBroadcaster::new(swictation_paths::metrics_socket_path().to_str().unwrap()).await?;
 //!     broadcaster.start().await?;
 //!
 //!     // Start session

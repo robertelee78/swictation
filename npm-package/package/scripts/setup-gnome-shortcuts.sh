@@ -27,6 +27,17 @@ log_error() {
     echo -e "${RED}✗${NC} $1"
 }
 
+# Resolve the IPC socket path using XDG_RUNTIME_DIR with fallback
+get_socket_path() {
+    if [ -n "${XDG_RUNTIME_DIR:-}" ]; then
+        echo "${XDG_RUNTIME_DIR}/swictation.sock"
+    else
+        echo "${HOME}/.local/share/swictation/swictation.sock"
+    fi
+}
+
+SOCKET_PATH="$(get_socket_path)"
+
 echo -e "${CYAN}═══════════════════════════════════════${NC}"
 echo -e "${CYAN}  $SCRIPT_NAME${NC}"
 echo -e "${CYAN}═══════════════════════════════════════${NC}"
@@ -39,7 +50,7 @@ if [ "$XDG_CURRENT_DESKTOP" != "ubuntu:GNOME" ] && [ "$XDG_CURRENT_DESKTOP" != "
     log_info "Current desktop: ${XDG_CURRENT_DESKTOP:-unknown}"
     echo ""
     log_info "For other desktops, configure hotkeys manually to call:"
-    echo "  sh -c 'echo \"{\\\"action\\\": \\\"toggle\\\"}\" | nc -U /tmp/swictation.sock'"
+    echo "  sh -c 'echo \"{\\\"action\\\": \\\"toggle\\\"}\" | nc -U \${XDG_RUNTIME_DIR:-\$HOME/.local/share/swictation}/swictation.sock'"
     exit 1
 fi
 
@@ -76,7 +87,7 @@ fi
 
 # Configure the toggle keybinding
 gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:$KEYBINDING_PATH name "Swictation Toggle"
-gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:$KEYBINDING_PATH command "sh -c 'echo \"{\\\"action\\\": \\\"toggle\\\"}\" | nc -U /tmp/swictation.sock'"
+gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:$KEYBINDING_PATH command "sh -c 'echo \"{\\\"action\\\": \\\"toggle\\\"}\" | nc -U $SOCKET_PATH'"
 gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:$KEYBINDING_PATH binding "<Super><Shift>d"
 
 log_success "Configured keyboard shortcut: Super+Shift+D"

@@ -1,5 +1,7 @@
 # macOS Service Management Research
 
+> **Note:** Log paths shown as `/tmp/swictation-daemon.log` in this document reflect the old `/tmp` layout. Current log path is `~/Library/Logs/swictation/` on macOS. See `swictation-paths` crate for current platform-specific paths.
+
 **Research Date:** 2025-11-23
 **Purpose:** Document auto-start service management on macOS for Swictation background daemon
 

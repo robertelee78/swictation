@@ -6,7 +6,7 @@
 ✅ Silero VAD loading with correct k2-fsa model (x/h/c tensor format)
 ✅ Parakeet-TDT 1.1B INT8 model with GPU
 ✅ Auto model selection based on VRAM (97GB detected)
-✅ IPC server listening on /tmp/swictation.sock
+✅ IPC server listening on $XDG_RUNTIME_DIR/swictation.sock (or ~/.local/share/swictation/swictation.sock)
 
 ## What Had to Be Fixed Manually
 
@@ -26,7 +26,7 @@
 
 **Correct config format:**
 ```toml
-socket_path = "/tmp/swictation.sock"
+socket_path = "$XDG_RUNTIME_DIR/swictation.sock"  # Linux: uses XDG_RUNTIME_DIR; fallback: ~/.local/share/swictation/swictation.sock
 vad_model_path = "/home/robert/.local/share/swictation/models/silero-vad/silero_vad.onnx"
 vad_min_silence = 0.5
 vad_min_speech = 0.25

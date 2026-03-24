@@ -1,5 +1,7 @@
 # macOS Toggle Command Hang - Root Cause Analysis
 
+> **Note:** Socket paths in this document reflect the old `/tmp` layout. Current paths are platform-specific — see `swictation-paths` crate. macOS: `~/Library/Application Support/swictation/swictation.sock`, Linux: `$XDG_RUNTIME_DIR/swictation.sock` (fallback: `~/.local/share/swictation/swictation.sock`).
+
 ## Investigation Date
 2025-11-27
 

@@ -29,8 +29,8 @@ def get_socket_path() -> str:
         os.makedirs(socket_dir, mode=0o700, exist_ok=True)
         return os.path.join(socket_dir, 'swictation.sock')
 
-    # Final fallback (should rarely happen)
-    return '/tmp/swictation.sock'
+    # HOME is not set — cannot determine socket path
+    raise RuntimeError('Cannot determine socket path: HOME not set')
 
 
 class TrayEventFilter(QObject):

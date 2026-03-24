@@ -64,7 +64,7 @@ exec --no-startup-id swictation-daemon
 order += "read_file swictation_status"
 
 read_file swictation_status {
-    path = "/tmp/swictation_status"
+    path = "${XDG_RUNTIME_DIR:-$HOME/.local/share/swictation}/swictation_status"
     format = "🎤 %content"
     format_bad = "🎤 OFF"
 }
@@ -120,7 +120,7 @@ bar {
     "modules-right": ["pulseaudio", "custom/swictation", "clock"],
 
     "custom/swictation": {
-        "exec": "cat /tmp/swictation_status 2>/dev/null || echo 'OFF'",
+        "exec": "cat ${XDG_RUNTIME_DIR:-$HOME/.local/share/swictation}/swictation_status 2>/dev/null || echo 'OFF'",
         "interval": 1,
         "format": "🎤 {}",
         "on-click": "swictation-toggle"
@@ -192,7 +192,7 @@ super + shift + s
 ```ini
 [module/swictation]
 type = custom/script
-exec = cat /tmp/swictation_status 2>/dev/null || echo "OFF"
+exec = cat ${XDG_RUNTIME_DIR:-$HOME/.local/share/swictation}/swictation_status 2>/dev/null || echo "OFF"
 interval = 1
 format-prefix = "🎤 "
 click-left = swictation-toggle
@@ -283,7 +283,7 @@ gears.timer {
     autostart = true,
     callback = function()
         awful.spawn.easy_async_with_shell(
-            "cat /tmp/swictation_status 2>/dev/null || echo 'OFF'",
+            "cat ${XDG_RUNTIME_DIR:-$HOME/.local/share/swictation}/swictation_status 2>/dev/null || echo 'OFF'",
             function(stdout)
                 swictation_widget.text = "🎤 " .. stdout:gsub("\n", "")
             end
@@ -413,9 +413,8 @@ screens = [
             # ... other widgets ...
             widget.GenPollText(
                 func=lambda: "🎤 " + subprocess.check_output(
-                    ["cat", "/tmp/swictation_status"],
-                    stderr=subprocess.DEVNULL,
-                    text=True
+                    "cat ${XDG_RUNTIME_DIR:-$HOME/.local/share/swictation}/swictation_status",
+                    shell=True, stderr=subprocess.DEVNULL, text=True
                 ).strip(),
                 update_interval=1,
                 mouse_callbacks={
@@ -500,7 +499,8 @@ let timeout;
 
 function update_status() {
     try {
-        let [ok, out] = GLib.file_get_contents('/tmp/swictation_status');
+        let statusPath = (GLib.getenv('XDG_RUNTIME_DIR') || GLib.get_home_dir() + '/.local/share/swictation') + '/swictation_status';
+        let [ok, out] = GLib.file_get_contents(statusPath);
         panelButton.set_label('🎤 ' + out.toString().trim());
     } catch (e) {
         panelButton.set_label('🎤 OFF');
@@ -591,7 +591,7 @@ Use "Command Output" widget:
 1. Right-click panel → Add Widgets
 2. Find "Command Output"
 3. Configure:
-   - Command: `cat /tmp/swictation_status 2>/dev/null || echo "OFF"`
+   - Command: `cat ${XDG_RUNTIME_DIR:-$HOME/.local/share/swictation}/swictation_status 2>/dev/null || echo "OFF"`
    - Update interval: 1000ms
    - Prefix: `🎤 `
 
@@ -619,7 +619,7 @@ Use "Generic Monitor" plugin:
 1. Right-click panel → Panel → Add New Items
 2. Find "Generic Monitor"
 3. Right-click new monitor → Properties
-4. Command: `cat /tmp/swictation_status 2>/dev/null || echo "OFF"`
+4. Command: `cat ${XDG_RUNTIME_DIR:-$HOME/.local/share/swictation}/swictation_status 2>/dev/null || echo "OFF"`
 5. Period: 1s
 6. Label: `🎤`
 

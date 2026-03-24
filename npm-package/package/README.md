@@ -247,17 +247,18 @@ Configuration file is located at `~/.config/swictation/config.toml`
 **Sway** - Add to `~/.config/sway/config`:
 ```bash
 # Swictation toggle
-bindsym $mod+Shift+d exec sh -c 'echo "{\"action\": \"toggle\"}" | nc -U /tmp/swictation.sock'
+# Socket path: ${XDG_RUNTIME_DIR}/swictation.sock (or ~/.local/share/swictation/swictation.sock)
+bindsym $mod+Shift+d exec sh -c 'echo "{\"action\": \"toggle\"}" | nc -U "${XDG_RUNTIME_DIR:-$HOME/.local/share/swictation}/swictation.sock"'
 
 # Optional: Push-to-talk
-bindsym $mod+Space exec sh -c 'echo "{\"action\": \"ptt_press\"}" | nc -U /tmp/swictation.sock'
-bindsym --release $mod+Space exec sh -c 'echo "{\"action\": \"ptt_release\"}" | nc -U /tmp/swictation.sock'
+bindsym $mod+Space exec sh -c 'echo "{\"action\": \"ptt_press\"}" | nc -U "${XDG_RUNTIME_DIR:-$HOME/.local/share/swictation}/swictation.sock"'
+bindsym --release $mod+Space exec sh -c 'echo "{\"action\": \"ptt_release\"}" | nc -U "${XDG_RUNTIME_DIR:-$HOME/.local/share/swictation}/swictation.sock"'
 ```
 Then reload: `swaymsg reload`
 
 **X11 (i3, etc.)** - Add to config:
 ```bash
-bindsym Mod4+Shift+d exec echo '{"action":"toggle"}' | nc -U /tmp/swictation.sock
+bindsym Mod4+Shift+d exec echo '{"action":"toggle"}' | nc -U "${XDG_RUNTIME_DIR:-$HOME/.local/share/swictation}/swictation.sock"
 ```
 
 **[→ See Complete Wayland Support Guide](https://github.com/robertelee78/swictation/blob/main/docs/WAYLAND_SUPPORT.md)** for detailed setup and troubleshooting.
