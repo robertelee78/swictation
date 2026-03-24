@@ -932,7 +932,7 @@ mod inner {
             assert_eq!(num_chunks, 3);
 
             // Chunk 0: start=0, end=240000
-            let start0 = 0 * STRIDE_SAMPLES;
+            let start0 = 0; // chunk 0 always starts at 0
             let end0 = (start0 + CHUNK_SAMPLES).min(total_samples);
             assert_eq!(start0, 0);
             assert_eq!(end0, 240_000);

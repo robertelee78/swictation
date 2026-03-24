@@ -15,8 +15,8 @@ fn main() {
     // Create 15s of silence with a few non-zero samples
     let mut audio = vec![0.0f32; 240000];
     // Put a 440Hz tone in the first 1 second
-    for i in 0..16000 {
-        audio[i] = 0.3 * (2.0 * std::f32::consts::PI * 440.0 * i as f32 / 16000.0).sin();
+    for (i, sample) in audio.iter_mut().enumerate().take(16000) {
+        *sample = 0.3 * (2.0 * std::f32::consts::PI * 440.0 * i as f32 / 16000.0).sin();
     }
 
     let audio_tensor = BorrowedTensor::from_f32(&audio, &[1, 240000]).unwrap();
