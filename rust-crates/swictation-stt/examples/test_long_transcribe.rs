@@ -1,11 +1,17 @@
-use swictation_stt::recognizer_ort::OrtRecognizer;
 use std::time::Instant;
+use swictation_stt::recognizer_ort::OrtRecognizer;
 
 fn main() {
     // Try 1.1B first, fall back to 0.6B
     let model_paths = [
-        ("/Users/robert/.local/share/swictation/models/parakeet-tdt-1.1b-onnx", true),
-        ("/Users/robert/.local/share/swictation/models/parakeet-tdt-0.6b-v3-onnx", true),
+        (
+            "/Users/robert/.local/share/swictation/models/parakeet-tdt-1.1b-onnx",
+            true,
+        ),
+        (
+            "/Users/robert/.local/share/swictation/models/parakeet-tdt-0.6b-v3-onnx",
+            true,
+        ),
     ];
 
     let mut recognizer = None;
