@@ -983,44 +983,124 @@ async function downloadONNXRuntimeCoreML() {
   const nativeDir = path.join(__dirname, 'lib', 'native');
   const targetDylibPath = path.join(nativeDir, 'libonnxruntime.dylib');
 
-  try {
-    // Check if already downloaded
-    if (fs.existsSync(targetDylibPath)) {
-      log('green', `  ✓ ONNX Runtime CoreML dylib already present`);
-      log('cyan', `    Location: ${targetDylibPath}`);
-      log('cyan', `    Skipping download`);
-      return;
-    }
+  // Metadata file tracks dylib version + source to detect stale copies on upgrade
+  // (follows the same pattern as gpu-package-info.json for GPU libraries)
+  const metadataPath = path.join(nativeDir, 'ort-metadata.json');
+  const currentVersion = require('./package.json').version;
 
-    // Check for pre-signed library from platform package (CI-signed with Developer ID)
-    // This is critical for macOS hardened runtime compatibility
+  /**
+   * Verify dylib code signature via codesign -dv (informational, non-fatal).
+   * Returns { valid: boolean, teamId: string|null }.
+   */
+  function verifyDylibSignature(dylibToCheck) {
+    try {
+      const sigInfo = execSync(`codesign -dv "${dylibToCheck}" 2>&1`, { encoding: 'utf8' });
+      let teamId = null;
+      const teamMatch = sigInfo.match(/TeamIdentifier=(\S+)/);
+      if (teamMatch && teamMatch[1] !== 'not set') {
+        teamId = teamMatch[1];
+      }
+      // codesign -dv exits 0 if signature is present (even ad-hoc)
+      return { valid: true, teamId };
+    } catch (err) {
+      // codesign exits non-zero if no signature or corrupt binary
+      return { valid: false, teamId: null };
+    }
+  }
+
+  /**
+   * Read ort-metadata.json. Returns parsed object or null.
+   */
+  function readOrtMetadata() {
+    try {
+      if (fs.existsSync(metadataPath)) {
+        return JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
+      }
+    } catch (err) {
+      log('yellow', `    Warning: Could not read ORT metadata: ${err.message}`);
+    }
+    return null;
+  }
+
+  /**
+   * Write ort-metadata.json with version, source, timestamp, and optional team_id.
+   */
+  function writeOrtMetadata(source, teamId) {
+    const metadata = {
+      version: currentVersion,
+      source: source,
+      copied_at: new Date().toISOString(),
+    };
+    if (teamId) {
+      metadata.team_id = teamId;
+    }
+    fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2), 'utf8');
+    log('cyan', `    Wrote ORT metadata: v${currentVersion}, source=${source}`);
+  }
+
+  try {
+    // --- Priority 1: Platform package (pre-signed with Developer ID from CI) ---
+    // This is the preferred source: CI-signed dylib matching the daemon's signing identity
     const platformPkgLib = path.join(__dirname, 'node_modules', '@agidreams', 'darwin-arm64', 'lib', 'libonnxruntime.dylib');
     if (fs.existsSync(platformPkgLib)) {
       log('green', `  ✓ Found Developer ID signed ONNX Runtime from platform package`);
       log('cyan', `    Source: ${platformPkgLib}`);
+
+      // Fast path: if metadata version matches current version, verify existing dylib
+      const existingMetadata = readOrtMetadata();
+      if (existingMetadata && existingMetadata.version === currentVersion && fs.existsSync(targetDylibPath)) {
+        const sigResult = verifyDylibSignature(targetDylibPath);
+        if (sigResult.valid) {
+          log('green', `  ✓ ONNX Runtime dylib verified (v${currentVersion}, signature valid)`);
+          log('cyan', `    Location: ${targetDylibPath}`);
+          log('cyan', `    Installed: ${existingMetadata.copied_at}`);
+          log('cyan', `    Skipping copy — same version reinstall`);
+          return;
+        }
+        log('yellow', `    Signature check failed on existing dylib — will re-copy from platform package`);
+      }
 
       // Create target directory if needed
       if (!fs.existsSync(nativeDir)) {
         fs.mkdirSync(nativeDir, { recursive: true });
       }
 
-      // Copy the pre-signed library
+      // Copy the pre-signed library (unconditional overwrite on version mismatch or missing metadata)
       fs.copyFileSync(platformPkgLib, targetDylibPath);
       log('green', `  ✓ Copied signed library to ${targetDylibPath}`);
 
-      // Verify signature (informational)
-      try {
-        const sigInfo = execSync(`codesign -dv "${targetDylibPath}" 2>&1 | head -5`, { encoding: 'utf8' });
-        if (sigInfo.includes('TeamIdentifier')) {
-          log('green', `  ✓ Library has valid Developer ID signature`);
-        }
-      } catch (err) {
-        // Signature check is informational only
+      // Verify signature and write metadata
+      const sigResult = verifyDylibSignature(targetDylibPath);
+      if (sigResult.valid) {
+        log('green', `  ✓ Library has valid code signature${sigResult.teamId ? ` (Team: ${sigResult.teamId})` : ''}`);
       }
+      writeOrtMetadata('platform-package', sigResult.teamId);
 
       return;
     }
 
+    // --- Priority 2: Existing dylib with valid metadata (no platform package available) ---
+    if (fs.existsSync(targetDylibPath)) {
+      const existingMetadata = readOrtMetadata();
+      if (existingMetadata && existingMetadata.version === currentVersion) {
+        const sigResult = verifyDylibSignature(targetDylibPath);
+        if (sigResult.valid) {
+          log('green', `  ✓ ONNX Runtime dylib verified (v${currentVersion}, signature valid)`);
+          log('cyan', `    Location: ${targetDylibPath}`);
+          log('cyan', `    Source: ${existingMetadata.source}`);
+          log('cyan', `    Installed: ${existingMetadata.copied_at}`);
+          log('cyan', `    Skipping download — metadata matches`);
+          return;
+        }
+        log('yellow', `    Existing dylib signature invalid — will re-download from GitHub`);
+      } else if (existingMetadata) {
+        log('cyan', `    Version mismatch: dylib is v${existingMetadata.version}, need v${currentVersion} — will re-download`);
+      } else {
+        log('cyan', `    No ORT metadata found — will re-download to ensure correct version`);
+      }
+    }
+
+    // --- Priority 3: Download from GitHub release ---
     // Create directories
     if (!fs.existsSync(tmpDir)) {
       fs.mkdirSync(tmpDir, { recursive: true });
@@ -1054,6 +1134,10 @@ async function downloadONNXRuntimeCoreML() {
     // Copy to npm package native directory
     fs.copyFileSync(dylibPath, targetDylibPath);
     log('green', `  ✓ Installed to ${targetDylibPath}`);
+
+    // Write metadata for GitHub-sourced dylib
+    const sigResult = verifyDylibSignature(targetDylibPath);
+    writeOrtMetadata('github-release', sigResult.valid ? sigResult.teamId : null);
 
     // Check for CoreML support
     try {
@@ -1574,6 +1658,24 @@ function generateLaunchdServices(ortLibPath) {
 
     log('green', '  ✓ Existing services stopped');
 
+    // Rotate log files from previous run to prevent diagnostic confusion
+    const logFiles = ['daemon.log', 'daemon-error.log', 'ui.log', 'ui-error.log', 'launcher.log'];
+    for (const logFile of logFiles) {
+        const logPath = path.join(logDir, logFile);
+        const prevPath = path.join(logDir, logFile + '.prev');
+        try {
+            if (fs.existsSync(logPath)) {
+                if (fs.existsSync(prevPath)) {
+                    fs.unlinkSync(prevPath);
+                }
+                fs.renameSync(logPath, prevPath);
+            }
+        } catch (rotateErr) {
+            // Non-fatal: log rotation failure should not block upgrade
+        }
+    }
+    log('green', '  ✓ Previous log files rotated');
+
     // Create directories
     if (!fs.existsSync(launchAgentsDir)) {
       fs.mkdirSync(launchAgentsDir, { recursive: true });
@@ -1653,18 +1755,27 @@ function generateLaunchdServices(ortLibPath) {
 '\n' +
 '# Platform package lib directory (for ONNX Runtime dylib)\n' +
 '# Try multiple locations in priority order:\n' +
-'# 1. Platform package from optionalDependencies (@agidreams/darwin-arm64)\n' +
-'# 2. Local lib/ directory in main package\n' +
+'# 1. Sibling: platform package hoisted by npm (global installs)\n' +
+'# 2. Nested: platform package as nested dep (local installs, npm 7+)\n' +
+'# 3. Main package lib/native directory\n' +
+'# 4. Hardcoded install-time fallback\n' +
 'find_onnx_lib() {\n' +
-'    # Check platform package first (preferred - has signed dylib)\n' +
-'    local platform_lib="$PACKAGE_DIR/../@agidreams/darwin-arm64/lib"\n' +
-'    if [ -f "$platform_lib/libonnxruntime.dylib" ]; then\n' +
-'        echo "$platform_lib"\n' +
+'    # Check sibling platform package first (preferred - has signed dylib)\n' +
+'    local sibling_lib="$PACKAGE_DIR/../@agidreams/darwin-arm64/lib"\n' +
+'    if [ -f "$sibling_lib/libonnxruntime.dylib" ]; then\n' +
+'        echo "$sibling_lib"\n' +
 '        return\n' +
 '    fi\n' +
 '    \n' +
-'    # Check main package lib directory\n' +
-'    local main_lib="$PACKAGE_DIR/lib"\n' +
+'    # Check nested platform package (npm 7+ nesting or local installs)\n' +
+'    local nested_lib="$PACKAGE_DIR/node_modules/@agidreams/darwin-arm64/lib"\n' +
+'    if [ -f "$nested_lib/libonnxruntime.dylib" ]; then\n' +
+'        echo "$nested_lib"\n' +
+'        return\n' +
+'    fi\n' +
+'    \n' +
+'    # Check main package lib/native directory\n' +
+'    local main_lib="$PACKAGE_DIR/lib/native"\n' +
 '    if [ -f "$main_lib/libonnxruntime.dylib" ]; then\n' +
 '        echo "$main_lib"\n' +
 '        return\n' +
@@ -1686,9 +1797,18 @@ function generateLaunchdServices(ortLibPath) {
 '# Find the daemon binary (prefer platform package)\n' +
 'DAEMON_BIN="$PACKAGE_DIR/../@agidreams/darwin-arm64/bin/swictation-daemon"\n' +
 'if [ ! -x "$DAEMON_BIN" ]; then\n' +
+'    # Check nested platform package (npm 7+ nesting or local installs)\n' +
+'    DAEMON_BIN="$PACKAGE_DIR/node_modules/@agidreams/darwin-arm64/bin/swictation-daemon"\n' +
+'fi\n' +
+'if [ ! -x "$DAEMON_BIN" ]; then\n' +
 '    # Fallback to explicit path from install time\n' +
 '    DAEMON_BIN="' + daemonBinaryPath + '"\n' +
 'fi\n' +
+'\n' +
+'# Diagnostic trace for debugging path resolution\n' +
+'LOG_DIR="$HOME/Library/Logs/swictation"\n' +
+'mkdir -p "$LOG_DIR" 2>/dev/null\n' +
+'echo "$(date \'+%Y-%m-%d %H:%M:%S\') ORT_DYLIB_PATH=$ORT_DYLIB_PATH DAEMON_BIN=$DAEMON_BIN LIB_DIR=$LIB_DIR" >> "$LOG_DIR/launcher.log"\n' +
 '\n' +
 '# Execute the actual daemon binary\n' +
 'exec "$DAEMON_BIN" "$@"\n';

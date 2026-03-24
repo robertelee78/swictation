@@ -367,6 +367,7 @@ mod inner {
                 // for the first chunk) are used. After this function returns, self.decoder_state_h/c
                 // will hold the final state of the last chunk — overwritten on the next call
                 // to recognize_samples() by a fresh DecoderCarryState::initial().
+                //
                 self.decoder_state_h = carry.state_h.clone();
                 self.decoder_state_c = carry.state_c.clone();
 
@@ -376,11 +377,12 @@ mod inner {
                 let skip_frames = if chunk_idx == 0 {
                     0
                 } else {
-                    // The encoder downsampling ratio is constant (MAX_AUDIO_SAMPLES -> ~188 frames)
-                    // regardless of actual audio length, so use the fixed window size as denominator.
-                    let skip = (OVERLAP_SAMPLES as f64 / MAX_AUDIO_SAMPLES as f64
-                        * valid_frames as f64)
-                        .round() as usize;
+                    // Use actual_length as denominator so partial chunks skip the
+                    // correct proportion. For full-length chunks actual_length ==
+                    // MAX_AUDIO_SAMPLES so the result is unchanged.
+                    let denom = actual_length.max(OVERLAP_SAMPLES + 1);
+                    let skip = (OVERLAP_SAMPLES as f64 / denom as f64 * valid_frames as f64).round()
+                        as usize;
                     // Ensure we decode at least 1 frame.
                     skip.min(valid_frames.saturating_sub(1))
                 };
@@ -1017,6 +1019,43 @@ mod inner {
             // And the predicate does NOT fire for chunk 0 even with tiny audio
             let should_skip_first = 0 > 0 && tiny_actual <= OVERLAP_SAMPLES;
             assert!(!should_skip_first, "Skip must never fire on chunk 0");
+        }
+
+        /// Regression test for the skip_frames partial-chunk formula (ADR-029 Item 4).
+        ///
+        /// The old formula used MAX_AUDIO_SAMPLES (240,000) as the denominator for all
+        /// chunks. For partial (last) chunks this severely under-skips the overlap zone,
+        /// causing words already decoded by the previous chunk to be re-emitted.
+        ///
+        /// The fix uses actual_length as the denominator so the overlap fraction is
+        /// computed relative to how much audio is actually in the chunk.
+        #[test]
+        fn test_skip_frames_partial_chunk() {
+            // Full chunk: 240000 samples, 188 frames -> skip 25
+            // (Unchanged by the fix: actual_length == MAX_AUDIO_SAMPLES for full chunks.)
+            let full_skip = (OVERLAP_SAMPLES as f64 / 240_000_f64.max((OVERLAP_SAMPLES + 1) as f64)
+                * 188.0)
+                .round() as usize;
+            assert_eq!(full_skip, 25);
+
+            // Partial chunk: 52181 samples (3.3s), 41 frames
+            // Old formula: (32000 / 240000 * 41).round() = 5  (WRONG — under-skips by 20)
+            // New formula: (32000 / 52181 * 41).round() = 25 (CORRECT)
+            let partial_skip =
+                (OVERLAP_SAMPLES as f64 / 52_181_f64.max((OVERLAP_SAMPLES + 1) as f64) * 41.0)
+                    .round() as usize;
+            assert_eq!(partial_skip, 25);
+
+            // Very short partial chunk: 33664 samples (2.1s), 27 frames
+            // Old formula: (32000 / 240000 * 27).round() = 4  (WRONG — under-skips by 22)
+            // New formula: (32000 / 33664 * 27).round() = 26, clamped to 26 (CORRECT)
+            let short_skip = (OVERLAP_SAMPLES as f64 / 33_664_f64.max((OVERLAP_SAMPLES + 1) as f64)
+                * 27.0)
+                .round() as usize;
+            assert_eq!(short_skip, 26);
+            // Clamp: min(skip, valid_frames - 1) must not consume all frames.
+            // min(26, 27-1) = 26 — leaves exactly 1 frame to decode.
+            assert_eq!(short_skip.min(27 - 1), 26);
         }
 
         #[test]
