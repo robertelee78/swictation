@@ -1,6 +1,6 @@
 {
   "productName": "Swictation",
-  "version": "0.7.28",
+  "version": "0.7.29",
   "identifier": "com.swictation.ui",
   "build": {
     "beforeDevCommand": "npm run dev",

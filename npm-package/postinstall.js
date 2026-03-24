@@ -2006,7 +2006,10 @@ function detectUnifiedMemoryMacOS() {
     totalMemoryGB: 0,
     gpuMemoryMB: 0,
     gpuMemoryGB: 0,
+    vramMB: 0,
+    vramGB: 0,
     metalVersion: null,
+    driverVersion: null,
     recommendedModel: null
   };
 
@@ -2016,9 +2019,19 @@ function detectUnifiedMemoryMacOS() {
     gpuInfo.totalMemoryMB = Math.round(totalMemBytes / (1024 * 1024));
     gpuInfo.totalMemoryGB = Math.round(gpuInfo.totalMemoryMB / 1024);
 
+    // Hard gate: macOS requires 16GB+ unified memory
+    if (gpuInfo.totalMemoryGB < 16) {
+      log('red', `\n✖ Swictation on macOS requires 16GB+ unified memory.`);
+      log('red', `  Detected: ${gpuInfo.totalMemoryGB}GB total system RAM.`);
+      log('red', `  The CoreML speech models need at least 16GB to run reliably.`);
+      process.exit(1);
+    }
+
     // Apply 65/35 split (matches gpu.rs implementation)
     gpuInfo.gpuMemoryMB = Math.round(gpuInfo.totalMemoryMB * 0.35);
     gpuInfo.gpuMemoryGB = Math.round(gpuInfo.gpuMemoryMB / 1024);
+    gpuInfo.vramMB = gpuInfo.gpuMemoryMB;
+    gpuInfo.vramGB = gpuInfo.gpuMemoryGB;
 
     // Detect GPU model name
     try {
@@ -2037,6 +2050,7 @@ function detectUnifiedMemoryMacOS() {
         { encoding: 'utf8' }).trim();
       if (metalVersion) {
         gpuInfo.metalVersion = metalVersion;
+        gpuInfo.driverVersion = 'Metal ' + metalVersion.trim();
       }
     } catch (err) {
       // Metal version detection optional
@@ -2190,7 +2204,11 @@ push_to_talk = "Super+Space"
  */
 async function testModelsInOrder(gpuInfo, daemonBin, ortLibPath) {
   log('cyan', '\n🧪 Testing models on your GPU...');
-  log('cyan', `   GPU: ${gpuInfo.gpuName || 'Unknown'} with ${gpuInfo.vramGB}GB VRAM`);
+  if (process.platform === 'darwin') {
+    log('cyan', `   GPU: ${gpuInfo.gpuName || 'Unknown'} with ${gpuInfo.totalMemoryGB}GB unified memory`);
+  } else {
+    log('cyan', `   GPU: ${gpuInfo.gpuName || 'Unknown'} with ${gpuInfo.vramGB}GB VRAM`);
+  }
 
   if (!gpuInfo.hasGPU) {
     log('cyan', '  No GPU - skipping model tests');
@@ -2205,11 +2223,17 @@ async function testModelsInOrder(gpuInfo, daemonBin, ortLibPath) {
   // Test models in order from best to worst
   const modelsToTest = [];
 
-  if (gpuInfo.vramMB >= 5500) {
-    modelsToTest.push('1.1b-gpu');
-  }
-  if (gpuInfo.vramMB >= 3500) {
-    modelsToTest.push('0.6b-gpu');
+  if (process.platform === 'darwin') {
+    // macOS: test CoreML models (native Apple Neural Engine acceleration)
+    modelsToTest.push('1.1b-coreml');
+  } else {
+    // Linux: test ONNX GPU models based on VRAM
+    if (gpuInfo.vramMB >= 5500) {
+      modelsToTest.push('1.1b-gpu');
+    }
+    if (gpuInfo.vramMB >= 3500) {
+      modelsToTest.push('0.6b-gpu');
+    }
   }
 
   if (modelsToTest.length === 0) {
@@ -2736,10 +2760,18 @@ async function showNextSteps() {
   if (gpuInfo && gpuInfo.recommendedModel) {
     log('cyan', '\n📊 System Detection:');
     if (gpuInfo.hasGPU) {
-      console.log(`   GPU: ${gpuInfo.gpuName} (${gpuInfo.vramGB}GB VRAM)`);
-      console.log(`   Driver: ${gpuInfo.driverVersion}`);
-      if (gpuInfo.cudaVersion) {
-        console.log(`   CUDA: ${gpuInfo.cudaVersion}`);
+      if (process.platform === 'darwin') {
+        console.log(`   GPU: ${gpuInfo.gpuName}`);
+        console.log(`   Unified Memory: ${gpuInfo.totalMemoryGB}GB (${gpuInfo.gpuMemoryGB}GB GPU share)`);
+        if (gpuInfo.metalVersion) {
+          console.log(`   Metal: ${gpuInfo.metalVersion.trim()}`);
+        }
+      } else {
+        console.log(`   GPU: ${gpuInfo.gpuName} (${gpuInfo.vramGB}GB VRAM)`);
+        console.log(`   Driver: ${gpuInfo.driverVersion}`);
+        if (gpuInfo.cudaVersion) {
+          console.log(`   CUDA: ${gpuInfo.cudaVersion}`);
+        }
       }
     } else {
       const capabilities = detectSystemCapabilities();
@@ -3069,9 +3101,9 @@ async function main() {
     const durationStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
 
     log('green', '\n╔══════════════════════════════════════════════════════╗');
-    log('green', `║  swictation v${pkgVersion} installed successfully`);
-    log('green', `║  Platform:  ${process.platform} ${process.arch}`);
-    log('green', `║  Duration:  ${durationStr}`);
+    log('green', `║  swictation v${pkgVersion} installed successfully          ║`);
+    log('green', `║  Platform:  ${process.platform} ${process.arch}${' '.repeat(Math.max(0, 38 - process.platform.length - process.arch.length))}║`);
+    log('green', `║  Duration:  ${durationStr}${' '.repeat(Math.max(0, 39 - durationStr.length))}║`);
     if (_installWarnings.length > 0) {
       log('yellow', '║');
       log('yellow', `║  Warnings (${_installWarnings.length}):`);

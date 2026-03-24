@@ -1,6 +1,6 @@
 [package]
 name = "swictation-metrics"
-version = "0.7.28"
+version = "0.7.29"
 edition = "2021"
 
 [lib]
