@@ -60,7 +60,7 @@ function log(color, message) {
 
 // ── Phase Tracking ──────────────────────────────────────────────────
 let _phaseNumber = 0;
-let _totalPhases = 7; // Adjusted dynamically
+let _totalPhases = 8; // Adjusted dynamically
 
 function phaseLog(title) {
   _phaseNumber++;
@@ -683,32 +683,6 @@ function detectCudaLibraryPaths() {
  */
 async function downloadFile(url, dest) {
   await downloadWithRetry(url, dest);
-}
-
-/**
- * Verify SHA256 checksum of a downloaded file
- * @param {string} filePath - Path to file to verify
- * @param {string} expectedChecksum - Expected SHA256 hash (lowercase hex)
- * @returns {boolean} - True if checksum matches
- */
-function verifyChecksum(filePath, expectedChecksum) {
-  const fileBuffer = fs.readFileSync(filePath);
-  const hashSum = crypto.createHash('sha256');
-  hashSum.update(fileBuffer);
-  const actualChecksum = hashSum.digest('hex');
-  return actualChecksum === expectedChecksum.toLowerCase();
-}
-
-/**
- * Get SHA256 checksum of a file (for debugging/generating checksums)
- * @param {string} filePath - Path to file
- * @returns {string} - SHA256 hash as lowercase hex
- */
-function getFileChecksum(filePath) {
-  const fileBuffer = fs.readFileSync(filePath);
-  const hashSum = crypto.createHash('sha256');
-  hashSum.update(fileBuffer);
-  return hashSum.digest('hex');
 }
 
 // SHA256 checksums for macOS release binaries (SECURITY: verify integrity of downloads)
@@ -2830,17 +2804,17 @@ async function showNextSteps() {
     console.log('');
   }
 
-  // Show setup steps (only if model download succeeded or skipped)
+  // Show usage info (only if model download succeeded or skipped)
   if (modelDownloaded || isModelDownloaded(recommendation.model)) {
-    log('cyan', 'Next steps:');
-    console.log('  1. Run initial setup:');
-    log('cyan', '     swictation setup');
+    log('green', '\nSwictation is installed and running!');
     console.log('');
-    console.log('  2. Start the service:');
-    log('cyan', '     swictation start');
-    console.log('');
-    console.log('  3. Toggle recording with:');
-    log('cyan', '     swictation toggle');
+    if (process.platform === 'darwin') {
+      log('cyan', '  Toggle recording: Ctrl+Shift+D');
+    } else {
+      log('cyan', '  Toggle recording: Super+Shift+D');
+    }
+    log('cyan', '  Check status:     swictation status');
+    log('cyan', '  View version:     swictation --version');
     console.log('');
   }
 
@@ -3042,45 +3016,38 @@ async function main() {
       generateLaunchdServices(ortLibPath);
     }
 
-    phaseLog('Downloading speech models...');
+    phaseLog('Platform integration...');
     // Phase: Platform-specific integration
     if (process.platform === 'linux') {
       const waylandResults = await setupWaylandIntegration();
     } else if (process.platform === 'darwin') {
-      log('yellow', '');
-      log('yellow', '╔════════════════════════════════════════════════════════════════════╗');
-      log('yellow', '║  IMPORTANT: macOS Accessibility Permission Required                ║');
-      log('yellow', '╠════════════════════════════════════════════════════════════════════╣');
-      log('yellow', '║  For Swictation to type text into applications, you must grant     ║');
-      log('yellow', '║  Accessibility permission. This is a macOS security requirement.   ║');
-      log('yellow', '╚════════════════════════════════════════════════════════════════════╝');
-      log('yellow', '');
-      log('cyan', '📋 Steps to enable Accessibility permission:');
       log('cyan', '');
-      log('cyan', '  1. Open System Settings (or System Preferences on older macOS)');
-      log('cyan', '  2. Navigate to: Privacy & Security → Accessibility');
-      log('cyan', '  3. Click the lock icon and enter your password');
-      log('cyan', '  4. Click the + button to add an application');
-      log('cyan', '  5. Navigate to the swictation-daemon binary:');
-      log('cyan', '     ~/.npm-global/lib/node_modules/swictation/bin/swictation-daemon-macos');
-      log('cyan', '     (or wherever npm installed swictation globally)');
-      log('cyan', '  6. Enable the checkbox for swictation-daemon-macos');
+      log('cyan', 'Accessibility Permission:');
+      log('cyan', '  macOS will prompt you to grant Accessibility permission when the');
+      log('cyan', '  daemon first attempts to inject text. Click "Open System Settings"');
+      log('cyan', '  and enable the permission for swictation-daemon.');
       log('cyan', '');
-      log('cyan', '  Without this permission, speech recognition works but text will');
-      log('cyan', '  NOT be typed into applications automatically.');
+      log('cyan', '  If text injection does not work, check:');
+      log('cyan', '    System Settings > Privacy & Security > Accessibility');
       log('cyan', '');
-      log('cyan', '  Documentation: https://github.com/robertelee78/swictation/blob/main/docs/MACOS_SETUP.md');
     }
 
     phaseLog('Verifying installation...');
     if (process.platform === 'linux') {
       const serviceResults = await enableAndStartService();
     } else if (process.platform === 'darwin') {
-      log('cyan', '📋 To enable auto-start on login:');
-      log('cyan', '  launchctl load ~/Library/LaunchAgents/com.swictation.daemon.plist');
-      log('cyan', '\n📋 To start service now:');
-      log('cyan', '  launchctl start com.swictation.daemon');
-      log('cyan', '\nOr use: swictation start');
+      try {
+        execSync('launchctl print gui/$(id -u)/com.swictation.daemon 2>/dev/null', { stdio: 'ignore', shell: '/bin/bash' });
+        log('green', '  Daemon service: loaded and auto-start enabled');
+      } catch {
+        log('yellow', '  Daemon service: not loaded (will start on next login)');
+      }
+      try {
+        execSync('launchctl print gui/$(id -u)/com.swictation.ui 2>/dev/null', { stdio: 'ignore', shell: '/bin/bash' });
+        log('green', '  UI service: loaded and auto-start enabled');
+      } catch {
+        log('cyan', '  UI service: not loaded (optional)');
+      }
     }
 
     // Platform-specific final checks
@@ -3092,7 +3059,8 @@ async function main() {
 
     // Final checks and next steps
     checkDependencies();
-    showNextSteps();
+    phaseLog('Downloading speech models...');
+    await showNextSteps();
 
     // ── Install Summary ──
     const duration = ((Date.now() - _installStart) / 1000).toFixed(0);

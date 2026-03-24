@@ -2,6 +2,8 @@
 
 **Voice-to-text dictation for Linux and macOS with GPU acceleration**
 
+[![Linux](https://img.shields.io/badge/Linux-X11%2FWayland%20%7C%20CUDA-blue?logo=linux)](docs/display-servers.md) [![macOS](https://img.shields.io/badge/macOS-Apple%20Silicon%20%7C%20CoreML-black?logo=apple)](docs/architecture.md)
+
 Pure Rust daemon with VAD-triggered auto-transcription, sub-second latency, and complete privacy.
 
 - **Linux:** X11/Wayland with NVIDIA CUDA acceleration
@@ -36,15 +38,9 @@ Pure Rust daemon with VAD-triggered auto-transcription, sub-second latency, and 
 ### Install
 
 ```bash
-# One-time npm setup (avoids sudo)
-echo "prefix=$HOME/.npm-global" > ~/.npmrc
-export PATH="$HOME/.npm-global/bin:$PATH"
-echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> ~/.profile
-
-# Install
 npm install -g swictation --foreground-scripts
 
-# Postinstall automatically:
+# Postinstall automatically (with retry and progress reporting):
 # - Detects GPU and downloads optimized libraries (~1.5GB)
 # - Recommends and test-loads AI model (30-60s)
 # - Installs services (systemd on Linux, launchd on macOS)
@@ -85,6 +81,7 @@ swictation start
 **Performance:**
 - **Linux (RTX A1000):** VAD 50ms, STT 150-250ms, Total ~1s
 - **macOS (M1):** VAD 50ms, STT 150-300ms (CoreML GPU), Total ~1s
+- **Audio length:** Unlimited — no 15-second cap. The pipeline processes arbitrary-length dictation via windowed chunking, so long-form dictation works without interruption.
 
 ---
 
@@ -167,6 +164,9 @@ model_override = "auto"    # auto, 0.6b-cpu, 0.6b-gpu, or 1.1b-gpu
 ---
 
 ## Troubleshooting
+
+**Installation issues:**
+Check the install log: `~/.local/share/swictation/install.log`
 
 **Daemon won't start:**
 ```bash

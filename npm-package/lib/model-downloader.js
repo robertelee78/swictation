@@ -9,6 +9,16 @@ const { spawn, execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { downloadWithRetry } = require('../src/download');
+
+// Every .mlmodelc bundle has exactly this internal structure
+const MLMODELC_INTERNAL_FILES = [
+  'weights/weight.bin',
+  'metadata.json',
+  'model.mil',
+  'coremldata.bin',
+  'analytics/coremldata.bin'
+];
 
 // Model definitions
 const MODELS = {
@@ -230,13 +240,49 @@ class ModelDownloader {
       });
     }
 
-    // Handle HuggingFace CLI downloads
+    // Handle HuggingFace CLI downloads (with fallback chain)
     this.log(`\n📦 Downloading ${model.name} (${model.size})...`);
     this.log(`   Repository: ${model.repo}`);
     this.log(`   Destination: ${targetPath}\n`);
 
+    // Tier 1: Try hf CLI if available
+    if (this.hfAvailable || this.checkHuggingFaceCli()) {
+      try {
+        await this._downloadWithHfCli(modelKey, model, targetPath);
+        return;
+      } catch (err) {
+        this.log(`   hf CLI download failed: ${err.message}`);
+        this.log('   Falling back to direct HTTP download...\n');
+      }
+    }
+
+    // Tier 2: Try to auto-install hf CLI, then retry
+    if (!this.hfAvailable) {
+      this.log('   Attempting to auto-install hf CLI...');
+      const installed = this.tryInstallHfCli();
+      if (installed) {
+        this.hfAvailable = true;
+        try {
+          await this._downloadWithHfCli(modelKey, model, targetPath);
+          return;
+        } catch (err) {
+          this.log(`   hf CLI download failed after install: ${err.message}`);
+          this.log('   Falling back to direct HTTP download...\n');
+        }
+      } else {
+        this.log('   Auto-install of hf CLI failed. Using direct HTTP download.\n');
+      }
+    }
+
+    // Tier 3: Direct HTTP download from HuggingFace
+    await this.downloadModelDirect(modelKey);
+  }
+
+  /**
+   * Download a model using the hf CLI (extracted from original downloadModel)
+   */
+  _downloadWithHfCli(modelKey, model, targetPath) {
     return new Promise((resolve, reject) => {
-      // Build hf CLI command
       const args = [
         'download',
         model.repo,
@@ -285,30 +331,107 @@ class ModelDownloader {
   }
 
   /**
+   * Attempt to auto-install the hf CLI.
+   * On macOS: try brew first, then pip3.
+   * On Linux: try pip3.
+   * @returns {boolean} true if hf CLI is now available
+   */
+  tryInstallHfCli() {
+    const platform = os.platform();
+
+    // On macOS, try brew first
+    if (platform === 'darwin') {
+      try {
+        this.log('   Trying: brew install huggingface-cli');
+        execSync('brew install huggingface-cli', { stdio: 'pipe', timeout: 120000 });
+        if (this.checkHuggingFaceCli()) {
+          this.log('   Successfully installed hf CLI via brew.');
+          return true;
+        }
+      } catch {
+        this.log('   brew install failed or not available.');
+      }
+    }
+
+    // Try pip3 on both macOS and Linux
+    try {
+      this.log('   Trying: pip3 install "huggingface_hub[cli]"');
+      execSync('pip3 install "huggingface_hub[cli]"', { stdio: 'pipe', timeout: 120000 });
+      if (this.checkHuggingFaceCli()) {
+        this.log('   Successfully installed hf CLI via pip3.');
+        return true;
+      }
+    } catch {
+      this.log('   pip3 install failed or not available.');
+    }
+
+    return false;
+  }
+
+  /**
+   * Download a model directly from HuggingFace via HTTP.
+   * Handles both flat files and .mlmodelc directory bundles.
+   * Uses downloadWithRetry for robust downloading with retry/resume.
+   */
+  async downloadModelDirect(modelKey) {
+    const model = MODELS[modelKey];
+    if (!model) {
+      throw new Error(`Unknown model: ${modelKey}`);
+    }
+    if (!model.repo) {
+      throw new Error(`Model ${modelKey} has no repo defined for direct download`);
+    }
+
+    const targetPath = path.join(this.modelDir, model.targetDir);
+
+    // Expand the file list: .mlmodelc bundles become multiple internal files
+    const filesToDownload = [];
+    for (const file of model.files) {
+      if (file.endsWith('.mlmodelc')) {
+        // Expand .mlmodelc bundle to its internal files
+        for (const internalFile of MLMODELC_INTERNAL_FILES) {
+          filesToDownload.push(path.join(file, internalFile));
+        }
+      } else {
+        filesToDownload.push(file);
+      }
+    }
+
+    this.log(`   Downloading ${filesToDownload.length} file(s) via direct HTTP...`);
+
+    for (let i = 0; i < filesToDownload.length; i++) {
+      const file = filesToDownload[i];
+      const url = `https://huggingface.co/${model.repo}/resolve/main/${file}`;
+      const dest = path.join(targetPath, file);
+
+      this.log(`   [${i + 1}/${filesToDownload.length}] ${file}`);
+
+      await downloadWithRetry(url, dest, {
+        maxRetries: 3,
+        timeout: 60000,
+        checkDiskSpace: i === 0 // only check disk space on first file
+      });
+    }
+
+    // Run post-download processing if defined
+    if (model.postDownload) {
+      model.postDownload(targetPath);
+    }
+
+    this.log(`✓ ${model.name} downloaded successfully (via direct HTTP)\n`);
+  }
+
+  /**
    * Download multiple models
    */
   async downloadModels(modelKeys) {
-    // Check for hf CLI
-    if (!this.checkHuggingFaceCli()) {
-      this.error('hf CLI not found!');
-      this.log('');
-      this.log('The model downloader requires the hf CLI from the huggingface_hub package.');
-      this.log('');
-      this.log('Install with:');
-      this.log('  pip install --upgrade huggingface_hub[cli]');
-      this.log('');
-      this.log('Or using pipx (recommended):');
-      this.log('  pipx install huggingface_hub[cli]');
-      this.log('');
-      throw new Error('hf CLI is required');
+    this.hfAvailable = this.checkHuggingFaceCli();
+
+    if (!this.hfAvailable) {
+      this.log('Note: hf CLI not found. Will attempt auto-install or use direct HTTP download.');
     }
 
     this.ensureModelDir();
-
-    const totalSize = modelKeys.reduce((sum, key) => {
-      const model = MODELS[key];
-      return sum + (model ? model.size : '');
-    }, '');
 
     this.log(`\n🚀 Swictation Model Downloader`);
     this.log(`   Downloading ${modelKeys.length} model(s)`);
