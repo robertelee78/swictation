@@ -1,5 +1,56 @@
 # Changelog
 
+## [0.7.31] - 2026-03-24
+
+### Fixed - macOS CoreML Install Flow (Issue #3)
+
+Every fresh macOS Apple Silicon install fell back to CPU-only mode due to a sequencing bug
+where the postinstall script tested the CoreML model before downloading it. A comprehensive
+audit revealed 10 interrelated issues. All fixed in this release.
+
+- **Model Download Sequencing** - Move model download before model test on both platforms
+  - Fixes chicken-and-egg bug: test no longer runs against missing model files
+  - Platform-agnostic fix benefits both macOS CoreML and Linux GPU installs
+  - Download failure gracefully skips test and preserves heuristic recommendation
+
+- **Temp Config Completeness** - Generated config.toml now includes all required fields
+  - Added `stt_coreml_model_path` (was missing, crashed daemon on config parse)
+  - Fixed `stt_0_6b_model_path` directory name (was using HuggingFace repo name)
+  - Platform-correct hotkey defaults (macOS: Ctrl+Shift+D, Linux: Super+Shift+D)
+  - Removed unsupported `push_to_talk` from generated config
+
+- **Platform-Aware Test Environment** - macOS test no longer uses Linux-only settings
+  - macOS: only `ORT_DYLIB_PATH` + `RUST_LOG` (no `LD_LIBRARY_PATH`, `CUDA_HOME`)
+  - Linux: retains full CUDA path detection
+  - Replaced GNU `timeout` with Node.js `execSync({ timeout })` for stock macOS compat
+
+- **Model Directory Mappings** - `isModelDownloaded()` now uses correct directory names
+  - Was using HuggingFace repo names; now matches `model-downloader.js` `targetDir`
+  - Prevents unnecessary re-downloads on every install
+
+- **Daemon Config Resilience** - Added `#[serde(default)]` for new/optional fields
+  - `stt_coreml_model_path` defaults gracefully on older configs
+  - `HotkeyConfig` struct tolerates missing fields on upgrade
+
+- **Dry-Run Model Verification** - Daemon `--dry-run` now verifies model files on disk
+  - Checks primary encoder file exists before reporting success
+  - Returns non-zero exit on missing files (postinstall correctly detects failure)
+
+- **Cleanup** - Removed stale `detected-environment.json` from git tracking
+- **Broadcaster Doctest** - Fixed compile failure from missing dependency
+- **Socket Paths** - Eliminated all `/tmp` references; use `swictation-paths` crate
+
+### Installation
+```bash
+npm install -g swictation@0.7.31
+```
+
+### Platforms
+- macOS ARM64 (Apple Silicon) - `@agidreams/darwin-arm64`
+- Linux x86_64 (NVIDIA CUDA/CPU) - `@agidreams/linux-x64`
+
+---
+
 ## [0.7.25] - 2025-11-29
 
 ### Fixed - macOS Permission Handling & Path Resolution
