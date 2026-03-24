@@ -509,7 +509,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "coreml-rs"
+name = "coreml-native"
 version = "0.2.0"
 dependencies = [
  "block2",
@@ -3066,7 +3066,7 @@ version = "0.2.2"
 dependencies = [
  "anyhow",
  "approx 0.5.1",
- "coreml-rs",
+ "coreml-native",
  "hound",
  "ndarray 0.16.1",
  "ort",

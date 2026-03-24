@@ -1,6 +1,6 @@
 //! Native CoreML recognizer for Parakeet-TDT models on macOS
 //!
-//! Uses the `coreml-rs` crate for safe, ergonomic CoreML inference with full
+//! Uses the `coreml-native` crate for safe, ergonomic CoreML inference with full
 //! ANE (Apple Neural Engine) utilization. Replaces the previous hand-written
 //! C/Obj-C bridge.
 //!
@@ -22,7 +22,7 @@ mod inner {
 
 use crate::audio::AudioProcessor;
 use crate::error::{Result, SttError};
-use coreml_rs::{BorrowedTensor, ComputeUnits, Model};
+use coreml_native::{BorrowedTensor, ComputeUnits, Model};
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
@@ -99,8 +99,8 @@ pub struct CoreMLRecognizer {
     config: ModelConfig,
 }
 
-/// Helper to map `coreml_rs::Error` into `SttError`.
-fn coreml_err(context: &str, e: coreml_rs::Error) -> SttError {
+/// Helper to map `coreml_native::Error` into `SttError`.
+fn coreml_err(context: &str, e: coreml_native::Error) -> SttError {
     SttError::InferenceError(format!("{}: {}", context, e))
 }
 

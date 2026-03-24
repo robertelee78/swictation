@@ -1,7 +1,7 @@
 //! Test CoreML encoder output data layout.
 //! Run: cargo run --features coreml-native --example test_coreml_layout
 
-use coreml_rs::{BorrowedTensor, ComputeUnits, Model};
+use coreml_native::{BorrowedTensor, ComputeUnits, Model};
 
 fn main() {
     let base = format!("{}/.local/share/swictation/models/parakeet-tdt-1.1b-coreml",

@@ -39,12 +39,12 @@ approx = "0.5"
 
 [features]
 default = []
-# Native CoreML backend via coreml-rs: loads .mlmodelc bundles directly.
+# Native CoreML backend via coreml-native: loads .mlmodelc bundles directly.
 # Requires macOS. No Obj-C compilation needed.
-coreml-native = ["coreml-rs"]
+coreml-native = ["dep:coreml-native"]
 
 [target.'cfg(target_os = "macos")'.dependencies]
-coreml-rs = { path = "/opt/coreml-rs", optional = true }
+coreml-native = { path = "/opt/coreml-native", optional = true }
 
 [profile.release]
 opt-level = 3
