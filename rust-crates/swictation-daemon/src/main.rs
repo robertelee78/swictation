@@ -30,7 +30,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::config::DaemonConfig;
 
@@ -305,8 +305,13 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    // Initialize logging (sync)
+    // Initialize logging (sync). Honors RUST_LOG (e.g. swictation_daemon=debug
+    // for transcript-content diagnostics per ADR-034); defaults to info.
     tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
         .with_target(false)
         .with_level(true)
         .init();
@@ -780,7 +785,9 @@ async fn daemon_main(
 
         // Receive text to inject from channel
         while let Ok(text) = inject_rx.recv() {
-            info!("Injecting text: {}", text);
+            // Privacy: never log dictated content at info — journald persists it (ADR-034).
+            info!("Injecting text: {} chars", text.chars().count());
+            debug!("Injecting text content: {}", text);
             if let Err(e) = text_injector.inject_text(&text) {
                 error!("Failed to inject text: {}", e);
             }

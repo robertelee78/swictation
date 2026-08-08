@@ -66,10 +66,7 @@ function log(color, message) {
  * Linux: ~/.config/swictation/
  */
 function getConfigDir() {
-  if (process.platform === 'darwin') {
-    return path.join(os.homedir(), 'Library', 'Application Support', 'swictation');
-  }
-  return path.join(os.homedir(), '.config', 'swictation');
+  return require('./src/paths').getConfigDir();
 }
 
 /**
@@ -78,10 +75,7 @@ function getConfigDir() {
  * Linux: ~/.local/share/swictation/
  */
 function getDataDir() {
-  if (process.platform === 'darwin') {
-    return path.join(os.homedir(), 'Library', 'Application Support', 'swictation');
-  }
-  return path.join(os.homedir(), '.local', 'share', 'swictation');
+  return require('./src/paths').getDataDir();
 }
 
 /**
@@ -90,10 +84,7 @@ function getDataDir() {
  * Linux: ~/.cache/swictation/
  */
 function getCacheDir() {
-  if (process.platform === 'darwin') {
-    return path.join(os.homedir(), 'Library', 'Caches', 'swictation');
-  }
-  return path.join(os.homedir(), '.cache', 'swictation');
+  return require('./src/paths').getCacheDir();
 }
 
 /**
@@ -810,44 +801,8 @@ function selectGPUPackageVariant(smVersion) {
  * Now includes ~/.local/share/swictation/gpu-libs as PRIMARY source
  */
 function detectCudaLibraryPaths() {
-  const paths = [];
-
-  // PRIORITY 1: User's GPU libs directory (our multi-architecture packages)
-  const gpuLibsDir = path.join(getDataDir(), 'gpu-libs');
-  if (fs.existsSync(gpuLibsDir)) {
-    paths.push(gpuLibsDir);
-  }
-
-  // PRIORITY 2: Check common CUDA installation directories (system-wide fallback)
-  const cudaDirs = [
-    '/usr/local/cuda/lib64',
-    '/usr/local/cuda/lib',
-    '/usr/local/cuda-13/lib64',
-    '/usr/local/cuda-13/lib',
-    '/usr/local/cuda-12.9/lib64',
-    '/usr/local/cuda-12.9/lib',
-    '/usr/local/cuda-12/lib64',
-    '/usr/local/cuda-12/lib',
-  ];
-
-  // Find directories that contain cuDNN or CUDA runtime
-  for (const dir of cudaDirs) {
-    try {
-      if (fs.existsSync(dir)) {
-        const files = fs.readdirSync(dir);
-        // Check for cuDNN or CUDA runtime libraries
-        if (files.some(f => f.startsWith('libcudnn.so') || f.startsWith('libcudart.so'))) {
-          if (!paths.includes(dir)) {
-            paths.push(dir);
-          }
-        }
-      }
-    } catch (err) {
-      // Ignore errors from directories we can't read
-    }
-  }
-
-  return paths;
+  // Delegates to the shared module (ADR-034) so postinstall and setup agree.
+  return require('./src/generate-service').detectCudaLibraryPaths();
 }
 
 /**
@@ -1507,136 +1462,20 @@ function generateSystemdService(ortLibPath) {
       // Wayland socket not found, may be X11-only system
     }
 
-    // 1. Generate daemon service from template
-    const templatePath = path.join(__dirname, 'templates', 'swictation-daemon.service.template');
-    if (!fs.existsSync(templatePath)) {
-      log('yellow', `⚠️  Warning: Template not found at ${templatePath}`);
-      log('yellow', '   Skipping daemon service generation');
-    } else {
-      let template = fs.readFileSync(templatePath, 'utf8');
-
-      // Replace placeholders with platform package paths
-      // __INSTALL_DIR__ in template refers to the bin directory containing daemon binary
-      // Template has: __INSTALL_DIR__/swictation-daemon
-      // We need to replace __INSTALL_DIR__ with actual binDir from platform package
-      template = template.replace(/__INSTALL_DIR__/g, binaryPaths.binDir);
-
-      // CRITICAL: Detect GPU variant to determine which ONNX Runtime to use
-      const configDir = getConfigDir();
-      const gpuPackageInfoPath = path.join(configDir, 'gpu-package-info.json');
-
-      let finalOrtLibPath, finalLdLibraryPath;
-      let variant = 'latest'; // default
-
-      // Try to read GPU package info to get variant
-      if (fs.existsSync(gpuPackageInfoPath)) {
-        try {
-          const metadata = JSON.parse(fs.readFileSync(gpuPackageInfoPath, 'utf8'));
-          variant = metadata.variant || 'latest';
-          log('cyan', `  Detected GPU package variant: ${variant}`);
-        } catch (err) {
-          log('yellow', `  Warning: Could not read GPU package metadata: ${err.message}`);
-        }
-      }
-
-      // Detect CUDA paths upfront (needed for logging)
-      const detectedCudaPaths = detectCudaLibraryPaths();
-
-      // Check multiple possible ONNX Runtime locations in priority order:
-      // 1. gpu-libs directory (downloaded GPU libraries)
-      // 2. Platform package lib directory (bundled with package)
-      const gpuLibsDir = path.join(getDataDir(), 'gpu-libs');
-      const gpuLibsOrtPath = path.join(gpuLibsDir, 'libonnxruntime.so');
-      const platformOrtPath = path.join(binaryPaths.libDir, 'libonnxruntime.so');
-
-      if (fs.existsSync(gpuLibsOrtPath)) {
-        // Use gpu-libs ONNX Runtime (downloaded GPU libraries)
-        finalOrtLibPath = gpuLibsOrtPath;
-        // LD_LIBRARY_PATH: gpu-libs first (has CUDA providers), then platform lib, then CUDA paths
-        finalLdLibraryPath = [gpuLibsDir, binaryPaths.libDir, ...detectedCudaPaths].join(':');
-        log('cyan', `  Using downloaded ONNX Runtime: ${finalOrtLibPath}`);
-        log('cyan', `  GPU libraries directory: ${gpuLibsDir}`);
-      } else if (fs.existsSync(platformOrtPath)) {
-        // Use platform package ONNX Runtime (bundled)
-        finalOrtLibPath = platformOrtPath;
-        finalLdLibraryPath = [...detectedCudaPaths, binaryPaths.libDir].join(':');
-        log('cyan', `  Using platform package ONNX Runtime: ${finalOrtLibPath}`);
-        log('cyan', `  Platform lib directory: ${binaryPaths.libDir}`);
-      } else {
-        // Neither exists - use platform path but warn
-        log('yellow', `  ⚠️  ONNX Runtime not found in gpu-libs: ${gpuLibsOrtPath}`);
-        log('yellow', `  ⚠️  ONNX Runtime not found in platform: ${platformOrtPath}`);
-        finalOrtLibPath = platformOrtPath; // Use platform path as placeholder
-        finalLdLibraryPath = [...detectedCudaPaths, binaryPaths.libDir].join(':');
-        log('yellow', '  ⚠️  Service may fail - run GPU library download manually');
-      }
-
-      // CRITICAL: Trim all whitespace and newlines from paths to prevent malformed service file
-      if (finalOrtLibPath) {
-        const cleanPath = finalOrtLibPath.trim().replace(/[\r\n]/g, '');
-        template = template.replace(/__ORT_DYLIB_PATH__/g, cleanPath);
-        log('cyan', `  ORT_DYLIB_PATH set to: ${cleanPath}`);
-      } else {
-        log('yellow', '⚠️  Warning: ORT_DYLIB_PATH not detected');
-        log('yellow', '   Service file will contain placeholder - you must set it manually');
-      }
-
-      // CRITICAL: Trim and clean LD_LIBRARY_PATH
-      const cleanLdPath = finalLdLibraryPath.trim().replace(/[\r\n]/g, '');
-      template = template.replace(/__LD_LIBRARY_PATH__/g, cleanLdPath);
-      log('cyan', `  LD_LIBRARY_PATH set to: ${cleanLdPath}`);
-
-      if (detectedCudaPaths.length > 0) {
-        log('cyan', `  Detected ${detectedCudaPaths.length} CUDA library path(s):`);
-        detectedCudaPaths.forEach(p => log('cyan', `    ${p}`));
-      } else {
-        log('yellow', '  ⚠️  No CUDA libraries detected (CPU-only mode)');
-      }
-
-      // Add display environment variables before ImportEnvironment
-      if (waylandDisplay || xDisplay) {
-        const envVars = [];
-        if (waylandDisplay) envVars.push(`Environment="WAYLAND_DISPLAY=${waylandDisplay}"`);
-        if (xDisplay) envVars.push(`Environment="DISPLAY=${xDisplay}"`);
-
-        // Insert before ImportEnvironment= line
-        template = template.replace(
-          /ImportEnvironment=/,
-          `${envVars.join('\n')}\n\n# Import full user environment for PulseAudio/PipeWire session\n# This ensures all audio devices are detected properly (4 devices instead of 1)\n# Required for microphone access in user session\nImportEnvironment=`
-        );
-      }
-
-      // VALIDATION: Check for malformed Environment variables
-      const validateServiceFile = (content) => {
-        const lines = content.split('\n');
-        for (let i = 0; i < lines.length; i++) {
-          if (lines[i].includes('Environment=')) {
-            const quoteCnt = (lines[i].match(/"/g) || []).length;
-            if (quoteCnt % 2 !== 0) {
-              throw new Error(`Malformed Environment variable at line ${i+1}: ${lines[i]}`);
-            }
-          }
-        }
-      };
-
-      try {
-        validateServiceFile(template);
-        log('green', '  ✓ Service file validation passed');
-      } catch (err) {
-        log('red', `  ✗ Service file validation failed: ${err.message}`);
-        throw err;
-      }
-
-      // Write daemon service file
+    // 1. Generate daemon service from the shared template renderer (ADR-034:
+    // single source of truth, shared with `swictation setup` in bin/swictation)
+    try {
+      const { buildDaemonServiceUnit } = require('./src/generate-service');
+      const unit = buildDaemonServiceUnit(binaryPaths, log);
       const daemonServicePath = path.join(systemdDir, 'swictation-daemon.service');
-      fs.writeFileSync(daemonServicePath, template);
+      fs.writeFileSync(daemonServicePath, unit.content);
       log('green', `✓ Generated daemon service: ${daemonServicePath}`);
-
-      if (ortLibPath) {
-        log('cyan', '  Service configured with detected ONNX Runtime path');
-      } else {
-        log('yellow', '  ⚠️  Please edit the service file to set ORT_DYLIB_PATH manually');
+      if (!unit.ortFound) {
+        log('yellow', '  ⚠️  ONNX Runtime not found - edit the service file to set ORT_DYLIB_PATH manually');
       }
+    } catch (err) {
+      log('red', `  ✗ Daemon service generation failed: ${err.message}`);
+      log('yellow', '   Skipping daemon service generation');
     }
 
     // 2. Install UI service - detect environment and use appropriate UI

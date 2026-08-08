@@ -104,13 +104,9 @@ const MODELS = {
 
 class ModelDownloader {
   constructor(options = {}) {
-    this.modelDir = options.modelDir || path.join(
-      os.homedir(),
-      '.local',
-      'share',
-      'swictation',
-      'models'
-    );
+    // Platform-aware default (ADR-034): the previous hardcoded XDG path sent
+    // macOS downloads to a directory the daemon never reads.
+    this.modelDir = options.modelDir || require('../src/paths').getModelsDir();
     this.force = options.force || false;
     this.verbose = options.verbose || false;
   }
@@ -461,6 +457,9 @@ class ModelDownloader {
     console.error(`❌ ${message}`);
   }
 }
+
+// Expose the model table so callers derive valid names from one place (ADR-034).
+ModelDownloader.MODELS = MODELS;
 
 module.exports = ModelDownloader;
 

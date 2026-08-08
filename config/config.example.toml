@@ -1,6 +1,11 @@
 # Swictation Configuration
-# Copy this to ~/.config/swictation/config.toml to customize.
-# All values shown here are the defaults.
+# Copy this to your config directory to customize:
+#   Linux:  ~/.config/swictation/config.toml
+#   macOS:  ~/Library/Application Support/swictation/config.toml
+#
+# Every key is optional — anything omitted (or commented out) falls back to a
+# platform-appropriate compiled default. The values shown are those defaults.
+# A leading ~ in any path is expanded to your home directory.
 
 # Unix socket path for IPC communication
 # The daemon auto-detects the correct path — override only if needed:
@@ -10,7 +15,9 @@
 # socket_path = "/run/user/1000/swictation.sock"
 
 # Path to Silero VAD ONNX model
-vad_model_path = "~/.local/share/swictation/models/silero-vad/silero_vad.onnx"
+# Default: <models dir>/silero-vad/silero_vad.onnx, where <models dir> is
+#   Linux: ~/.local/share/swictation/models | macOS: ~/Library/Application Support/swictation/models
+# vad_model_path = "~/.local/share/swictation/models/silero-vad/silero_vad.onnx"
 
 # VAD minimum silence duration (seconds)
 # How long to wait after you stop speaking before processing the text.
@@ -37,24 +44,28 @@ vad_threshold = 0.25
 
 # STT model selection
 # Options:
-#   "auto"      - Automatic selection based on available VRAM (default)
-#   "0.6b-cpu"  - 0.6B model on CPU (slowest, no GPU required)
-#   "0.6b-gpu"  - 0.6B model on GPU (fast, ~2GB VRAM)
-#   "1.1b-gpu"  - 1.1B model on GPU (best quality, ~4GB VRAM)
+#   "auto"         - Automatic selection based on available VRAM (default)
+#   "0.6b-cpu"     - 0.6B model on CPU (slowest, no GPU required)
+#   "0.6b-gpu"     - 0.6B model on GPU (fast, ~2GB VRAM)
+#   "1.1b-gpu"     - 1.1B model on GPU (best close-mic quality, ~4GB VRAM)
+#   "1.1b-coreml"  - 1.1B via CoreML/ANE (macOS Apple Silicon)
 stt_model_override = "auto"
 
-# Path to 0.6B model directory (sherpa-rs)
-stt_0_6b_model_path = "~/.local/share/swictation/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-onnx"
+# Path to 0.6B model directory (ONNX Runtime)
+# stt_0_6b_model_path = "~/.local/share/swictation/models/parakeet-tdt-0.6b-v3-onnx"
 
 # Path to 1.1B INT8 model directory (ONNX Runtime)
-stt_1_1b_model_path = "~/.local/share/swictation/models/parakeet-tdt-1.1b-onnx"
+# stt_1_1b_model_path = "~/.local/share/swictation/models/parakeet-tdt-1.1b-onnx"
 
-# Number of threads for ONNX Runtime (null = auto-detect)
+# Path to CoreML model directory (macOS Apple Silicon)
+# stt_coreml_model_path = "~/Library/Application Support/swictation/models/parakeet-tdt-1.1b-coreml"
+
+# Number of threads for ONNX Runtime
 num_threads = 4
 
-# Audio device index (null = default device)
-# Use `arecord -l` to list available devices
-audio_device_index = null
+# Audio device index — omit for the default input device.
+# Use `arecord -l` (Linux) to list available devices.
+# audio_device_index = 0
 
 # Corrections Engine - Phonetic matching threshold
 # Controls how fuzzy the phonetic matching is for learned corrections
@@ -63,12 +74,9 @@ audio_device_index = null
 # - 1.0 = Very fuzzy (may over-correct)
 phonetic_threshold = 0.3
 
-# Hotkey configuration
-[hotkeys]
-# Toggle recording on/off
-# Linux default: Super+Shift+D | macOS default: Ctrl+Shift+D
-toggle = "Super+Shift+D"
-
-# Push-to-talk (hold to record, release to stop)
-# Linux default: Super+Space | macOS default: Ctrl+Space
-push_to_talk = "Super+Space"
+# Hotkey configuration — defaults are platform-specific; uncomment to override.
+#   Linux: toggle = "Super+Shift+D", push_to_talk = "Super+Space"
+#   macOS: toggle = "Ctrl+Shift+D",  push_to_talk = "Ctrl+Space"
+# [hotkeys]
+# toggle = "Super+Shift+D"
+# push_to_talk = "Super+Space"

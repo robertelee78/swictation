@@ -5,7 +5,7 @@ use chrono::Utc;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::sync::mpsc;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use midstreamer_text_transform::transform;
 use swictation_audio::AudioCapture;
@@ -212,7 +212,7 @@ impl Pipeline {
                     info!("Detected GPU with {}MB VRAM", vram);
 
                     if vram >= 6000 {
-                        // High VRAM: Use 1.1B INT8 model for best quality (5.77% WER)
+                        // High VRAM: Use 1.1B INT8 model (best close-mic quality: 1.39% WER LS test-clean)
                         info!("✓ Sufficient VRAM for 1.1B INT8 model (requires ≥6GB)");
                         info!("  Loading Parakeet-TDT-1.1B-INT8 via ONNX Runtime...");
 
@@ -230,7 +230,7 @@ impl Pipeline {
                         info!("✓ Parakeet-TDT-1.1B-INT8 loaded successfully (GPU)");
                         SttEngine::Parakeet1_1B(ort_recognizer)
                     } else if vram >= 3500 {
-                        // Moderate VRAM: Use 0.6B GPU for good quality (7-8% WER)
+                        // Moderate VRAM: Use 0.6B GPU (1.93% WER LS test-clean)
                         info!("✓ Sufficient VRAM for 0.6B GPU model (requires ≥3.5GB)");
                         info!("  Loading Parakeet-TDT-0.6B via ONNX Runtime (GPU)...");
 
@@ -596,7 +596,13 @@ impl Pipeline {
 
                     let transform_latency = transform_start.elapsed().as_micros() as f64;
 
-                    info!("Transcribed: {} → {}", text, capitalized);
+                    // Privacy: never log dictated content at info — journald persists it (ADR-034).
+                    info!(
+                        "Transcribed: {} chars in, {} chars out",
+                        text.chars().count(),
+                        capitalized.chars().count()
+                    );
+                    debug!("Transcribed content: {} → {}", text, capitalized);
 
                     // Track segment metrics (ephemeral - no text stored in DB)
                     let word_count = capitalized.split_whitespace().count() as i32;
@@ -801,7 +807,13 @@ impl Pipeline {
 
                 let transform_latency = transform_start.elapsed().as_micros() as f64;
 
-                info!("Flushed transcription: {} → {}", text, capitalized);
+                // Privacy: never log dictated content at info — journald persists it (ADR-034).
+                info!(
+                    "Flushed transcription: {} chars in, {} chars out",
+                    text.chars().count(),
+                    capitalized.chars().count()
+                );
+                debug!("Flushed transcription content: {} → {}", text, capitalized);
 
                 // Track segment metrics
                 let word_count = capitalized.split_whitespace().count() as i32;

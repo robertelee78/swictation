@@ -1,5 +1,12 @@
 #!/usr/bin/env node
 
+// Preuninstall cleanup — USER-SCOPE ONLY (ADR-034).
+//
+// This script must never escalate to sudo or touch system paths: an npm
+// lifecycle hook doing distro-package cleanup deleted more than it owned
+// (the old list included /opt/swictation — destroying source checkouts).
+// System-level leftovers from pre-npm installs are reported, not removed.
+
 const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -25,16 +32,8 @@ function safeExec(cmd, options = {}) {
   }
 }
 
-function cleanup() {
-  log('cyan', '========================================');
-  log('cyan', 'Swictation Preuninstall Cleanup');
-  log('cyan', '========================================');
-  log('yellow', '');
-  log('yellow', 'Cleaning up old installations and legacy files...');
-  log('yellow', '');
-
-  // 1. Stop and disable systemd services
-  log('cyan', 'Step 1: Stopping systemd services...');
+function cleanupLinux() {
+  log('cyan', 'Stopping systemd services...');
   const services = [
     'swictation-daemon.service',
     'swictation-ui.service',
@@ -51,21 +50,42 @@ function cleanup() {
       safeExec(`systemctl --user disable ${service}`);
       log('green', `  ✓ Disabled ${service}`);
     }
+    const unitPath = path.join(os.homedir(), '.config', 'systemd', 'user', service);
+    if (fs.existsSync(unitPath)) {
+      try {
+        fs.rmSync(unitPath);
+        log('green', `  ✓ Removed ${unitPath}`);
+      } catch {
+        log('yellow', `  ⚠️  Could not remove ${unitPath}`);
+      }
+    }
   }
+  safeExec('systemctl --user daemon-reload');
+}
 
-  // 2. Remove old Python installation paths
-  log('cyan', '');
-  log('cyan', 'Step 2: Removing old Python installations...');
+function cleanupMacOS() {
+  log('cyan', 'Unloading launchd services...');
+  const launchAgents = ['com.swictation.daemon', 'com.swictation.ui'];
+  const launchAgentsDir = path.join(os.homedir(), 'Library', 'LaunchAgents');
 
-  const pythonPaths = [
-    '/opt/swictation',
-    '/usr/local/lib/python3/dist-packages/swictation',
-    '/usr/local/lib/python3.10/dist-packages/swictation',
-    '/usr/local/lib/python3.11/dist-packages/swictation',
-    '/usr/local/lib/python3.12/dist-packages/swictation'
-  ];
+  for (const label of launchAgents) {
+    const plist = path.join(launchAgentsDir, `${label}.plist`);
+    // bootout is idempotent; ignore failures for agents that aren't loaded.
+    safeExec(`launchctl bootout gui/$(id -u)/${label}`, { shell: '/bin/bash' });
+    if (fs.existsSync(plist)) {
+      try {
+        fs.rmSync(plist);
+        log('green', `  ✓ Removed ${plist}`);
+      } catch {
+        log('yellow', `  ⚠️  Could not remove ${plist}`);
+      }
+    }
+  }
+}
 
-  // Also check user Python paths
+function cleanupLegacyUserPython() {
+  // Legacy pre-npm installs put a Python package in user site-packages.
+  const removed = [];
   const userPythonBase = path.join(os.homedir(), '.local', 'lib');
   if (fs.existsSync(userPythonBase)) {
     try {
@@ -74,136 +94,90 @@ function cleanup() {
         if (pyDir.startsWith('python3')) {
           const swictPath = path.join(userPythonBase, pyDir, 'site-packages', 'swictation');
           if (fs.existsSync(swictPath)) {
-            pythonPaths.push(swictPath);
+            try {
+              fs.rmSync(swictPath, { recursive: true, force: true });
+              removed.push(swictPath);
+              log('green', `  ✓ Removed legacy user install: ${swictPath}`);
+            } catch {
+              log('yellow', `  ⚠️  Could not remove: ${swictPath}`);
+            }
           }
         }
       }
     } catch {}
   }
+  return removed;
+}
 
-  for (const pythonPath of pythonPaths) {
-    if (fs.existsSync(pythonPath)) {
-      try {
-        if (pythonPath.startsWith('/opt') || pythonPath.includes('/usr/local')) {
-          // Need sudo for system paths
-          if (safeExec(`sudo rm -rf "${pythonPath}"`)) {
-            log('green', `  ✓ Removed: ${pythonPath}`);
-          }
-        } else {
-          // User paths don't need sudo
-          fs.rmSync(pythonPath, { recursive: true, force: true });
-          log('green', `  ✓ Removed: ${pythonPath}`);
-        }
-      } catch (err) {
-        log('yellow', `  ⚠️  Could not remove: ${pythonPath}`);
-      }
-    }
-  }
-
-  // 3. Remove old symlinks
-  log('cyan', '');
-  log('cyan', 'Step 3: Removing old symlinks...');
-
-  const binPaths = [
-    '/usr/local/bin/swictation',
-    '/usr/local/bin/swictation-cli',
-    '/usr/local/bin/swictation-legacy',
-    '/usr/bin/swictation'
-  ];
-
-  for (const binPath of binPaths) {
-    if (fs.existsSync(binPath)) {
-      try {
-        const stats = fs.lstatSync(binPath);
-        const realPath = stats.isSymbolicLink() ? fs.readlinkSync(binPath) : fs.realpathSync(binPath);
-
-        // Only remove if it points to Python version or old /opt/swictation
-        if (realPath.includes('python') ||
-            realPath.includes('/opt/swictation') ||
-            realPath.includes('swictationd.py')) {
-          if (safeExec(`sudo rm -f "${binPath}"`)) {
-            log('green', `  ✓ Removed old symlink: ${binPath} -> ${realPath}`);
-          }
-        }
-      } catch (err) {
-        log('yellow', `  ⚠️  Could not check: ${binPath}`);
-      }
-    }
-  }
-
-  // 4. Remove old .deb package files
-  log('cyan', '');
-  log('cyan', 'Step 4: Cleaning old .deb packages...');
-
-  const debInfoPaths = [
-    '/var/lib/dpkg/info/swictation.list',
-    '/var/lib/dpkg/info/swictation.md5sums',
-    '/var/lib/dpkg/info/swictation.postinst',
-    '/var/lib/dpkg/info/swictation.preinst',
-    '/var/lib/dpkg/info/swictation.prerm'
-  ];
-
-  for (const debPath of debInfoPaths) {
-    if (fs.existsSync(debPath)) {
-      if (safeExec(`sudo rm -f "${debPath}"`)) {
-        log('green', `  ✓ Removed: ${debPath}`);
-      }
-    }
-  }
-
-  // 5. Remove old system config directories
-  log('cyan', '');
-  log('cyan', 'Step 5: Removing old system directories...');
-
-  const systemDirs = [
+function reportSystemLeftovers() {
+  // Old system-wide installs are NOT removed by npm (no sudo here, by design).
+  const systemPaths = [
+    '/usr/local/lib/python3/dist-packages/swictation',
     '/etc/swictation',
     '/usr/share/doc/swictation'
   ];
-
-  for (const sysDir of systemDirs) {
-    if (fs.existsSync(sysDir)) {
-      if (safeExec(`sudo rm -rf "${sysDir}"`)) {
-        log('green', `  ✓ Removed: ${sysDir}`);
-      }
+  const found = systemPaths.filter(p => {
+    try {
+      return fs.existsSync(p);
+    } catch {
+      return false;
+    }
+  });
+  if (found.length > 0) {
+    log('yellow', 'Legacy system-wide files detected (left in place; remove manually if desired):');
+    for (const p of found) {
+      log('yellow', `  sudo rm -rf ${p}`);
     }
   }
 
-  // 6. Check for pip packages
-  log('cyan', '');
-  log('cyan', 'Step 6: Checking for pip packages...');
-
   const hasPipPackage = safeExec('pip3 list 2>/dev/null | grep -i swictation', { shell: true });
   if (hasPipPackage) {
-    log('yellow', '  ⚠️  Found pip3 swictation package');
-    log('yellow', '     Run: pip3 uninstall swictation');
-  } else {
-    log('green', '  ✓ No pip3 packages found');
+    log('yellow', '  ⚠️  Found pip3 swictation package — run: pip3 uninstall swictation');
   }
+}
 
-  // 7. Summary
-  log('cyan', '');
+function cleanup() {
+  log('cyan', '========================================');
+  log('cyan', 'Swictation Preuninstall Cleanup');
+  log('cyan', '========================================');
+
+  if (process.platform === 'darwin') {
+    cleanupMacOS();
+  } else {
+    cleanupLinux();
+  }
+  cleanupLegacyUserPython();
+  reportSystemLeftovers();
+
+  const configDir = process.platform === 'darwin'
+    ? path.join(os.homedir(), 'Library', 'Application Support', 'swictation')
+    : path.join(os.homedir(), '.config', 'swictation');
+  const dataDir = process.platform === 'darwin'
+    ? configDir
+    : path.join(os.homedir(), '.local', 'share', 'swictation');
+
   log('cyan', '========================================');
   log('green', '✓ Cleanup Complete');
   log('cyan', '========================================');
-  log('yellow', '');
-  log('yellow', 'The following directories are preserved (user data):');
-  log('yellow', `  - ${path.join(os.homedir(), '.config', 'swictation')}`);
-  log('yellow', `  - ${path.join(os.homedir(), '.local', 'share', 'swictation')}`);
-  log('yellow', '');
-  log('yellow', 'To manually remove all user data and models:');
-  log('cyan', `  rm -rf ${path.join(os.homedir(), '.config', 'swictation')}`);
-  log('cyan', `  rm -rf ${path.join(os.homedir(), '.local', 'share', 'swictation')}`);
-  log('yellow', '');
+  log('yellow', 'Preserved (user data, including downloaded models):');
+  log('yellow', `  - ${configDir}`);
+  if (dataDir !== configDir) {
+    log('yellow', `  - ${dataDir}`);
+  }
+  log('yellow', 'To remove all user data and models:');
+  log('cyan', `  rm -rf "${configDir}"${dataDir !== configDir ? ` "${dataDir}"` : ''}`);
 }
 
-// Only run cleanup if this is actually an uninstall
-// (npm runs preuninstall even for updates, so check if we're truly uninstalling)
-const isUninstall = process.env.npm_config_global === 'true' &&
-                    process.argv.includes('uninstall');
+// npm sets npm_command=uninstall for a true uninstall; during an upgrade the
+// replaced version's preuninstall runs under npm_command=install. The previous
+// guard checked process.argv for 'uninstall', which npm never passes — so
+// cleanup NEVER ran and services were left pointing at deleted binaries.
+const npmCommand = process.env.npm_command || '';
+const isUninstall = npmCommand === 'uninstall';
 
 if (isUninstall || process.argv.includes('--force')) {
   cleanup();
 } else {
-  log('cyan', 'Skipping cleanup (update detected, not uninstall)');
-  log('cyan', 'Use --force to run cleanup during updates');
+  log('cyan', `Skipping cleanup (npm_command=${npmCommand || 'unknown'} — not an uninstall)`);
+  log('cyan', 'Use --force to run cleanup manually');
 }

@@ -25,8 +25,8 @@ pub struct RecognitionResult {
 /// # Model Selection
 ///
 /// The engine variant is typically selected based on available GPU VRAM:
-/// - **≥4GB VRAM**: `Parakeet1_1B` (best quality: 5.77% WER)
-/// - **≥1.5GB VRAM**: `Parakeet0_6B` with GPU (good quality: 7-8% WER)
+/// - **≥4GB VRAM**: `Parakeet1_1B` (best close-mic quality: 1.39% WER LibriSpeech test-clean, 7.02% Open-ASR avg)
+/// - **≥1.5GB VRAM**: `Parakeet0_6B` with GPU (1.93% LS test-clean, 6.34% Open-ASR avg)
 /// - **<1.5GB or no GPU**: `Parakeet0_6B` with CPU (fallback)
 ///
 /// # Example
@@ -61,14 +61,16 @@ pub enum SttEngine {
     /// - **GPU mode**: Requires ≥1.5GB VRAM (peak: 1.2GB)
     /// - **CPU mode**: Requires ~960MB RAM
     /// - **Latency**: 100-150ms (GPU), 200-400ms (CPU)
-    /// - **WER**: 7-8%
+    /// - **WER**: 1.93% LibriSpeech test-clean / 6.34% Open-ASR leaderboard avg (v3 model card)
     Parakeet0_6B(OrtRecognizer),
 
     /// 1.1B model via direct ONNX Runtime (GPU only, INT8 quantized)
     ///
     /// - **GPU mode**: Requires ≥4GB VRAM (peak: 3.5GB)
     /// - **Latency**: 150-250ms
-    /// - **WER**: 5.77% (best quality)
+    /// - **WER**: 1.39% LibriSpeech test-clean / 7.02% Open-ASR leaderboard avg (model card).
+    ///   Best close-mic dictation quality; raw lowercase output keeps Secretary Mode
+    ///   the sole authority on punctuation (ADR-034).
     Parakeet1_1B(OrtRecognizer),
 
     #[cfg(all(target_os = "macos", feature = "coreml-native"))]

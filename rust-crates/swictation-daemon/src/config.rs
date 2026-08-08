@@ -69,7 +69,49 @@ impl Default for HotkeyConfig {
     }
 }
 
+/// Default socket path from platform-appropriate directory (NEVER /tmp)
+fn default_socket_path() -> String {
+    socket_utils::get_ipc_socket_path()
+        .expect(
+            "Failed to determine IPC socket path - cannot proceed without valid socket directory",
+        )
+        .to_string_lossy()
+        .to_string()
+}
+
+// Scalar defaults, shared by serde field defaults and `Default` (ADR-034)
+fn default_vad_min_silence() -> f32 {
+    0.8
+}
+fn default_vad_min_speech() -> f32 {
+    0.25
+}
+fn default_vad_max_speech() -> f32 {
+    30.0
+}
+// Optimized for real-time transcription (original 0.003 prevented silence detection)
+fn default_vad_threshold() -> f32 {
+    0.25
+}
+// STT adaptive model selection (auto = VRAM-based)
+fn default_stt_model_override() -> String {
+    "auto".to_string()
+}
+fn default_num_threads() -> Option<i32> {
+    Some(4)
+}
+// Moderate fuzzy matching
+fn default_phonetic_threshold() -> f64 {
+    0.3
+}
+
 /// Daemon configuration
+///
+/// Every key in config.toml is optional: each field carries a serde default,
+/// so the shipped config.example.toml (which comments out most keys) loads
+/// verbatim. Defaults are FIELD-level, not container-level, deliberately —
+/// the socket/model-path defaults are fallible and touch the filesystem, and
+/// they must only run when the corresponding key is actually absent (ADR-034).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DaemonConfig {
     /// Path to configuration file
@@ -77,33 +119,42 @@ pub struct DaemonConfig {
     pub config_path: PathBuf,
 
     /// Unix socket path for IPC
+    #[serde(default = "default_socket_path")]
     pub socket_path: String,
 
     /// VAD model path
+    #[serde(default = "get_default_vad_model_path")]
     pub vad_model_path: PathBuf,
 
     /// VAD minimum silence duration (seconds)
+    #[serde(default = "default_vad_min_silence")]
     pub vad_min_silence: f32,
 
     /// VAD minimum speech duration (seconds)
+    #[serde(default = "default_vad_min_speech")]
     pub vad_min_speech: f32,
 
     /// VAD maximum speech duration (seconds)
+    #[serde(default = "default_vad_max_speech")]
     pub vad_max_speech: f32,
 
     /// VAD threshold (ONNX: 0.001-0.005, NOT PyTorch 0.5!)
     /// See swictation-vad/ONNX_THRESHOLD_GUIDE.md for details
+    #[serde(default = "default_vad_threshold")]
     pub vad_threshold: f32,
 
     /// STT model selection override
     /// Options: "auto" (platform-adaptive), "0.6b-cpu", "0.6b-gpu", "1.1b-gpu"
     /// macOS + coreml-native feature: also "1.1b-coreml" (alias: "coreml-native")
+    #[serde(default = "default_stt_model_override")]
     pub stt_model_override: String,
 
     /// Path to 0.6B model directory (OrtRecognizer)
+    #[serde(default = "get_default_0_6b_model_path")]
     pub stt_0_6b_model_path: PathBuf,
 
     /// Path to 1.1B INT8 model directory (ONNX Runtime)
+    #[serde(default = "get_default_1_1b_model_path")]
     pub stt_1_1b_model_path: PathBuf,
 
     /// Path to CoreML model directory (macOS native, optional)
@@ -111,45 +162,42 @@ pub struct DaemonConfig {
     pub stt_coreml_model_path: PathBuf,
 
     /// Number of threads for ONNX Runtime
+    #[serde(default = "default_num_threads")]
     pub num_threads: Option<i32>,
 
     /// Audio device index (None = default device)
+    #[serde(default)]
     pub audio_device_index: Option<usize>,
 
     /// Hotkey configuration
+    #[serde(default)]
     pub hotkeys: HotkeyConfig,
 
     /// Phonetic matching threshold for learned corrections (0.0 - 1.0)
     /// Lower = more strict, Higher = more fuzzy
     /// Default: 0.3
+    #[serde(default = "default_phonetic_threshold")]
     pub phonetic_threshold: f64,
 }
 
 impl Default for DaemonConfig {
     fn default() -> Self {
-        // Get socket path from platform-appropriate directory (NEVER /tmp)
-        let socket_path = socket_utils::get_ipc_socket_path()
-            .expect("Failed to determine IPC socket path - cannot proceed without valid socket directory")
-            .to_string_lossy()
-            .to_string();
-
         Self {
             config_path: Self::default_config_path(),
-            socket_path,
+            socket_path: default_socket_path(),
             vad_model_path: get_default_vad_model_path(),
-            vad_min_silence: 0.8,
-            vad_min_speech: 0.25,
-            vad_max_speech: 30.0,
-            vad_threshold: 0.25, // Optimized for real-time transcription (original 0.003 prevented silence detection)
-            // STT adaptive model selection (auto = VRAM-based)
-            stt_model_override: "auto".to_string(),
+            vad_min_silence: default_vad_min_silence(),
+            vad_min_speech: default_vad_min_speech(),
+            vad_max_speech: default_vad_max_speech(),
+            vad_threshold: default_vad_threshold(),
+            stt_model_override: default_stt_model_override(),
             stt_0_6b_model_path: get_default_0_6b_model_path(),
             stt_1_1b_model_path: get_default_1_1b_model_path(),
             stt_coreml_model_path: get_default_coreml_model_path(),
-            num_threads: Some(4),
+            num_threads: default_num_threads(),
             audio_device_index: None, // Will be set from env var or auto-detected
             hotkeys: HotkeyConfig::default(),
-            phonetic_threshold: 0.3, // Moderate fuzzy matching
+            phonetic_threshold: default_phonetic_threshold(),
         }
     }
 }
@@ -168,10 +216,13 @@ impl DaemonConfig {
                 toml::from_str(&contents).context("Failed to parse config file")?;
 
             config.config_path = config_path;
+            config.expand_tilde_paths();
             Ok(config)
         } else {
-            // Create default config
-            let config = Self::default();
+            // Create default config (expand tilde first: SWICTATION_MODEL_PATH
+            // may itself contain `~`, and the saved config must hold real paths)
+            let mut config = Self::default();
+            config.expand_tilde_paths();
             config.save().context("Failed to save default config")?;
             Ok(config)
         }
@@ -194,5 +245,100 @@ impl DaemonConfig {
     /// Get default config path using swictation_paths as single source of truth
     fn default_config_path() -> PathBuf {
         swictation_paths::config_dir().join("config.toml")
+    }
+
+    /// Expand a leading `~` in every user-suppliable path field (ADR-034).
+    /// PathBuf::from("~/...") resolves to a literal `./~` directory otherwise.
+    fn expand_tilde_paths(&mut self) {
+        self.socket_path = expand_tilde_str(&self.socket_path);
+        self.vad_model_path = expand_tilde(&self.vad_model_path);
+        self.stt_0_6b_model_path = expand_tilde(&self.stt_0_6b_model_path);
+        self.stt_1_1b_model_path = expand_tilde(&self.stt_1_1b_model_path);
+        self.stt_coreml_model_path = expand_tilde(&self.stt_coreml_model_path);
+    }
+}
+
+/// Expand a leading `~` or `~/` to the user's home directory. Paths without a
+/// leading tilde (and bare-`~user` forms, which we don't support) pass through.
+fn expand_tilde(path: &std::path::Path) -> PathBuf {
+    let Some(s) = path.to_str() else {
+        return path.to_path_buf();
+    };
+    PathBuf::from(expand_tilde_str(s))
+}
+
+fn expand_tilde_str(s: &str) -> String {
+    if s == "~" {
+        if let Some(home) = dirs::home_dir() {
+            return home.to_string_lossy().into_owned();
+        }
+    } else if let Some(rest) = s.strip_prefix("~/") {
+        if let Some(home) = dirs::home_dir() {
+            return home.join(rest).to_string_lossy().into_owned();
+        }
+    }
+    s.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The shipped example config must parse verbatim — this is the drift guard
+    /// for ADR-034 finding 1 (example config previously failed with
+    /// "missing field `socket_path`").
+    #[test]
+    fn example_config_parses_verbatim() {
+        let example = include_str!("../../../config/config.example.toml");
+        let config: DaemonConfig =
+            toml::from_str(example).expect("config.example.toml must parse with all defaults");
+        // Spot-check a value the example sets explicitly.
+        assert!(config.vad_min_silence > 0.0);
+    }
+
+    /// An empty config file is valid: every field falls back to Default.
+    #[test]
+    fn empty_config_parses_to_defaults() {
+        let config: DaemonConfig = toml::from_str("").expect("empty config must parse");
+        let defaults = DaemonConfig::default();
+        assert_eq!(config.socket_path, defaults.socket_path);
+        assert_eq!(config.stt_model_override, defaults.stt_model_override);
+        assert_eq!(config.hotkeys.toggle, defaults.hotkeys.toggle);
+    }
+
+    /// A partial config keeps user values and defaults the rest.
+    #[test]
+    fn partial_config_keeps_user_values() {
+        let config: DaemonConfig =
+            toml::from_str("vad_threshold = 0.5\n[hotkeys]\ntoggle = \"Ctrl+Alt+Z\"\n")
+                .expect("partial config must parse");
+        assert_eq!(config.vad_threshold, 0.5);
+        assert_eq!(config.hotkeys.toggle, "Ctrl+Alt+Z");
+        assert_eq!(
+            config.stt_model_override,
+            DaemonConfig::default().stt_model_override
+        );
+    }
+
+    #[test]
+    fn tilde_paths_expand_to_home() {
+        let mut config = DaemonConfig::default();
+        config.socket_path = "~/sock/s.sock".to_string();
+        config.vad_model_path = PathBuf::from("~/models/vad.onnx");
+        config.expand_tilde_paths();
+        let home = dirs::home_dir().expect("home dir required for test");
+        assert_eq!(
+            config.socket_path,
+            home.join("sock/s.sock").to_string_lossy()
+        );
+        assert_eq!(config.vad_model_path, home.join("models/vad.onnx"));
+    }
+
+    #[test]
+    fn non_tilde_paths_pass_through_unchanged() {
+        let mut config = DaemonConfig::default();
+        config.socket_path = "/run/user/1000/s.sock".to_string();
+        config.expand_tilde_paths();
+        assert_eq!(config.socket_path, "/run/user/1000/s.sock");
     }
 }

@@ -53,7 +53,7 @@ uuid = { version = "1.0", features = ["v4"] }
 
 # Logging
 tracing = "0.1"
-tracing-subscriber = "0.3"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Audio file I/O (for debug)
 hound = "3.5"

@@ -31,7 +31,6 @@
   },
   "license": "Apache-2.0",
   "author": "Robert E. Lee <robert@agidreams.us>",
-  "main": "index.js",
   "bin": {
     "swictation": "./bin/swictation"
   },
@@ -47,12 +46,13 @@
     "postinstall.js",
     "preuninstall.js",
     "checksums.txt",
+    "versions.json",
     "README.md"
   ],
   "scripts": {
     "postinstall": "node postinstall.js",
     "preuninstall": "node preuninstall.js",
-    "test": "node test.js",
+    "test": "node tests/test-nvidia-hibernation.js",
     "build": "./scripts/build-release.sh",
     "build-macos": "./scripts/build-macos-release.sh",
     "build-ui": "../tauri-ui/scripts/build-ui-release.sh",
