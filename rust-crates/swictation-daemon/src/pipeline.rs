@@ -51,6 +51,47 @@ pub struct Pipeline {
 
     /// Learned pattern corrections engine
     corrections: Arc<CorrectionEngine>,
+
+    /// Active session's task handles (ADR-035 stop-drain protocol).
+    /// Taken by stop_recording() and awaited OUTSIDE the daemon locks.
+    vad_task: Option<tokio::task::JoinHandle<()>>,
+    stt_task: Option<tokio::task::JoinHandle<()>>,
+    backpressure_task: Option<tokio::task::JoinHandle<()>>,
+}
+
+/// Task handles detached by `Pipeline::stop_recording`.
+///
+/// Draining awaits real STT inference and takes the metrics lock, so it MUST
+/// happen after the caller releases the daemon state/pipeline locks — awaiting
+/// under those locks can deadlock against the metrics updater (lock order:
+/// metrics → state). See `Daemon::toggle_inner`.
+pub struct DrainHandles {
+    vad_task: Option<tokio::task::JoinHandle<()>>,
+    stt_task: Option<tokio::task::JoinHandle<()>>,
+    backpressure_task: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl DrainHandles {
+    /// Await the VAD task (drains queued audio, flushes the detector, forwards
+    /// the flush through the same channel streamed segments used), then the
+    /// STT task (drains every remaining segment including that flush), then
+    /// aborts the backpressure monitor. Ordering guarantees exactly-once
+    /// processing of the final utterance (ADR-035).
+    pub async fn drain(mut self) {
+        if let Some(task) = self.vad_task.take() {
+            if let Err(e) = task.await {
+                warn!("VAD task join error during drain: {}", e);
+            }
+        }
+        if let Some(task) = self.stt_task.take() {
+            if let Err(e) = task.await {
+                warn!("STT task join error during drain: {}", e);
+            }
+        }
+        if let Some(task) = self.backpressure_task.take() {
+            task.abort();
+        }
+    }
 }
 
 impl Pipeline {
@@ -370,6 +411,9 @@ impl Pipeline {
             broadcaster: Arc::new(Mutex::new(None)),
             tx,
             corrections,
+            vad_task: None,
+            stt_task: None,
+            backpressure_task: None,
         };
 
         Ok((pipeline, rx))
@@ -423,28 +467,28 @@ impl Pipeline {
             audio.start()?;
         }
 
-        // Log backpressure warning if chunks are being dropped
+        // Log backpressure warning if chunks are being dropped.
+        // Runs until aborted by stop_recording — the old `if current == 0 break`
+        // exited after 5s in the healthy case and never in the degraded one.
         let dropped_monitor = dropped_chunks.clone();
-        tokio::spawn(async move {
+        self.backpressure_task = Some(tokio::spawn(async move {
             let mut last_count = 0u64;
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                 let current = dropped_monitor.load(std::sync::atomic::Ordering::Relaxed);
                 if current > last_count {
-                    eprintln!("⚠️  BACKPRESSURE: Dropped {} audio chunks in last 5s (STT cannot keep up with speaker)",
+                    warn!("⚠️  BACKPRESSURE: Dropped {} audio chunks in last 5s (STT cannot keep up with speaker)",
                               current - last_count);
                     last_count = current;
                 }
-                if current == 0 {
-                    break; // Recording stopped
-                }
             }
-        });
+        }));
 
         // Clone components for parallel VAD/STT processing
         let vad = self.vad.clone();
         let stt = self.stt.clone();
         let tx = self.tx.clone();
+        let tx_for_vad = self.tx.clone();
         let metrics = self.metrics.clone();
         let session_id = self.session_id.clone();
         let broadcaster = self.broadcaster.clone();
@@ -455,7 +499,9 @@ impl Pipeline {
         let (vad_tx, mut stt_rx) = mpsc::channel::<Vec<f32>>(10);
 
         // Spawn VAD task (processes audio chunks and detects speech segments)
-        let _vad_task = tokio::spawn(async move {
+        let vad_for_task = vad.clone();
+        self.vad_task = Some(tokio::spawn(async move {
+            let vad = vad_for_task;
             let mut buffer = Vec::with_capacity(16000); // 1 second buffer
             let mut chunk_count = 0;
 
@@ -506,7 +552,18 @@ impl Pipeline {
 
                             // Send speech segment to STT task (non-blocking with backpressure)
                             if let Err(e) = vad_tx.send(speech_samples).await {
+                                // STT task died mid-session (previously this was
+                                // silent: hotkey and metrics kept "working" while
+                                // no text ever appeared again). Surface it through
+                                // the transcription channel so it reaches the logs
+                                // and the daemon consumer (ADR-035).
                                 eprintln!("Failed to send speech segment to STT task: {}", e);
+                                let _ = tx_for_vad
+                                    .send(Err(anyhow::anyhow!(
+                                        "STT task terminated unexpectedly — transcription halted. \
+                                         Toggle recording off and on to restart it."
+                                    )))
+                                    .await;
                                 break; // STT task has terminated
                             }
                         }
@@ -520,10 +577,39 @@ impl Pipeline {
                     }
                 }
             }
-        });
+
+            // Audio channel closed (stop_recording replaced the capture callback,
+            // dropping the only sender). Flush the detector and forward any
+            // buffered tail speech through the SAME channel the streamed
+            // segments used — the single STT consumer processes it exactly
+            // once, so the final ~0.8s of dictation is transcribed instead of
+            // discarded, and duplicate injection is structurally impossible
+            // (ADR-035; replaces the flush-discard workaround).
+            let flushed = match vad.lock() {
+                Ok(mut vad_lock) => vad_lock.flush(),
+                Err(e) => {
+                    eprintln!("VAD lock error during flush: {}", e);
+                    None
+                }
+            };
+            if let Some(VadResult::Speech {
+                samples: speech_samples,
+                ..
+            }) = flushed
+            {
+                info!(
+                    "Forwarding flushed tail speech to STT: {} samples",
+                    speech_samples.len()
+                );
+                if let Err(e) = vad_tx.send(speech_samples).await {
+                    eprintln!("Failed to forward flushed speech to STT task: {}", e);
+                }
+            }
+            // vad_tx drops here → stt_rx closes after the STT task drains it.
+        }));
 
         // Spawn STT task (processes speech segments from VAD in parallel)
-        let _stt_task = tokio::spawn(async move {
+        self.stt_task = Some(tokio::spawn(async move {
             while let Some(speech_samples) = stt_rx.recv().await {
                 eprintln!("DEBUG: STT processing {} samples", speech_samples.len());
 
@@ -676,206 +762,47 @@ impl Pipeline {
                     }
                 }
             }
-        });
+        }));
 
         Ok(())
     }
 
-    /// Stop recording
+    /// Stop recording: detach the session's tasks WITHOUT awaiting them.
     ///
-    /// IMPORTANT: This function was previously marked with #[allow(clippy::await_holding_lock)]
-    /// which suppressed a critical warning about holding locks across await points.
-    /// The deadlock occurred because:
-    /// 1. toggle() held state.write() while calling this function
-    /// 2. This function held std::sync::Mutex locks while calling .await on channel send
-    /// 3. The metrics updater held metrics.lock() while waiting for state.read()
-    /// 4. Result: circular wait -> DEADLOCK
-    ///
-    /// Fix: Ensure no std::sync::Mutex locks are held when calling .await
-    pub async fn stop_recording(&mut self) -> Result<()> {
+    /// Returns DrainHandles the caller must `.drain().await` AFTER releasing
+    /// the daemon state/pipeline locks — draining runs real STT inference and
+    /// takes the metrics lock, and the metrics updater's lock order
+    /// (metrics → state) would otherwise deadlock (ADR-035; see also the
+    /// lock-ordering history that shaped toggle_inner).
+    pub fn stop_recording(&mut self) -> Result<DrainHandles> {
         if !self.is_recording {
-            return Ok(());
+            return Ok(DrainHandles {
+                vad_task: None,
+                stt_task: None,
+                backpressure_task: None,
+            });
         }
 
         self.is_recording = false;
 
-        // Stop audio capture. AudioCapture is !Send (cpal raw pointers), so we
-        // cannot use spawn_blocking. We call stop() directly but guard against
-        // hangs with a timeout: a watchdog thread will force-exit if stop takes
-        // too long, and the is_recording flag is already false so the audio
-        // callback will stop pushing data regardless.
+        // 1. Stop audio capture (cpal stream stops invoking the callback).
         if let Err(e) = self.audio.lock().unwrap().stop() {
             warn!("Audio stop error (continuing): {}", e);
         }
 
-        // Flush the VAD buffer but DO NOT re-transcribe.
-        // The spawned STT task already processes all speech segments from VAD
-        // during recording. Re-transcribing the flushed audio here causes
-        // duplicate text injection (proven: same text injected twice, 1ms apart,
-        // producing interleaved garbled output in the target application).
-        let flushed_speech = self.vad.lock().unwrap().flush();
+        // 2. Close the audio channel: the capture callback owns the ONLY
+        //    sender, so replacing it drops that sender. The VAD task then
+        //    drains whatever was queued, flushes the detector, forwards any
+        //    tail speech through the same channel, and exits — nothing is
+        //    discarded and nothing is transcribed twice.
+        self.audio.lock().unwrap().set_chunk_callback(|_| {});
 
-        if let Some(swictation_vad::VadResult::Speech {
-            samples: speech_samples,
-            ..
-        }) = flushed_speech
-        {
-            info!(
-                "Discarding flushed speech: {} samples (STT task already processed)",
-                speech_samples.len()
-            );
-        }
-
-        // Original flush-and-transcribe block disabled to prevent duplicate injection.
-        // If re-enabled, must first ensure the STT task is fully stopped.
-        if false {
-            let speech_samples: Vec<f32> = vec![]; // placeholder
-            info!(
-                "Processing flushed speech segment: {} samples",
-                speech_samples.len()
-            );
-
-            // DEBUG: Save flushed audio to file for analysis
-            let debug_path = std::env::temp_dir().join("swictation_flushed_audio.wav");
-            match save_audio_debug(&speech_samples, debug_path.to_str().unwrap_or("/dev/null")) {
-                Ok(()) => eprintln!("DEBUG: Saved flushed audio to {}", debug_path.display()),
-                Err(e) => eprintln!("DEBUG: Failed to save audio: {}", e),
-            }
-
-            // Track timing for metrics
-            let segment_start = Instant::now();
-            let vad_latency = segment_start.elapsed().as_millis() as f64;
-
-            // Process through STT - CRITICAL: Release lock immediately after use
-            // The STT inference can take 50-500ms, but we release the lock right after
-            let stt_start = Instant::now();
-            let (text, stt_latency, is_0_6b) = {
-                let mut stt_lock = match self.stt.lock() {
-                    Ok(s) => s,
-                    Err(e) => {
-                        eprintln!("STT lock error during flush: {}", e);
-                        info!("Recording stopped");
-                        return Ok(());
-                    }
-                };
-
-                let result = stt_lock.recognize(&speech_samples).unwrap_or_else(|e| {
-                    eprintln!("STT transcribe error during flush: {}", e);
-                    swictation_stt::RecognitionResult {
-                        text: String::new(),
-                        confidence: 0.0,
-                        processing_time_ms: 0.0,
-                    }
-                });
-                let text = result.text;
-                let stt_latency = stt_start.elapsed().as_millis() as f64;
-                let is_0_6b = stt_lock.model_size() == "0.6B";
-                (text, stt_latency, is_0_6b)
-            };
-            // stt_lock released here - BEFORE any .await calls
-
-            if !text.is_empty() {
-                // Transform voice commands → symbols (Midstream)
-                let transform_start = Instant::now();
-
-                // IMPORTANT: 0.6B model has built-in ITN - use smart normalization
-                // to avoid duplicate punctuation. See normalize_0_6b_punctuation docs.
-                let text = if is_0_6b {
-                    normalize_0_6b_punctuation(&text)
-                } else {
-                    text
-                };
-
-                // Step 1: Process capital commands first
-                let with_capitals = process_capital_commands(&text);
-
-                // Step 2: Transform punctuation
-                let transformed = transform(&with_capitals);
-
-                // Step 3: Apply learned corrections
-                let corrected = self.corrections.apply(&transformed, "all");
-
-                // Flush usage counts if threshold reached
-                if self.corrections.should_flush() {
-                    if let Err(e) = self.corrections.flush_usage_counts() {
-                        warn!("Failed to flush usage counts: {}", e);
-                    }
-                }
-
-                // Step 4: Apply automatic capitalization rules
-                let capitalized = apply_capitalization(&corrected);
-
-                let transform_latency = transform_start.elapsed().as_micros() as f64;
-
-                // Privacy: never log dictated content at info — journald persists it (ADR-034).
-                info!(
-                    "Flushed transcription: {} chars in, {} chars out",
-                    text.chars().count(),
-                    capitalized.chars().count()
-                );
-                debug!("Flushed transcription content: {} → {}", text, capitalized);
-
-                // Track segment metrics
-                let word_count = capitalized.split_whitespace().count() as i32;
-                let char_count = capitalized.len() as i32;
-
-                let current_session_id = *self.session_id.lock().unwrap();
-
-                if let Some(sid) = current_session_id {
-                    let duration_s = (speech_samples.len() as f64) / 16000.0;
-                    let total_latency_ms = vad_latency + stt_latency + (transform_latency / 1000.0);
-
-                    let segment = SegmentMetrics {
-                        segment_id: None,
-                        session_id: Some(sid),
-                        timestamp: Some(Utc::now()),
-                        duration_s,
-                        words: word_count,
-                        characters: char_count,
-                        text: capitalized.clone(),
-                        vad_latency_ms: vad_latency,
-                        audio_save_latency_ms: 0.0,
-                        stt_latency_ms: stt_latency,
-                        transform_latency_us: transform_latency,
-                        injection_latency_ms: 0.0,
-                        total_latency_ms,
-                        transformations_count: if text != capitalized { 1 } else { 0 },
-                        keyboard_actions_count: 0,
-                    };
-
-                    if let Err(e) = self.metrics.lock().unwrap().add_segment(segment) {
-                        eprintln!("Failed to add flushed segment metrics: {}", e);
-                    }
-
-                    // Broadcast transcription to UI clients
-                    if let Some(ref broadcaster_ref) = *self.broadcaster.lock().unwrap() {
-                        let wpm = (word_count as f64 / (duration_s / 60.0)).min(300.0);
-                        tokio::spawn({
-                            let broadcaster = broadcaster_ref.clone();
-                            let text_clone = capitalized.clone();
-                            async move {
-                                broadcaster
-                                    .add_transcription(
-                                        text_clone,
-                                        wpm,
-                                        total_latency_ms,
-                                        word_count,
-                                    )
-                                    .await;
-                            }
-                        });
-                    }
-                }
-
-                // Send through transcription channel (bounded - provides backpressure)
-                if let Err(e) = self.tx.send(Ok(capitalized)).await {
-                    eprintln!("Failed to send flushed transcription: {}", e);
-                }
-            }
-        }
-
-        info!("Recording stopped");
-        Ok(())
+        info!("Recording stopped; session tasks detached for drain");
+        Ok(DrainHandles {
+            vad_task: self.vad_task.take(),
+            stt_task: self.stt_task.take(),
+            backpressure_task: self.backpressure_task.take(),
+        })
     }
 
     /// Check if currently recording
@@ -905,7 +832,8 @@ impl Pipeline {
     #[allow(dead_code)]
     pub async fn shutdown(&mut self) -> Result<()> {
         if self.is_recording {
-            self.stop_recording().await?;
+            let drain = self.stop_recording()?;
+            drain.drain().await;
         }
         Ok(())
     }
@@ -926,27 +854,106 @@ impl Pipeline {
     }
 }
 
-/// DEBUG: Save audio samples to WAV file for analysis
-fn save_audio_debug(samples: &[f32], path: &str) -> Result<()> {
-    let spec = hound::WavSpec {
-        channels: 1,
-        sample_rate: 16000,
-        bits_per_sample: 16,
-        sample_format: hound::SampleFormat::Int,
-    };
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
-    let mut writer = hound::WavWriter::create(path, spec)
-        .map_err(|e| anyhow::anyhow!("Failed to create WAV file: {}", e))?;
+    /// Drain contract (ADR-035): drain() must not return until both session
+    /// tasks have fully completed, and must abort the backpressure monitor.
+    #[tokio::test]
+    async fn drain_awaits_both_tasks_and_aborts_monitor() {
+        let vad_done = Arc::new(AtomicBool::new(false));
+        let stt_done = Arc::new(AtomicBool::new(false));
 
-    for &sample in samples {
-        let sample_i16 = (sample * 32767.0).clamp(-32768.0, 32767.0) as i16;
-        writer
-            .write_sample(sample_i16)
-            .map_err(|e| anyhow::anyhow!("Failed to write sample: {}", e))?;
+        let vad_flag = vad_done.clone();
+        let vad_task = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+            vad_flag.store(true, Ordering::SeqCst);
+        });
+        let stt_flag = stt_done.clone();
+        let stt_task = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+            stt_flag.store(true, Ordering::SeqCst);
+        });
+        let monitor = tokio::spawn(async {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+            }
+        });
+        let monitor_handle_probe = monitor.abort_handle();
+
+        DrainHandles {
+            vad_task: Some(vad_task),
+            stt_task: Some(stt_task),
+            backpressure_task: Some(monitor),
+        }
+        .drain()
+        .await;
+
+        assert!(
+            vad_done.load(Ordering::SeqCst),
+            "drain returned before VAD task finished"
+        );
+        assert!(
+            stt_done.load(Ordering::SeqCst),
+            "drain returned before STT task finished"
+        );
+        assert!(
+            monitor_handle_probe.is_finished() || {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                monitor_handle_probe.is_finished()
+            },
+            "backpressure monitor was not aborted"
+        );
     }
 
-    writer
-        .finalize()
-        .map_err(|e| anyhow::anyhow!("Failed to finalize WAV: {}", e))?;
-    Ok(())
+    /// Duplicate-injection fence (ADR-035): the stop protocol's exactly-once
+    /// guarantee rests on this channel shape — the producer drains its input
+    /// after the sender is dropped, forwards ONE flush segment through the
+    /// SAME channel the streamed segments used, then closes it. The single
+    /// consumer therefore sees every streamed segment, then the flush, each
+    /// exactly once. The pre-ADR-035 bug was a second, parallel transcription
+    /// path for the flush (duplicate injection); the pre-existing "fix" was
+    /// discarding the flush (lost final utterance). This encodes why neither
+    /// can recur while stop_recording uses this topology.
+    #[tokio::test]
+    async fn stop_drain_delivers_streamed_segments_then_flush_exactly_once() {
+        let (audio_tx, mut audio_rx) = mpsc::channel::<u32>(20);
+        let (vad_tx, mut stt_rx) = mpsc::channel::<u32>(10);
+
+        const FLUSH_MARKER: u32 = 999;
+
+        // Mirror of the VAD task: forward until input closes, then flush once.
+        let vad_task = tokio::spawn(async move {
+            while let Some(segment) = audio_rx.recv().await {
+                vad_tx.send(segment).await.expect("consumer alive");
+            }
+            vad_tx.send(FLUSH_MARKER).await.expect("consumer alive");
+            // vad_tx drops here → consumer's channel closes after drain.
+        });
+
+        // Mirror of the STT task: single consumer, collects everything.
+        let stt_task = tokio::spawn(async move {
+            let mut seen = Vec::new();
+            while let Some(segment) = stt_rx.recv().await {
+                seen.push(segment);
+            }
+            seen
+        });
+
+        audio_tx.send(1).await.unwrap();
+        audio_tx.send(2).await.unwrap();
+        // stop_recording: drop the only sender (callback replacement).
+        drop(audio_tx);
+
+        vad_task.await.unwrap();
+        let seen = stt_task.await.unwrap();
+
+        assert_eq!(
+            seen,
+            vec![1, 2, FLUSH_MARKER],
+            "all streamed segments then the flush, in order, exactly once"
+        );
+    }
 }

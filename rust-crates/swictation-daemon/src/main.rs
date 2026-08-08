@@ -196,11 +196,18 @@ impl Daemon {
             DaemonState::Recording => {
                 info!("⏸️ Stopping recording");
 
-                // Phase 2: Stop recording (this does STT inference - can take 50-500ms)
-                // We MUST release state lock before this to prevent deadlock
-                {
+                // Phase 2a: Detach the session's tasks (fast, non-blocking).
+                let drain = {
                     let mut pipeline = self.pipeline.write().await;
-                    pipeline.stop_recording().await?;
+                    pipeline.stop_recording()?
+                };
+                // Phase 2b: Drain OUTSIDE all daemon locks — the drain runs STT
+                // inference on the final utterance and takes the metrics lock,
+                // which would deadlock against the metrics updater
+                // (metrics → state) if we still held state/pipeline (ADR-035).
+                drain.drain().await;
+                {
+                    let pipeline = self.pipeline.write().await;
                     pipeline.clear_session_id();
                 }
                 // Pipeline lock released before we touch state

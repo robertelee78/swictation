@@ -484,14 +484,27 @@ impl OrtRecognizer {
         let contents = fs::read_to_string(&tokens_path)
             .map_err(|e| SttError::ModelLoadError(format!("Failed to read tokens.txt: {}", e)))?;
 
-        // Parse each line as "<token_text> <token_id>" and extract token_text
-        let tokens: Vec<String> = contents
-            .lines()
-            .map(|line| {
-                // Split on whitespace and take first part (token text)
-                line.split_whitespace().next().unwrap_or("").to_string()
-            })
-            .collect();
+        // Parse each line as "<token_text> <token_id>" and extract token_text.
+        // Token IDs are positional, so blank lines cannot be silently skipped
+        // (that would shift every later ID) — they are a load error (ADR-035).
+        let mut tokens = Vec::new();
+        for (line_no, line) in contents.lines().enumerate() {
+            match line.split_whitespace().next() {
+                Some(token) => tokens.push(token.to_string()),
+                None => {
+                    return Err(SttError::ModelLoadError(format!(
+                        "tokens.txt line {} is blank — token IDs are positional, \
+                         so a blank line corrupts the vocabulary mapping",
+                        line_no + 1
+                    )))
+                }
+            }
+        }
+        if tokens.is_empty() {
+            return Err(SttError::ModelLoadError(
+                "tokens.txt contains no tokens".to_string(),
+            ));
+        }
 
         Ok(tokens)
     }
@@ -607,34 +620,19 @@ impl OrtRecognizer {
             debug!("Current features are log-mel without normalization");
         }
 
-        // Try processing without chunking first (match C++ reference)
-        let text = if features.nrows() <= 80 {
-            // Small file - process in one chunk
-            let chunks = self.audio_processor.chunk_features(&features);
-            info!("Small file: {} chunks of 80 frames", chunks.len());
-            self.greedy_search_decode(&chunks)?
-        } else {
-            // Large file - try processing ALL frames at once (no chunking)
-            info!(
-                "Large file: {} frames total - processing all at once (no chunking)",
-                features.nrows()
-            );
-
-            // Pad to multiple of 80 for encoder
-            let padded_rows = features.nrows().div_ceil(80) * 80;
-            let mut padded = Array2::zeros((padded_rows, features.ncols()));
-            padded
-                .slice_mut(s![..features.nrows(), ..])
-                .assign(&features);
-
-            // Process all 80-frame chunks in sequence but decode all at once
-            let chunks = self.audio_processor.chunk_features(&padded);
-            info!(
-                "Processing {} encoder chunks without decoder reset between chunks",
-                chunks.len()
-            );
-            self.greedy_search_decode(&chunks)?
-        };
+        // True-length chunking: the encoder handles variable frame counts via
+        // dynamic shape inference, so no padding of any kind (ADR-035).
+        if features.nrows() == 0 {
+            info!("No feature frames extracted; returning empty transcription");
+            return Ok(String::new());
+        }
+        let chunks = self.audio_processor.chunk_features(&features);
+        info!(
+            "Processing {} encoder chunk(s), {} frames total",
+            chunks.len(),
+            features.nrows()
+        );
+        let text = self.greedy_search_decode(&chunks)?;
 
         Ok(text)
     }
@@ -687,28 +685,19 @@ impl OrtRecognizer {
             mel_min, mel_max, mel_mean
         );
 
-        // Process frames (chunking handled internally)
-        let text = if features.nrows() <= 80 {
-            // Small audio - process in one chunk
-            let chunks = self.audio_processor.chunk_features(&features);
-            info!("Small audio: {} chunks of 80 frames", chunks.len());
-            self.greedy_search_decode(&chunks)?
-        } else {
-            // Large audio - chunk and process
-            info!("Large audio: {} frames total - chunking", features.nrows());
-
-            // Pad to multiple of 80 for encoder
-            let padded_rows = features.nrows().div_ceil(80) * 80;
-            let mut padded = Array2::zeros((padded_rows, features.ncols()));
-            padded
-                .slice_mut(s![..features.nrows(), ..])
-                .assign(&features);
-
-            // Process all 80-frame chunks
-            let chunks = self.audio_processor.chunk_features(&padded);
-            info!("Processing {} encoder chunks", chunks.len());
-            self.greedy_search_decode(&chunks)?
-        };
+        // True-length chunking: the encoder handles variable frame counts via
+        // dynamic shape inference, so no padding of any kind (ADR-035).
+        if features.nrows() == 0 {
+            info!("No feature frames extracted; returning empty transcription");
+            return Ok(String::new());
+        }
+        let chunks = self.audio_processor.chunk_features(&features);
+        info!(
+            "Processing {} encoder chunk(s), {} frames total",
+            chunks.len(),
+            features.nrows()
+        );
+        let text = self.greedy_search_decode(&chunks)?;
 
         Ok(text)
     }
@@ -992,20 +981,33 @@ impl OrtRecognizer {
                 eprintln!("   Iteration {}: run_joiner() returned", iteration_count);
             }
 
-            // C++ line 136-141: Split logits into token and duration
+            // C++ line 136-141: Split logits into token and duration.
+            // Hardened (ADR-035): a joiner/tokens.txt size mismatch used to
+            // panic here (usize underflow + slice OOB), silently killing the
+            // STT task while recording appeared to keep working.
             let logits_slice = logits.as_slice().unwrap();
             let output_size = logits_slice.len();
+            if output_size < vocab_size {
+                return Err(SttError::InferenceError(format!(
+                    "Joiner output size {} is smaller than vocabulary size {} — \
+                     model files and tokens.txt disagree (check for stray blank \
+                     lines in tokens.txt or mismatched model artifacts)",
+                    output_size, vocab_size
+                )));
+            }
             let num_durations = output_size - vocab_size;
 
             let token_logits = &logits_slice[0..vocab_size];
             let duration_logits = &logits_slice[vocab_size..];
 
-            // C++ line 143-145: Greedy selection for token
+            // C++ line 143-145: Greedy selection for token.
+            // total_cmp: a single NaN logit (possible with FP16/degenerate
+            // input) must not panic the decode loop.
             let (y, _y_logit) = token_logits
                 .iter()
                 .enumerate()
-                .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
-                .unwrap();
+                .max_by(|(_, a), (_, b)| a.total_cmp(b))
+                .expect("token_logits is non-empty: vocab_size > 0 checked at load");
             let y = y as i64;
 
             // C++ line 148-150: Greedy selection for duration (note: can be 0!)
@@ -1013,7 +1015,7 @@ impl OrtRecognizer {
                 duration_logits
                     .iter()
                     .enumerate()
-                    .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+                    .max_by(|(_, a), (_, b)| a.total_cmp(b))
                     .map(|(idx, _)| idx)
                     .unwrap_or(0)
             } else {

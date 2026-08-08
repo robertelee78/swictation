@@ -920,18 +920,15 @@ async function downloadGPULibraries() {
   log('green', '\n✓ NVIDIA GPU detected!');
   log('cyan', '📦 Detecting GPU architecture and downloading optimized libraries...\n');
 
-  // Get platform package lib directory for GPU libraries
-  const { resolveBinaryPaths } = require('./src/resolve-binary');
-  let gpuLibsDir;
-  try {
-    const binaryPaths = resolveBinaryPaths();
-    gpuLibsDir = binaryPaths.libDir;
-    log('cyan', `   GPU libraries will be installed to platform package: ${gpuLibsDir}\n`);
-  } catch (err) {
-    log('red', '   ✗ Platform package not found - cannot install GPU libraries');
-    log('cyan', '   This should not happen as platform package was verified earlier');
-    throw new Error('Platform package lib directory not found');
-  }
+  // GPU libraries live in the user data dir, OUTSIDE npm-owned trees
+  // (ADR-035): extracting into the platform package meant every npm upgrade
+  // deleted 1.5GB of libraries while the metadata receipt in the config dir
+  // survived — the skip check then reported "already installed" and the
+  // daemon silently fell back to CPU. detectCudaLibraryPaths() and
+  // generate-service.js already prefer this location.
+  const { getGpuLibsDir } = require('./src/paths');
+  const gpuLibsDir = getGpuLibsDir();
+  log('cyan', `   GPU libraries will be installed to: ${gpuLibsDir}\n`);
 
   // Detect GPU compute capability
   const gpuInfo = detectGPUComputeCapability();
@@ -992,12 +989,22 @@ async function downloadGPULibraries() {
     if (fs.existsSync(gpuPackageInfoPath)) {
       try {
         const existingMetadata = JSON.parse(fs.readFileSync(gpuPackageInfoPath, 'utf8'));
-        if (existingMetadata.version === GPU_LIBS_VERSION && existingMetadata.variant === variant) {
+        // Skip only when the metadata matches AND the artifacts actually
+        // exist (ADR-035): the metadata is a receipt in the config dir that
+        // survives upgrades; the goods must be verified independently.
+        const sentinelLib = path.join(gpuLibsDir, 'libonnxruntime.so');
+        if (
+          existingMetadata.version === GPU_LIBS_VERSION &&
+          existingMetadata.variant === variant &&
+          fs.existsSync(sentinelLib)
+        ) {
           skipDownload = true;
           log('green', `  ✓ GPU libraries v${GPU_LIBS_VERSION} (${variant}) already installed`);
           log('cyan', `    Location: ${gpuLibsDir}`);
           log('cyan', `    Installed: ${existingMetadata.installedAt}`);
           log('cyan', `    Skipping download to save time and bandwidth`);
+        } else if (existingMetadata.version === GPU_LIBS_VERSION && existingMetadata.variant === variant) {
+          log('yellow', '  ⚠️  GPU library metadata found but artifacts are missing — re-downloading');
         }
       } catch (err) {
         log('yellow', `    Warning: Could not read GPU package metadata: ${err.message}`);
@@ -1005,6 +1012,15 @@ async function downloadGPULibraries() {
     }
 
     if (!skipDownload) {
+      // Invalidate the metadata receipt BEFORE downloading: if this run is
+      // interrupted after a partial extraction, a surviving receipt plus one
+      // sentinel .so would bless the incomplete set forever (ADR-035). The
+      // receipt is rewritten only after full extraction succeeds.
+      try {
+        fs.unlinkSync(gpuPackageInfoPath);
+      } catch {
+        /* no receipt to invalidate */
+      }
       // Download tarball with retry, resume, and progress
       log('cyan', `  Downloading ${variant} package...`);
       log('cyan', `  URL: ${releaseUrl}`);
@@ -1962,26 +1978,16 @@ function generateLaunchdServices(ortLibPath) {
 async function interactiveConfigMigration() {
   log('cyan', '\n📝 Checking configuration files...');
 
-  const configDir = getConfigDir();
-  const configPath = path.join(configDir, 'config.toml');
-
-  if (fs.existsSync(configPath)) {
-    // Back up existing config before overwriting
-    const backupPath = path.join(configDir, 'config.toml.old');
-    try {
-      fs.copyFileSync(configPath, backupPath);
-      log('cyan', `  Backed up existing config to ${backupPath}`);
-    } catch (err) {
-      log('yellow', `  Could not back up config: ${err.message}`);
-    }
-  }
-
+  // Upgrade-safe config step (ADR-035): never clobbers an existing parseable
+  // config — preserves user settings byte-for-byte, healing only stale model
+  // paths. The previous unconditional rewrite reset every user customization
+  // on every upgrade (and its single-slot backup lost the original on the
+  // second one).
   try {
-    fs.mkdirSync(configDir, { recursive: true });
-    fs.writeFileSync(configPath, generateDefaultConfig());
-    log('green', `  Config written to ${configPath}`);
+    const configStep = require('./src/steps/config');
+    configStep.run({ log, generateDefaultConfig });
   } catch (err) {
-    log('yellow', `  Could not write config: ${err.message}`);
+    log('yellow', `  Could not process config: ${err.message}`);
   }
 }
 
@@ -3126,6 +3132,16 @@ async function main() {
         log('green', `  ✓ Saved verified GPU info to ${gpuInfoPath}`);
       } catch (err) {
         log('yellow', `  ⚠️  Could not save GPU info: ${err.message}`);
+      }
+
+      // Re-run config healing now that models exist on disk (ADR-035): the
+      // config step ran before the download phase, so a stale model path
+      // could not heal then (healing requires the default target to exist).
+      // The step is idempotent — a second pass is a no-op unless it heals.
+      try {
+        require('./src/steps/config').run({ log, generateDefaultConfig });
+      } catch (err) {
+        log('yellow', `  ⚠️  Config re-check failed: ${err.message}`);
       }
     } else if (SKIP_MODEL_TEST) {
       log('yellow', '  Model test-loading skipped (SKIP_MODEL_TEST=1)');

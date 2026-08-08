@@ -26,7 +26,7 @@ pub const N_MEL_FEATURES_1_1B: usize = 80; // Number of mel filters (1.1B model)
 pub const N_FFT: usize = 512; // FFT size
 pub const HOP_LENGTH: usize = 160; // 10ms hop at 16kHz
 pub const WIN_LENGTH: usize = 400; // 25ms window at 16kHz
-pub const CHUNK_FRAMES: usize = 10000; // Frames per encoder chunk (increased to process full audio)
+pub const CHUNK_FRAMES: usize = 10000; // Max frames per encoder call (ceiling for bounded memory — never a pad target, ADR-035)
 
 /// Audio processor for Parakeet-TDT models
 pub struct AudioProcessor {
@@ -64,6 +64,11 @@ impl AudioProcessor {
             fft_planner: FftPlanner::new(),
             n_mel_features,
         })
+    }
+
+    /// Number of mel filterbank features this processor produces (80 for 1.1B, 128 for 0.6B)
+    pub fn n_mel_features(&self) -> usize {
+        self.n_mel_features
     }
 
     /// Load audio from file (WAV or MP3)
@@ -470,29 +475,21 @@ impl AudioProcessor {
         Ok(())
     }
 
-    /// Split features into chunks for encoder
+    /// Split features into chunks for encoder.
     ///
-    /// Returns a Vec of 2D arrays suitable for encoder input.
-    /// Uses the instance's n_mel_features (80 for 1.1B, 128 for 0.6B) for padding.
+    /// Chunks carry their TRUE frame counts — CHUNK_FRAMES is a ceiling for
+    /// bounded memory on long dictation, never a pad target. The encoder uses
+    /// dynamic shape inference (run_encoder note: 615 non-multiple frames
+    /// verified), and zero-padding after per-feature normalization used to
+    /// feed it mean-valued synthetic frames: ~30x wasted latency plus phantom
+    /// "um"-style hallucinations at end of utterance (ADR-035).
     pub fn chunk_features(&self, features: &Array2<f32>) -> Vec<Array2<f32>> {
         let total_frames = features.nrows();
-        let n_features = self.n_mel_features; // Use instance field, not hardcoded constant!
         let mut chunks = Vec::new();
 
         for start in (0..total_frames).step_by(CHUNK_FRAMES) {
             let end = (start + CHUNK_FRAMES).min(total_frames);
-            let chunk_size = end - start;
-
-            if chunk_size < CHUNK_FRAMES {
-                // Pad last chunk if needed - use instance's n_mel_features
-                let mut padded = Array2::zeros((CHUNK_FRAMES, n_features));
-                padded
-                    .slice_mut(s![..chunk_size, ..])
-                    .assign(&features.slice(s![start..end, ..]));
-                chunks.push(padded);
-            } else {
-                chunks.push(features.slice(s![start..end, ..]).to_owned());
-            }
+            chunks.push(features.slice(s![start..end, ..]).to_owned());
         }
 
         chunks
@@ -619,5 +616,67 @@ mod tests {
             processor.mel_filters.shape(),
             &[N_MEL_FEATURES, N_FFT / 2 + 1]
         );
+    }
+
+    /// Build a features matrix whose every cell is a unique non-zero value,
+    /// so any padding or dropped frame is detectable.
+    fn synthetic_features(frames: usize, n_features: usize) -> Array2<f32> {
+        Array2::from_shape_fn((frames, n_features), |(r, c)| {
+            1.0 + (r * n_features + c) as f32
+        })
+    }
+
+    /// Regression guard (ADR-035): a short utterance must NOT be padded out to
+    /// CHUNK_FRAMES. Zero-padding after per-feature normalization feeds the
+    /// encoder ~97% synthetic mean-valued frames — the source of both the
+    /// latency waste and phantom "um"-style hallucinations.
+    #[test]
+    fn chunk_features_short_input_is_not_padded() {
+        let processor = AudioProcessor::new().unwrap();
+        let features = synthetic_features(300, processor.n_mel_features());
+        let chunks = processor.chunk_features(&features);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(
+            chunks[0].nrows(),
+            300,
+            "final chunk must keep its true frame count, not CHUNK_FRAMES"
+        );
+        assert_eq!(chunks[0], features);
+    }
+
+    /// Truncation fence (ADR-035): CHUNK_FRAMES was raised to 10,000 to fix
+    /// long-audio truncation. Whatever the chunking does, EVERY input frame
+    /// must reach the encoder exactly once, in order.
+    #[test]
+    fn chunk_features_preserves_every_frame_across_chunks() {
+        let processor = AudioProcessor::new().unwrap();
+        let total = CHUNK_FRAMES * 2 + CHUNK_FRAMES / 2;
+        let features = synthetic_features(total, processor.n_mel_features());
+        let chunks = processor.chunk_features(&features);
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(chunks[0].nrows(), CHUNK_FRAMES);
+        assert_eq!(chunks[1].nrows(), CHUNK_FRAMES);
+        assert_eq!(chunks[2].nrows(), CHUNK_FRAMES / 2);
+        let mut row = 0usize;
+        for chunk in &chunks {
+            for r in 0..chunk.nrows() {
+                assert_eq!(
+                    chunk.row(r),
+                    features.row(row),
+                    "frame {} must be preserved verbatim",
+                    row
+                );
+                row += 1;
+            }
+        }
+        assert_eq!(row, total, "no frame may be dropped or invented");
+    }
+
+    #[test]
+    fn chunk_features_empty_input_yields_no_chunks() {
+        let processor = AudioProcessor::new().unwrap();
+        let features = Array2::zeros((0, processor.n_mel_features()));
+        let chunks = processor.chunk_features(&features);
+        assert!(chunks.is_empty());
     }
 }
