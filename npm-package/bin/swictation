@@ -51,7 +51,7 @@ function checkPlatform() {
   } else if (isMacOS) {
     // macOS: ARM64 (Apple Silicon) only
     if (process.arch !== 'arm64') {
-      console.error(chalk.red('Error: Swictation on macOS requires Apple Silicon (M1/M2/M3/M4)'));
+      console.error(chalk.red('Error: Swictation on macOS requires Apple Silicon (M1 or later)'));
       console.log(chalk.yellow('Intel Macs are not supported'));
       process.exit(1);
     }

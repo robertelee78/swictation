@@ -20,20 +20,29 @@ Pure Rust daemon with VAD-triggered auto-transcription, sub-second latency, and 
 ### Prerequisites
 
 #### Linux
-- **NVIDIA GPU** with 4GB+ VRAM for 0.6B model, 5GB+ for 1.1B model (or CPU fallback)
+- **NVIDIA GPU** with 4GB+ VRAM for 0.6B model, 6GB+ for 1.1B model (or CPU fallback)
 - **Ubuntu 24.04+** (GLIBC 2.39+ required)
 - **Node.js 18+**
 - **Text injection tool:**
   - X11: `sudo apt install xdotool`
   - Wayland (GNOME): `sudo apt install ydotool && sudo usermod -aG input $USER` (then logout/login)
   - Wayland (KDE/Sway): `sudo apt install wtype`
+- **Sway / Hyprland / River only:** the tray falls back to a Python Qt app on these
+  wlroots compositors (they render Qt/PySide6 tray icons more reliably than the Tauri
+  tray). Install it with `pip3 install -r requirements-qt-tray.txt` (PySide6 6.8+), or
+  from your distro: `apt install python3-pyside6` / `dnf install python3-pyside6` /
+  `pacman -S pyside6`. Everything else — daemon, VAD, STT, injection — stays pure Rust,
+  and GNOME/KDE/X11 users need no Python at all.
 
 #### macOS
-- **Apple Silicon** (M1/M2/M3/M4) - Intel Macs not supported
+- **Apple Silicon** (M1 or later) - Intel Macs not supported
 - **macOS 14 Sonoma** or **macOS 15 Sequoia** (required for CoreML)
-- **16GB+ RAM minimum**
+- **16GB+ unified memory** — this is a hard requirement, not a recommendation.
+  Postinstall aborts on Macs reporting less (the CoreML models need the headroom).
 - **Node.js 18+**
 - **Accessibility permissions** (granted during setup)
+
+📖 **[Full macOS Setup Guide](docs/macos-setup.md)** - Step-by-step install, permissions, and verification
 
 ### Install
 
@@ -51,6 +60,14 @@ npm install -g swictation --foreground-scripts
 # - Shows platform-specific setup instructions
 
 # Start
+swictation start
+```
+
+If postinstall was interrupted or you skipped it, the same work is reachable manually:
+
+```bash
+swictation download-models   # fetch VAD + STT models
+swictation setup             # install services, configure hotkeys/permissions
 swictation start
 ```
 
@@ -74,7 +91,7 @@ swictation start
 
 **Components:**
 - **VAD:** Silero VAD v6 (ONNX) - detects speech vs silence
-- **STT:** Parakeet-TDT-1.1B (5.77% WER) or 0.6B (auto-selected by GPU memory)
+- **STT:** Parakeet-TDT-1.1B (1.39% WER LibriSpeech test-clean) or 0.6B (1.93%) — auto-selected by GPU memory
   - **Linux:** ONNX Runtime with CUDA execution provider
   - **macOS:** Native CoreML via [coreml-native](https://github.com/robertelee78/coreml-native) crate (ANE acceleration)
 - **Transform:** MidStream text-transform (Secretary Mode commands)
@@ -86,6 +103,12 @@ swictation start
 - **Linux (RTX A1000):** VAD 50ms, STT 150-250ms, Total ~1s
 - **macOS (M1):** VAD 50ms, STT 150-300ms (CoreML GPU), Total ~1s
 - **Audio length:** Unlimited — no 15-second cap. The pipeline processes arbitrary-length dictation via windowed chunking, so long-form dictation works without interruption.
+- **Short utterances (ONNX path):** every chunk used to be padded out to 10,000 mel
+  frames (100 s) before encoding, so a 3-second phrase ran the encoder over ~97%
+  synthetic frames. Encoding now uses the true frame count, which removes that wasted
+  work and the filler words the padding sometimes produced (ADR-035).
+- **Stopping:** the utterance in flight when you press the hotkey is drained and
+  transcribed exactly once, rather than discarded (ADR-035).
 
 ---
 
@@ -123,7 +146,7 @@ FOREVER:          All future "arkon" → "Archon" automatically
 - **Zero-friction learning**: Edit transcription → Click "Learn" → Saved forever
 - **Phonetic fuzzy matching**: "arkon" matches "archon", "arkohn", "arckon" (configurable threshold 0.0-1.0, default 0.3)
 - **Case intelligence**: Force "API" uppercase, "iPhone" title case, or preserve input case
-- **Hot-reload**: No daemon restart needed (file-watched `~/.config/swictation/corrections.toml`)
+- **Hot-reload**: No daemon restart needed (file-watched `corrections.toml` in the config directory — `~/.config/swictation/` on Linux, `~/Library/Application Support/swictation/` on macOS)
 - **Usage tracking**: See which patterns save you the most time
 
 **Perfect for:**
@@ -138,54 +161,120 @@ Configure phonetic sensitivity in Settings UI (0.0 = exact only, 1.0 = very fuzz
 
 ## Usage
 
-### Daemon Control
+### CLI
 
 ```bash
-# Check status
+swictation download-models   # Download AI models (alias: download-model)
+swictation setup             # Install services, configure hotkeys/permissions
+swictation start [--ui]      # Start the daemon (and optionally the tray UI)
+swictation stop              # Stop the daemon
+swictation status            # Service, socket, and platform status
+swictation toggle            # Toggle recording on/off (what the hotkey calls)
+swictation help              # Full usage
+swictation --version         # Version info for every component
+```
+
+**`download-models`** fetches the Silero VAD model plus one or more STT models into the
+platform data directory. With no arguments it downloads the platform default set. Pass
+`--model=` (or a bare positional, e.g. `swictation download-model 1.1b-gpu`) to pick one,
+and `--force` to re-download over existing files.
+
+| Platform | `--model=` values | Size |
+|----------|-------------------|------|
+| Linux | `0.6b` (aliases `0.6b-gpu`, `0.6b-cpu`, `cpu-only`) | 2.55 GB |
+| Linux | `1.1b` (alias `1.1b-gpu`) | 6.96 GB |
+| Linux | `both` — default: VAD + 0.6B + 1.1B | ~9.5 GB |
+| macOS | `1.1b-coreml` (alias `coreml-native`) | 1.9 GB |
+| macOS | `0.6b-coreml` | 2.67 GB |
+| macOS | `both` — default: VAD + CoreML 1.1B | 1.9 GB |
+
+CoreML bundles are macOS-only and are rejected on Linux. Silero VAD (629 KB) is always
+included.
+
+### Daemon Control
+
+**Linux (systemd):**
+```bash
 systemctl --user status swictation-daemon
-
-# Start/stop/restart
 systemctl --user {start|stop|restart} swictation-daemon
-
-# View logs
 journalctl --user -u swictation-daemon -f
 ```
 
+**macOS (launchd):**
+```bash
+launchctl list | grep com.swictation.daemon                          # status
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.swictation.daemon.plist
+launchctl start com.swictation.daemon
+launchctl stop  com.swictation.daemon
+launchctl bootout gui/$(id -u)/com.swictation.daemon                 # unload
+tail -f ~/Library/Logs/swictation/daemon.log                         # logs
+```
+
+`swictation start` / `stop` / `status` wrap the right one for your platform, so prefer
+those unless you are debugging the service itself.
+
 ### Configuration
 
-Edit `~/.config/swictation/config.toml`:
+Edit the config file — **Linux:** `~/.config/swictation/config.toml`,
+**macOS:** `~/Library/Application Support/swictation/config.toml`:
 
 ```toml
 vad_threshold = 0.25           # 0.0-1.0 (lower = more sensitive)
 vad_min_silence = 0.8          # Seconds before transcription
 vad_min_speech = 0.25          # Minimum speech length
-stt_model_override = "auto"    # auto, 0.6b-cpu, 0.6b-gpu, or 1.1b-gpu
+vad_max_speech = 30.0          # Force transcription after this many seconds
+stt_model_override = "auto"    # auto, 0.6b-cpu, 0.6b-gpu, 1.1b-gpu
+                               # macOS also: 1.1b-coreml (alias coreml-native)
+num_threads = 4                # ONNX Runtime thread count
+phonetic_threshold = 0.3       # Learned-correction fuzziness (0.0-1.0)
 
 [hotkeys]
 toggle = "Super+Shift+D"       # macOS: Ctrl+Shift+D
 push_to_talk = "Super+Space"   # macOS: Ctrl+Space
 ```
 
+Every key is optional — each has a compiled-in default, so a partial or empty config
+file is valid and unset keys fall back to the values above (ADR-034).
+
 ---
 
 ## Troubleshooting
 
-**Installation issues:**
-Check the install log: `~/.local/share/swictation/install.log`
+### Where things live
+
+| | Linux | macOS |
+|---|---|---|
+| Config | `~/.config/swictation/` | `~/Library/Application Support/swictation/` |
+| Data + models | `~/.local/share/swictation/` | `~/Library/Application Support/swictation/` |
+| Install log | `~/.local/share/swictation/install.log` | `~/Library/Logs/swictation/install.log` |
+| Daemon logs | `journalctl --user -u swictation-daemon` | `~/Library/Logs/swictation/daemon.log`, `daemon-error.log` |
+| Sockets | `$XDG_RUNTIME_DIR` (fallback: data dir) | `~/Library/Application Support/swictation/` |
+
+`swictation status` prints the resolved socket paths for your machine.
+
+**Installation issues:** read the install log for your platform from the table above.
 
 **Daemon won't start:**
 ```bash
+# Linux
 journalctl --user -u swictation-daemon -n 50
+
+# macOS
+tail -n 50 ~/Library/Logs/swictation/daemon-error.log
+tail -n 20 ~/Library/Logs/swictation/launcher.log   # library/binary resolution
+log show --predicate 'processImagePath CONTAINS "swictation"' --last 5m
 ```
 
 **No text appears:**
 ```bash
-# Test injection tool
+# Linux — test the injection tool and check the display server
 echo "test" | wtype -  # or xdotool type -
-
-# Check display server
-echo $XDG_SESSION_TYPE
+echo $XDG_SESSION_TYPE # x11 or wayland; picks which tool is used
 ```
+
+On macOS text injection uses the Accessibility API, so there is no injection tool or
+display-server variable to check. Instead grant permissions: System Settings > Privacy &
+Security > Accessibility > enable Swictation, then restart the daemon.
 
 **Low accuracy / no detection:**
 - Lower `vad_threshold` in config (try 0.15)
@@ -193,32 +282,25 @@ echo $XDG_SESSION_TYPE
 
 ### macOS-Specific
 
-**No text appears (macOS):**
-- Grant Accessibility permissions: System Settings > Privacy & Security > Accessibility > Enable Swictation
-- Restart the daemon after granting permissions
-
-**Daemon won't start (macOS):**
-```bash
-# Check launchd logs
-log show --predicate 'processImagePath CONTAINS "swictation"' --last 5m
-```
-
 **CoreML model not loading:**
 - Ensure model files exist in `~/Library/Application Support/swictation/models/`
 - Check that `.mlmodelc` directory is present for CoreML inference
 - Verify Apple Silicon: `uname -m` should show `arm64`
+- Re-fetch with `swictation download-models --model=1.1b-coreml --force`
 
 **Wrong microphone selected:**
 - The daemon auto-selects the default input device
 - Change default input in System Settings > Sound > Input
 
-📖 **More help:** [docs/window-manager-configs.md](docs/window-manager-configs.md)
+📖 **More help:** [macOS Setup Guide](docs/macos-setup.md) · [Window Manager Configs](docs/window-manager-configs.md)
 
 ---
 
 ## Architecture
 
-**Pure Rust** - no Python runtime required
+**Pure Rust core** - no Python in the transcription pipeline. The sole exception is the
+optional tray icon on Linux wlroots compositors (Sway/Hyprland/River), which uses a
+Python/Qt fallback; see Prerequisites. Dictation works without it.
 
 ```
 Audio (cpal) → VAD (Silero v6) → STT (Parakeet-TDT) →
@@ -268,15 +350,17 @@ Auto-detects NVIDIA architecture (Maxwell through Blackwell):
 CPU fallback for older/unsupported GPUs.
 
 #### macOS (CoreML)
-Auto-detects Apple Silicon and unified memory:
+Auto-detects Apple Silicon and unified memory, then reports the 35% GPU share:
 
-| Mac | Total RAM | GPU Share | Model |
-|-----|-----------|-----------|-------|
-| M1 (8GB) | 8GB | ~2.8GB | CPU fallback |
-| M1 (16GB) | 16GB | ~5.6GB | 0.6B GPU |
-| M1 Pro/Max | 32GB+ | ~11GB+ | 1.1B GPU |
+| Mac | Unified memory | GPU share | Model |
+|-----|----------------|-----------|-------|
+| Any Apple Silicon | under ~16GB | — | Install refused |
+| M1 (16GB) | 16GB | ~5.6GB | 1.1B CoreML |
+| M1 Pro/Max and later | 32GB+ | ~11GB+ | 1.1B CoreML |
 
-Uses CoreML execution provider with FP16 models for optimal performance.
+Every supported Mac runs the same native CoreML 1.1B bundle (1.9GB) with full Apple
+Neural Engine acceleration — there is no per-machine model downgrade, because machines
+too small for it are rejected at install time.
 
 📖 **[Architecture Details](docs/architecture.md)** (includes GPU model selection)
 
@@ -286,7 +370,7 @@ Real-time monitoring via Unix socket (platform-specific path, see `swictation-pa
 - macOS: `~/Library/Application Support/swictation/swictation_metrics.sock`
 - Linux: `$XDG_RUNTIME_DIR/swictation_metrics.sock` (fallback: `~/.local/share/swictation/swictation_metrics.sock`)
 - Audio levels, VAD probabilities, transcription latency
-- Session database: `~/.local/share/swictation/metrics.db`
+- Session database: `metrics.db` in the data directory — macOS: `~/Library/Application Support/swictation/metrics.db`, Linux: `~/.local/share/swictation/metrics.db`
 
 ### Keyboard Shortcuts
 
@@ -300,12 +384,50 @@ Configure in `config.toml`.
 
 ---
 
+## Uninstall
+
+```bash
+# 1. Stop the services FIRST (see note below)
+swictation stop
+
+# Linux
+systemctl --user disable swictation-daemon
+
+# macOS
+launchctl bootout gui/$(id -u)/com.swictation.daemon
+
+# 2. Remove the package
+npm uninstall -g swictation
+```
+
+**Stop the services first — npm will not do it for you.** The package ships a
+`preuninstall.js` cleanup script, but npm 7 and later do not execute uninstall lifecycle
+scripts at all, so on any modern npm it never runs and you are left with a service unit
+pointing at deleted binaries (ADR-034). You can still invoke it by hand from the package
+directory before removing it: `node preuninstall.js --force`.
+
+**User data and models are deliberately preserved.** Uninstalling never deletes your
+config, learned corrections, metrics database, or the downloaded models (up to ~9.5GB on
+Linux). Remove them explicitly when you actually want them gone:
+
+```bash
+# Linux
+rm -rf ~/.config/swictation ~/.local/share/swictation
+
+# macOS
+rm -rf ~/Library/Application\ Support/swictation ~/Library/Logs/swictation
+```
+
+---
+
 ## Documentation
 
+- **[macOS Setup Guide](docs/macos-setup.md)** - Install, permissions, verification
 - **[Secretary Mode Guide](docs/secretary-mode.md)** - 60+ command reference
 - **[Window Manager Configs](docs/window-manager-configs.md)** - X11/Wayland setup
 - **[Architecture](docs/architecture.md)** - Technical implementation
-- **[MidStream Transform](external/midstream/)** - Text transformation library
+- **[Architecture Decision Records](docs/adr/)** - Why the system works the way it does
+- **[MidStream Transform](external/midstream/)** - Text transformation library (submodule)
 
 ---
 

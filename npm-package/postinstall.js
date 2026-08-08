@@ -182,7 +182,7 @@ function checkPlatform() {
     if (arch !== 'arm64') {
       log('red', '\n⚠ UNSUPPORTED ARCHITECTURE');
       log('yellow', `Detected architecture: ${arch}`);
-      log('yellow', 'Swictation on macOS requires Apple Silicon (M1/M2/M3/M4)');
+      log('yellow', 'Swictation on macOS requires Apple Silicon (M1 or later)');
       log('yellow', 'Intel Macs are not supported');
       process.exit(1);
     }

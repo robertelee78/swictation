@@ -8,11 +8,12 @@ Complete installation and setup guide for Swictation on macOS.
 
 ### Hardware Requirements
 
-- **Apple Silicon Mac** (M1, M2, M3, or M4)
+- **Apple Silicon Mac** (M1 or later)
   - Intel Macs are NOT supported
   - Check: `uname -m` should show `arm64`
-- **8GB RAM minimum** (16GB+ recommended for 1.1B model)
-- **3GB free disk space** for models and libraries
+- **16GB+ unified memory** — a hard requirement, not a recommendation.
+  Postinstall aborts on Macs reporting less.
+- **4GB free disk space** for models (1.9GB CoreML bundle) and libraries (~1.5GB)
 
 ### Software Requirements
 
@@ -46,9 +47,10 @@ npm install -g swictation --foreground-scripts
    - Checks Node.js version
 
 2. **GPU Detection**
-   - Detects unified memory (35% allocated to GPU)
+   - Detects unified memory (35% reported as the GPU share)
    - Example: 16GB Mac → ~5.6GB GPU share
-   - Recommends appropriate model (0.6B or 1.1B)
+   - Aborts the install if unified memory is under ~16GB
+   - Selects the native CoreML 1.1B model (every supported Mac gets the same model)
 
 3. **Library Download** (~1.5GB)
    - ONNX Runtime with CoreML support
@@ -60,7 +62,7 @@ npm install -g swictation --foreground-scripts
    - `com.swictation.ui.plist` - System tray UI
 
 5. **Configuration**
-   - Creates `~/.config/swictation/config.toml`
+   - Creates `~/Library/Application Support/swictation/config.toml`
    - Sets up logging directory
 
 ---
@@ -75,9 +77,11 @@ npm install -g swictation --foreground-scripts
 2. Navigate to **Privacy & Security** → **Accessibility**
 3. Click the **🔒 lock** to make changes (enter password)
 4. Click **+** button
-5. Navigate to: `/Users/[your-username]/.npm-global/lib/node_modules/swictation/bin/`
-6. Add `swictation-daemon-macos`
-7. **Enable the checkbox** next to swictation-daemon-macos
+5. Navigate to the platform package's bin directory. Print it with
+   `swictation --version` (shown as "Location"); it is normally
+   `<npm-prefix>/lib/node_modules/@agidreams/darwin-arm64/bin/`
+6. Add `swictation-daemon`
+7. **Enable the checkbox** next to swictation-daemon
 8. Close System Settings
 
 **Verification:**
@@ -107,18 +111,18 @@ swictation status
 
 ### Default Hotkey
 
-**Cmd+Shift+D** - Toggle recording on/off
+**Ctrl+Shift+D** - Toggle recording on/off (configurable)
 
 **How it works:**
-1. Press `Cmd+Shift+D` to start recording
+1. Press `Ctrl+Shift+D` to start recording
 2. Speak naturally
 3. Pause for 0.8 seconds → text appears automatically
-4. Press `Cmd+Shift+D` again to stop
+4. Press `Ctrl+Shift+D` again to stop
 
 ### Testing
 
 1. Open **TextEdit** (or any text editor)
-2. Press `Cmd+Shift+D`
+2. Press `Ctrl+Shift+D`
 3. Say: "Hello world period"
 4. Wait 1 second
 5. Text should appear: "Hello world."
@@ -183,14 +187,15 @@ launchctl load ~/Library/LaunchAgents/com.swictation.ui.plist
 
 ### Model Selection by RAM
 
-Swictation automatically selects the best model based on your Mac's unified memory:
+Every supported Mac runs the same native CoreML 1.1B model. Machines below the 16GB
+unified-memory floor are refused at install time rather than downgraded:
 
 | Mac Configuration | Total RAM | GPU Share (35%) | Model Selected | Expected Latency |
 |------------------|-----------|-----------------|----------------|------------------|
-| M1 (8GB) | 8GB | ~2.8GB | CPU fallback | 300-400ms |
-| M1 (16GB) | 16GB | ~5.6GB | 0.6B GPU | 150-200ms |
-| M1 Pro (32GB) | 32GB | ~11.2GB | 1.1B GPU | 200-250ms |
-| M1 Max (64GB) | 64GB | ~22.4GB | 1.1B GPU | 150-200ms |
+| M1 (8GB) | 8GB | ~2.8GB | Install refused | — |
+| M1 (16GB) | 16GB | ~5.6GB | 1.1B CoreML | 150-300ms |
+| M1 Pro (32GB) | 32GB | ~11.2GB | 1.1B CoreML | 150-250ms |
+| M1 Max (64GB) | 64GB | ~22.4GB | 1.1B CoreML | 150-200ms |
 
 ### GPU Acceleration
 
@@ -207,11 +212,12 @@ CoreML automatically uses:
 
 ### Manual Model Override
 
-Edit `~/.config/swictation/config.toml`:
+Edit `~/Library/Application Support/swictation/config.toml`:
 
 ```toml
 # Force specific model (overrides auto-detection)
-stt_model_override = "1.1b-gpu"  # or "0.6b-gpu" or "0.6b-cpu"
+stt_model_override = "1.1b-coreml"  # macOS native CoreML (alias "coreml-native")
+                                    # "auto" picks this automatically
 ```
 
 ---
@@ -224,7 +230,7 @@ stt_model_override = "1.1b-gpu"  # or "0.6b-gpu" or "0.6b-cpu"
 
 **Fix:**
 1. System Settings → Privacy & Security → Accessibility
-2. Add `swictation-daemon-macos` binary
+2. Add the `swictation-daemon` binary (see Step 2 for its location)
 3. Enable the checkbox
 4. Restart: `swictation stop && swictation start`
 
@@ -243,14 +249,16 @@ tail -f ~/Library/Logs/swictation/daemon-error.log
 ```
 
 **Check 3 - Hotkey conflict:**
-- Another app might be using Cmd+Shift+D
+- Another app might be using Ctrl+Shift+D
 - Check System Settings → Keyboard → Keyboard Shortcuts
 
 ### CoreML/GPU not working
 
 **Check 1 - Verify CoreML library:**
 ```bash
-ls -lh ~/.npm-global/lib/node_modules/swictation/lib/native/libonnxruntime.dylib
+# Find the platform package location, then check its lib/ directory
+swictation --version          # prints "Location: <platform package dir>"
+ls -lh <platform package dir>/lib/libonnxruntime.dylib
 # Should show ~30-50MB file
 ```
 
@@ -261,9 +269,11 @@ grep -i "coreml\|gpu\|metal" ~/Library/Logs/swictation/daemon.log
 ```
 
 **Check 3 - Verify model format:**
-- macOS uses FP16 models (best for CoreML)
-- Check `~/.local/share/swictation/models/`
-- Should have `.fp16.onnx` files
+- macOS uses the native CoreML bundle (`parakeet-tdt-1.1b-coreml`)
+- Check `~/Library/Application Support/swictation/models/`
+- Should contain `.mlmodelc` directories (with `model.mil`, `weights/weight.bin`,
+  `coremldata.bin`), not `.onnx` files
+- Re-fetch with `swictation download-models --model=1.1b-coreml --force`
 
 ### Daemon crashes on startup
 
@@ -276,7 +286,7 @@ swictation download-models --force
 **Check 2 - Library compatibility:**
 ```bash
 # Check dylib dependencies
-otool -L ~/.npm-global/lib/node_modules/swictation/lib/native/libonnxruntime.dylib
+otool -L <platform package dir>/lib/libonnxruntime.dylib
 # All paths should exist
 ```
 
@@ -305,13 +315,20 @@ npm install -g swictation --foreground-scripts
 
 ### Hotkey Customization
 
-**Note:** Custom hotkeys not yet supported on macOS (planned for future release).
+Hotkeys are read from `config.toml` at daemon startup. The macOS defaults are
+`Ctrl+Shift+D` (toggle) and `Ctrl+Space` (push-to-talk):
 
-Current implementation uses `Cmd+Shift+D` (hardcoded in daemon).
+```toml
+[hotkeys]
+toggle = "Ctrl+Shift+D"
+push_to_talk = "Ctrl+Space"
+```
+
+Restart the daemon after changing them (`swictation stop && swictation start`).
 
 ### Silence Detection Tuning
 
-Edit `~/.config/swictation/config.toml`:
+Edit `~/Library/Application Support/swictation/config.toml`:
 
 ```toml
 # Silence duration before auto-transcription (seconds)
@@ -352,14 +369,15 @@ rm ~/Library/LaunchAgents/com.swictation.ui.plist
 # 4. Uninstall npm package
 npm uninstall -g swictation
 
-# 5. Remove configuration and data (optional)
-rm -rf ~/.config/swictation
-rm -rf ~/.local/share/swictation
+# 5. Remove configuration, data, and models (optional — up to ~2GB of models)
+#    On macOS config and data share one directory.
+rm -rf ~/Library/Application\ Support/swictation
 rm -rf ~/Library/Logs/swictation
+rm -rf ~/Library/Caches/swictation
 
 # 6. Remove Accessibility permission
 # System Settings → Privacy & Security → Accessibility
-# Remove swictation-daemon-macos
+# Remove swictation-daemon
 ```
 
 ---
@@ -370,17 +388,16 @@ rm -rf ~/Library/Logs/swictation
 
 - **Intel Macs not supported** - Apple Silicon (ARM64) required
 - **macOS 13 and earlier not supported** - CoreML requirements
-- **Custom hotkeys not yet supported** - Cmd+Shift+D only
-- **No Python tray UI** - Tauri UI planned for future release
-- **INT8 models not optimized** - CoreML prefers FP16 (auto-selected)
+- **Tray icon** - provided by the Tauri UI (`com.swictation.ui`)
+- **Single model** - all supported Macs run the CoreML 1.1B bundle; no 0.6B path
 
 ### Compared to Linux
 
 | Feature | Linux | macOS |
 |---------|-------|-------|
 | GPU | NVIDIA CUDA | CoreML/Metal |
-| Model Format | FP32/INT8 | FP16 |
-| Hotkey | Configurable | Cmd+Shift+D (fixed) |
+| Model Format | ONNX FP32/INT8 | Native CoreML bundle |
+| Hotkey | Configurable (`Super+Shift+D`) | Configurable (`Ctrl+Shift+D`) |
 | Display Server | X11/Wayland | Quartz (native) |
 | Text Injection | xdotool/wtype/ydotool | Accessibility API |
 | Service Manager | systemd | launchd |
@@ -401,11 +418,11 @@ rm -rf ~/Library/Logs/swictation
 ~/Library/Logs/swictation/ui-error.log
 
 # Configuration
-~/.config/swictation/config.toml
+~/Library/Application Support/swictation/config.toml
 
-# Models and data
-~/.local/share/swictation/models/
-~/.local/share/swictation/metrics.db
+# Models and data (same directory as config on macOS)
+~/Library/Application Support/swictation/models/
+~/Library/Application Support/swictation/metrics.db
 ```
 
 ### Reporting Issues

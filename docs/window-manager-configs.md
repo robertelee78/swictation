@@ -2,6 +2,24 @@
 
 **Real-world configuration examples for popular window managers**
 
+**Two things to know before copying these:**
+
+- **Only one command is installed: `swictation`.** There are no `swictation-toggle` or
+  `swictation-ui` binaries — use `swictation toggle` and `swictation start --ui`.
+- **Status-bar indicators show whether the daemon is running, not whether it is
+  recording.** The examples below poll
+  `systemctl --user is-active swictation-daemon`, which reports `active` /
+  `inactive`. Live recording state is published on the metrics Unix socket
+  (`swictation_metrics.sock`), which needs a real client to read; a bar module cannot
+  poll it with `cat`.
+
+**Tray icon on Sway, Hyprland, and River:** these wlroots compositors do not host the
+Tauri tray, so postinstall installs a small Python/Qt tray instead
+(`swictation-ui.service` running `/usr/bin/python3 …/swictation_tray.py`). It needs
+`python3` plus PySide6 6.8+ — `pip3 install -r requirements-qt-tray.txt`, or
+`python3-pyside6` from your distro. Skip it if you do not want the tray: dictation,
+hotkeys, and the CLI work without it, and everything except that tray is Rust.
+
 ---
 
 ## Table of Contents
@@ -43,7 +61,7 @@ exec --no-startup-id swictation-daemon
 # Optional: Bind dictation toggle to hotkey
 # Note: Swictation registers its own global hotkey via global-hotkeys crate
 # This is just an alternative manual toggle
-bindsym $mod+Shift+d exec --no-startup-id swictation-toggle
+bindsym $mod+Shift+d exec --no-startup-id swictation toggle
 ```
 
 #### Advanced Setup with Status Bar
@@ -60,14 +78,16 @@ exec --no-startup-id swictation-daemon
 
 **File:** `~/.config/i3status/config`
 
-```
-order += "read_file swictation_status"
+i3status has no module that runs a command, so use i3blocks (or i3status-rust)
+for a Swictation indicator:
 
-read_file swictation_status {
-    path = "${XDG_RUNTIME_DIR:-$HOME/.local/share/swictation}/swictation_status"
-    format = "🎤 %content"
-    format_bad = "🎤 OFF"
-}
+**File:** `~/.config/i3blocks/config`
+
+```ini
+[swictation]
+command=systemctl --user is-active swictation-daemon 2>/dev/null || echo inactive
+interval=2
+label=🎤
 ```
 
 #### Workspace Rules
@@ -96,7 +116,7 @@ for_window [class="swictation-ui"] floating enable
 exec swictation-daemon
 
 # Optional: Manual toggle binding
-bindsym $mod+Shift+d exec swictation-toggle
+bindsym $mod+Shift+d exec swictation toggle
 ```
 
 #### With Waybar Integration
@@ -120,17 +140,17 @@ bar {
     "modules-right": ["pulseaudio", "custom/swictation", "clock"],
 
     "custom/swictation": {
-        "exec": "cat ${XDG_RUNTIME_DIR:-$HOME/.local/share/swictation}/swictation_status 2>/dev/null || echo 'OFF'",
+        "exec": "systemctl --user is-active swictation-daemon 2>/dev/null || echo 'inactive'",
         "interval": 1,
         "format": "🎤 {}",
-        "on-click": "swictation-toggle"
+        "on-click": "swictation toggle"
     }
 }
 ```
 
 #### Startup with systemd
 
-**File:** `~/.config/systemd/user/swictation-sway.service`
+**File:** `~/.config/systemd/user/swictation-daemon.service`
 
 ```ini
 [Unit]
@@ -139,7 +159,7 @@ PartOf=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/swictation-daemon
+ExecStart=%h/.local/share/swictation/bin/swictation-daemon
 Restart=on-failure
 
 [Install]
@@ -148,7 +168,7 @@ WantedBy=sway-session.target
 
 **Enable:**
 ```bash
-systemctl --user enable swictation-sway.service
+systemctl --user enable swictation-daemon.service
 ```
 
 ---
@@ -178,11 +198,11 @@ swictation-daemon &
 ```bash
 # Swictation manual toggle (optional)
 super + shift + d
-    swictation-toggle
+    swictation toggle
 
 # Swictation settings UI
 super + shift + s
-    swictation-ui
+    swictation start --ui
 ```
 
 #### Polybar Integration
@@ -192,10 +212,10 @@ super + shift + s
 ```ini
 [module/swictation]
 type = custom/script
-exec = cat ${XDG_RUNTIME_DIR:-$HOME/.local/share/swictation}/swictation_status 2>/dev/null || echo "OFF"
+exec = systemctl --user is-active swictation-daemon 2>/dev/null || echo "inactive"
 interval = 1
 format-prefix = "🎤 "
-click-left = swictation-toggle
+click-left = swictation toggle
 ```
 
 **File:** `~/.config/bspwm/bspwmrc`
@@ -221,10 +241,10 @@ polybar mybar &
 exec-once = swictation-daemon
 
 # Optional: Manual toggle binding
-bind = SUPER SHIFT, D, exec, swictation-toggle
+bind = SUPER SHIFT, D, exec, swictation toggle
 
 # Optional: Open settings UI
-bind = SUPER SHIFT, S, exec, swictation-ui
+bind = SUPER SHIFT, S, exec, swictation start --ui
 ```
 
 #### Advanced with Waybar
@@ -237,9 +257,9 @@ exec-once = swictation-daemon
 exec-once = waybar
 
 # Window rules for swictation UI
-windowrulev2 = float, class:(swictation-ui)
-windowrulev2 = size 800 600, class:(swictation-ui)
-windowrulev2 = center, class:(swictation-ui)
+windowrulev2 = float, class:(swictation start --ui)
+windowrulev2 = size 800 600, class:(swictation start --ui)
+windowrulev2 = center, class:(swictation start --ui)
 ```
 
 **File:** `~/.config/waybar/config` (same as Sway example above)
@@ -262,7 +282,7 @@ awful.spawn.with_shell("swictation-daemon")
 -- Optional: Add keybinding for manual toggle
 awful.key({ modkey, "Shift" }, "d",
     function()
-        awful.spawn("swictation-toggle")
+        awful.spawn("swictation toggle")
     end,
     {description = "toggle swictation dictation", group = "swictation"}
 )
@@ -283,7 +303,7 @@ gears.timer {
     autostart = true,
     callback = function()
         awful.spawn.easy_async_with_shell(
-            "cat ${XDG_RUNTIME_DIR:-$HOME/.local/share/swictation}/swictation_status 2>/dev/null || echo 'OFF'",
+            "systemctl --user is-active swictation-daemon 2>/dev/null || echo 'inactive'",
             function(stdout)
                 swictation_widget.text = "🎤 " .. stdout:gsub("\n", "")
             end
@@ -301,7 +321,7 @@ s.mywibox:setup {
 -- Make widget clickable
 swictation_widget:buttons(gears.table.join(
     awful.button({}, 1, function()
-        awful.spawn("swictation-toggle")
+        awful.spawn("swictation toggle")
     end)
 ))
 ```
@@ -354,7 +374,7 @@ chmod +x ~/.dwm/autostart.sh
 
 ```c
 static const char *swictation_toggle[] = {
-    "swictation-toggle", NULL
+    "swictation toggle", NULL
 };
 
 static Key keys[] = {
@@ -396,7 +416,7 @@ from libqtile.lazy import lazy
 
 keys = [
     # ... other keys ...
-    Key([mod, "shift"], "d", lazy.spawn("swictation-toggle"),
+    Key([mod, "shift"], "d", lazy.spawn("swictation toggle"),
         desc="Toggle swictation dictation"),
     # ...
 ]
@@ -413,12 +433,12 @@ screens = [
             # ... other widgets ...
             widget.GenPollText(
                 func=lambda: "🎤 " + subprocess.check_output(
-                    "cat ${XDG_RUNTIME_DIR:-$HOME/.local/share/swictation}/swictation_status",
+                    "systemctl --user is-active swictation-daemon",
                     shell=True, stderr=subprocess.DEVNULL, text=True
                 ).strip(),
                 update_interval=1,
                 mouse_callbacks={
-                    'Button1': lazy.spawn("swictation-toggle")
+                    'Button1': lazy.spawn("swictation toggle")
                 }
             ),
             # ...
@@ -499,8 +519,8 @@ let timeout;
 
 function update_status() {
     try {
-        let statusPath = (GLib.getenv('XDG_RUNTIME_DIR') || GLib.get_home_dir() + '/.local/share/swictation') + '/swictation_status';
-        let [ok, out] = GLib.file_get_contents(statusPath);
+        let [ok, out] = GLib.spawn_command_line_sync(
+            'systemctl --user is-active swictation-daemon');
         panelButton.set_label('🎤 ' + out.toString().trim());
     } catch (e) {
         panelButton.set_label('🎤 OFF');
@@ -591,7 +611,7 @@ Use "Command Output" widget:
 1. Right-click panel → Add Widgets
 2. Find "Command Output"
 3. Configure:
-   - Command: `cat ${XDG_RUNTIME_DIR:-$HOME/.local/share/swictation}/swictation_status 2>/dev/null || echo "OFF"`
+   - Command: `systemctl --user is-active swictation-daemon 2>/dev/null || echo "inactive"`
    - Update interval: 1000ms
    - Prefix: `🎤 `
 
@@ -619,7 +639,7 @@ Use "Generic Monitor" plugin:
 1. Right-click panel → Panel → Add New Items
 2. Find "Generic Monitor"
 3. Right-click new monitor → Properties
-4. Command: `cat ${XDG_RUNTIME_DIR:-$HOME/.local/share/swictation}/swictation_status 2>/dev/null || echo "OFF"`
+4. Command: `systemctl --user is-active swictation-daemon 2>/dev/null || echo "inactive"`
 5. Period: 1s
 6. Label: `🎤`
 
@@ -690,7 +710,7 @@ chmod +x ~/.config/openbox/autostart
   <!-- Swictation toggle -->
   <keybind key="W-S-d">
     <action name="Execute">
-      <command>swictation-toggle</command>
+      <command>swictation toggle</command>
     </action>
   </keybind>
 </keyboard>
@@ -728,7 +748,7 @@ exec fluxbox
 
 ```
 # Swictation toggle
-Mod4 Shift D :Exec swictation-toggle
+Mod4 Shift D :Exec swictation toggle
 ```
 
 ---
@@ -749,7 +769,7 @@ PartOf=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/swictation-daemon
+ExecStart=%h/.local/share/swictation/bin/swictation-daemon
 Restart=on-failure
 RestartSec=5
 

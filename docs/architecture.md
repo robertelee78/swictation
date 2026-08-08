@@ -8,7 +8,7 @@ Detailed technical architecture documentation for the Swictation voice dictation
 
 ## System Overview
 
-Swictation is a **pure Rust daemon** with VAD-triggered automatic transcription. The system uses **ONNX models** for voice activity detection and speech recognition, with platform-specific GPU acceleration (auto-detected) and zero Python runtime dependencies.
+Swictation is a **pure Rust daemon** with VAD-triggered automatic transcription. The system uses **ONNX models** for voice activity detection and speech recognition, with platform-specific GPU acceleration (auto-detected). The core is pure Rust — there is no Python in the transcription pipeline. The one exception is the optional tray icon on Linux wlroots compositors (Sway, Hyprland, River), which uses a small Python/Qt fallback; see [Tauri Desktop Application](#7-tauri-desktop-application).
 
 - **Linux:** ONNX Runtime with CUDA execution provider
 - **macOS:** Native CoreML inference via [coreml-native](https://github.com/robertelee78/coreml-native) crate (Apple Neural Engine acceleration)
@@ -35,7 +35,12 @@ Swictation is a **pure Rust daemon** with VAD-triggered automatic transcription.
 
 ### 1. Daemon Process (`swictation-daemon`)
 
-**Binary:** `/opt/swictation/rust-crates/target/release/swictation-daemon`
+**Binary:**
+- *Installed (npm):* `<platform-package>/bin/swictation-daemon`, where the platform
+  package is `@agidreams/linux-x64` or `@agidreams/darwin-arm64` under the global
+  `node_modules`. Resolved at runtime by `npm-package/src/resolve-binary.js`; run
+  `swictation --version` to print the resolved location.
+- *Development build:* `rust-crates/target/release/swictation-daemon` in your checkout.
 
 **Purpose:** Main orchestrator coordinating audio → VAD → STT → transform → injection pipeline
 
@@ -79,7 +84,7 @@ struct SwictationDaemon {
 - Continuous recording with real-time audio callbacks (tokio async)
 - Lock-free ring buffer for audio streaming
 - Global hotkey via global-hotkey crate (cross-platform)
-- Pure Rust - zero Python runtime
+- Pure Rust - no Python in the transcription pipeline (the optional wlroots tray is the sole Python component)
 - Graceful shutdown with signal handling
 - Real-time metrics broadcasting via Unix socket (platform-specific path, see `swictation-paths` crate; macOS: `~/Library/Application Support/swictation/swictation_metrics.sock`, Linux: `$XDG_RUNTIME_DIR/swictation_metrics.sock`)
 
@@ -260,7 +265,7 @@ The previous `Recognizer` implementation using sherpa-rs has been deprecated. Bo
 | Quantization | Linux: FP32 (GPU), INT8 (CPU)<br>macOS: FP16 (GPU), FP32 (CPU) | Linux: FP32 (GPU), INT8 (CPU)<br>macOS: FP16 (GPU), FP32 (CPU) |
 | Library | Direct ort 2.0.0-rc.10 | Direct ort 2.0.0-rc.10 |
 | Execution Provider | Linux: CUDA (NVIDIA)<br>macOS: CoreML (Apple Silicon) | Linux: CUDA (NVIDIA)<br>macOS: CoreML (Apple Silicon) |
-| WER | ~7-8% | 5.77% (best quality) |
+| WER (model card) | 1.93% LS test-clean / 6.34% Open-ASR avg | 1.39% LS test-clean / 7.02% Open-ASR avg |
 | Peak VRAM | ~800MB-1.2GB | ~3.5GB |
 | **Min VRAM Threshold** | **3500MB (3.5GB)** | **6000MB (6GB)** |
 | Headroom | Safe for 4GB GPUs | Safe for 8GB+ GPUs |
@@ -383,14 +388,14 @@ let stt = if config.stt_model_override != "auto" {
         info!("Detected GPU with {}MB VRAM", vram);
 
         if vram >= 4096 {
-            // High VRAM: Use 1.1B INT8 model for best quality (5.77% WER)
+            // High VRAM: Use 1.1B INT8 model (best close-mic quality: 1.39% WER LS test-clean)
             info!("✓ Sufficient VRAM for 1.1B INT8 model (requires ≥4GB)");
             let ort_recognizer = OrtRecognizer::new(&config.stt_1_1b_model_path, true)?;
             info!("✓ Parakeet-TDT-1.1B-INT8 loaded successfully (GPU)");
             SttEngine::Parakeet1_1B(ort_recognizer)
 
         } else if vram >= 1536 {
-            // Moderate VRAM: Use 0.6B GPU for good quality (7-8% WER)
+            // Moderate VRAM: Use 0.6B GPU (1.93% WER LS test-clean)
             info!("✓ Sufficient VRAM for 0.6B GPU model (requires ≥1.5GB)");
             let recognizer = Recognizer::new(&config.stt_0_6b_model_path, true)?;
             info!("✓ Parakeet-TDT-0.6B loaded successfully (GPU)");
@@ -428,17 +433,19 @@ if stt.vram_required_mb() > 0 {
 
 **Config File (config.toml):**
 ```toml
-# Location: ~/.config/swictation/config.toml
+# Location — Linux: ~/.config/swictation/config.toml
+#            macOS: ~/Library/Application Support/swictation/config.toml
 
 # STT model selection override
 # Options: "auto" (VRAM-based), "0.6b-cpu", "0.6b-gpu", "1.1b-gpu"
+# macOS additionally: "1.1b-coreml" (alias "coreml-native")
 stt_model_override = "auto"
 
-# Path to 0.6B model directory (sherpa-rs)
-stt_0_6b_model_path = "/opt/swictation/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-onnx"
+# Path to 0.6B model directory (ONNX Runtime)
+stt_0_6b_model_path = "~/.local/share/swictation/models/parakeet-tdt-0.6b-v3-onnx"
 
 # Path to 1.1B INT8 model directory (ONNX Runtime)
-stt_1_1b_model_path = "/opt/swictation/models/parakeet-tdt-1.1b-onnx"
+stt_1_1b_model_path = "~/.local/share/swictation/models/parakeet-tdt-1.1b-onnx"
 ```
 
 **CLI Flags (Testing):**
@@ -506,7 +513,7 @@ Troubleshooting:
 Error: Failed to load 0.6B GPU model despite 8192MB VRAM.
 
 Troubleshooting:
-  1. Verify model files: ls ~/.local/share/swictation/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-onnx
+  1. Verify model files: ls ~/.local/share/swictation/models/parakeet-tdt-0.6b-v3-onnx
   2. Check CUDA availability: nvidia-smi
   3. Verify GPU libraries downloaded: ls ~/.local/share/swictation/gpu-libs
   4. Check ONNX Runtime library: ls npm-package/lib/native/libonnxruntime.so
@@ -518,7 +525,7 @@ Troubleshooting:
 Error: Failed to load 0.6B CPU model.
 
 Troubleshooting:
-  1. Verify model files: ls ~/.local/share/swictation/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-onnx
+  1. Verify model files: ls ~/.local/share/swictation/models/parakeet-tdt-0.6b-v3-onnx
   2. Check available RAM (need ~1GB free)
   3. Ensure ONNX Runtime CPU EP is available
   4. Check library path: ls npm-package/lib/native/libonnxruntime.so
@@ -1234,9 +1241,9 @@ The injector calls `AXIsProcessTrustedWithOptions` on first use to verify Access
 | **Total** | **~960 MB RAM** | CPU-only mode |
 
 **Hardware Recommendations:**
-- **Best:** 8GB+ VRAM GPU (RTX 3060 12GB, RTX 4060, A4000+) → 1.1B model, 5.77% WER
-- **Good:** 4GB VRAM GPU (RTX A1000, GTX 1650, RX 5500 XT) → 0.6B GPU, 7-8% WER
-- **Works:** Any CPU (4+ cores recommended) → 0.6B CPU, 7-8% WER (slower but functional)
+- **Best:** 8GB+ VRAM GPU (RTX 3060 12GB, RTX 4060, A4000+) → 1.1B model, 1.39% WER LS test-clean
+- **Good:** 4GB VRAM GPU (RTX A1000, GTX 1650, RX 5500 XT) → 0.6B GPU, 1.93% WER LS test-clean
+- **Works:** Any CPU (4+ cores recommended) → 0.6B CPU, 1.93% WER LS test-clean (slower but functional)
 
 **Note:** 6GB minimum is conservative; real-world testing shows 1.1B works on some 6-8GB GPUs, but 8GB+ recommended for reliability.
 
@@ -1244,7 +1251,7 @@ The injector calls `AXIsProcessTrustedWithOptions` on first use to verify Access
 
 | Metric | Value | Notes |
 |--------|-------|-------|
-| WER (Word Error Rate) | 5.77-8% | Adaptive: 5.77% (1.1B GPU), 7-8% (0.6B) |
+| WER (Word Error Rate) | 1.39-1.93% LS test-clean | Model cards: 1.1B = 1.39% LS-clean / 7.02% Open-ASR avg; 0.6B-v3 = 1.93% LS-clean / 6.34% Open-ASR avg |
 | VAD Accuracy | 16% better | Silero v6 vs v5 on noise |
 | Character Support | ASCII only | Parakeet-TDT STT limitation |
 | Injection Success | 100% | X11/Wayland compositors |
@@ -1436,20 +1443,34 @@ An `audit.toml` file was added to manage advisories for transitive dependencies 
 
 **Service File:** `~/.config/systemd/user/swictation-daemon.service`
 
+Rendered from `npm-package/templates/swictation-daemon.service.template` by
+`npm-package/src/generate-service.js` — the single source of truth for this unit
+(ADR-034). The `__INSTALL_DIR__`, `__ORT_DYLIB_PATH__`, and `__LD_LIBRARY_PATH__`
+placeholders below are substituted at install time with the resolved platform-package
+and GPU-library paths.
+
 ```ini
 [Unit]
-Description=Swictation Voice Dictation Daemon
-After=pulseaudio.service
+Description=Swictation Voice-to-Text Daemon
+After=graphical-session.target
 Wants=swictation-ui.service
 
 [Service]
 Type=simple
-ExecStart=/opt/swictation/rust-crates/target/release/swictation-daemon
+ExecStart=__INSTALL_DIR__/swictation-daemon
 Restart=on-failure
 RestartSec=5
-Environment="LD_LIBRARY_PATH=%h/.cache/ort.pyke.io/dfbin/x86_64-unknown-linux-gnu/ED1716DE95974BF47AB0223CA33734A0B5A5D09A181225D0E8ED62D070AEA893/onnxruntime/lib"
-StandardOutput=journal
-StandardError=journal
+
+Environment="RUST_LOG=info"
+
+# ORT_DYLIB_PATH is critical: without it the model produces blank output
+Environment="ORT_DYLIB_PATH=__ORT_DYLIB_PATH__"
+
+# CUDA runtime + ONNX Runtime CUDA providers; omitting it costs ~14x on GPU
+Environment="LD_LIBRARY_PATH=__LD_LIBRARY_PATH__"
+Environment="CUDA_HOME=/usr/local/cuda"
+
+ImportEnvironment=PATH XDG_RUNTIME_DIR
 
 [Install]
 WantedBy=default.target
@@ -1472,7 +1493,7 @@ WantedBy=default.target
 | Latency | ~1s (VAD pause) | 100-150ms | 50-100ms | 500-1000ms |
 | VAD Streaming | ✅ Auto (0.8s) | ❌ Manual | ❌ Manual | Varies |
 | Privacy | ✅ Local | ✅ Local | ❌ Cloud | ❌ Cloud |
-| Accuracy (WER) | 5.77-8% (adaptive) | ~3% WER | ~2% WER | 3-8% WER |
+| Accuracy (WER) | 1.39-1.93% LibriSpeech test-clean (model card, adaptive) | ~3% WER | ~2% WER | 3-8% WER |
 | GPU Required | Optional (faster) | Optional | No | No |
 | VRAM Usage | 0.8-3.5GB | Varies | N/A | N/A |
 | Text Transform | 60+ rules (5μs) | Extensive | Extensive | Limited |
@@ -1495,7 +1516,15 @@ WantedBy=default.target
 
 ## 7. Tauri Desktop Application
 
-The Tauri-based desktop application (`tauri-ui/`) provides a native menu-bar tray icon and metrics window. It replaces the legacy Python/PySide6 tray on macOS and runs alongside it on Linux.
+The Tauri-based desktop application (`tauri-ui/`) provides a native menu-bar tray icon and metrics window. It is the tray on macOS and on Linux desktops with a conventional tray host (GNOME, KDE, X11).
+
+**Python/Qt fallback on wlroots.** On Sway, Hyprland, and River the Tauri tray does not
+render reliably, so postinstall installs `src/ui/swictation_tray.py` as the
+`swictation-ui.service` unit instead (`ExecStart=/usr/bin/python3 …`). That path needs
+`python3` and PySide6 6.8+ (`pip3 install -r requirements-qt-tray.txt`, or
+`python3-pyside6` from your distro). It is the only Python in the product: without it you
+lose the tray icon, and nothing else — the daemon, VAD, STT, transform, and injection are
+Rust and run unaffected.
 
 ### Tray Icon and Window Management
 

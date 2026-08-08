@@ -1,11 +1,12 @@
 # Swictation macOS Setup Guide
 
-This guide covers setting up Swictation on macOS with Apple Silicon (M1/M2/M3/M4).
+This guide covers setting up Swictation on macOS with Apple Silicon (M1 or later).
 
 ## Requirements
 
-- **macOS 13.0** (Ventura) or later
-- **Apple Silicon** (M1, M2, M3, M4 series)
+- **macOS 14.0** (Sonoma) or later — postinstall refuses older versions
+- **Apple Silicon** (M1 or later)
+- **16GB+ unified memory** — a hard requirement; postinstall aborts below it
 - **Node.js 18+** for installation
 
 > **Note**: Intel Macs are not supported. Swictation requires Apple's Neural Engine for efficient speech recognition.
@@ -20,7 +21,7 @@ The postinstall script will automatically:
 1. Download the macOS ARM64 daemon binary
 2. Download the ONNX Runtime library with CoreML support
 3. Download the Swictation UI application
-4. Download speech recognition models (~1.1GB)
+4. Download speech recognition models (~1.9GB: Silero VAD + CoreML 1.1B bundle)
 
 ## Required: Accessibility Permission
 
@@ -38,11 +39,12 @@ macOS requires explicit permission for applications to simulate keyboard input. 
 
 4. **Click the + button** to add an application
 
-5. **Navigate to the swictation-daemon binary**:
-   - If installed globally with npm: `~/.npm-global/lib/node_modules/swictation/bin/swictation-daemon-macos`
-   - Or check: `which swictation` to find the npm install location
+5. **Navigate to the swictation-daemon binary**, which lives in the platform
+   package, not the main package:
+   - Run `swictation --version` and read the "Location" line
+   - It is normally `<npm-prefix>/lib/node_modules/@agidreams/darwin-arm64/bin/swictation-daemon`
 
-6. **Enable the checkbox** for swictation-daemon-macos
+6. **Enable the checkbox** for swictation-daemon
 
 ### Verifying Permission
 
@@ -85,18 +87,20 @@ launchctl list | grep swictation
 
 ### Using the UI Tray App
 
-After installation, the Swictation UI app is available at:
-- `~/Applications/Swictation.app`
+The tray UI runs as its own LaunchAgent, installed alongside the daemon:
 
-You can add this to your Login Items for auto-start:
-1. Open System Settings → General → Login Items
-2. Click + and add Swictation.app
+```bash
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.swictation.ui.plist
+launchctl start com.swictation.ui
+```
+
+`swictation start --ui` starts the daemon and the tray together.
 
 ## Hotkey Configuration
 
 The default hotkey is **Ctrl+Shift+D** to toggle dictation.
 
-To customize, edit `~/.config/swictation/config.toml`:
+To customize, edit `~/Library/Application Support/swictation/config.toml`:
 
 ```toml
 [hotkeys]
@@ -124,19 +128,20 @@ You can verify GPU usage in Activity Monitor under "GPU History".
 
 ### Daemon Not Starting
 
-1. Check ONNX Runtime library exists:
+1. Check the ONNX Runtime library exists in the platform package
+   (`swictation --version` prints the location):
    ```bash
-   ls -la ~/.local/share/swictation/native/libonnxruntime.dylib
+   ls -la <platform package dir>/lib/libonnxruntime.dylib
    ```
 
 2. Verify models are downloaded:
    ```bash
-   ls -la ~/.local/share/swictation/models/
+   ls -la ~/Library/Application\ Support/swictation/models/
    ```
 
-3. Check for library issues:
+3. Check the launcher's own trace of what it resolved:
    ```bash
-   ORT_DYLIB_PATH=~/.local/share/swictation/native/libonnxruntime.dylib swictation-daemon-macos
+   tail -n 20 ~/Library/Logs/swictation/launcher.log
    ```
 
 ### Hotkey Not Working
@@ -163,12 +168,13 @@ launchctl unload ~/Library/LaunchAgents/com.swictation.daemon.plist
 # Remove npm package
 npm uninstall -g swictation
 
-# Remove data files (optional)
-rm -rf ~/.local/share/swictation
-rm -rf ~/.config/swictation
-rm ~/Library/LaunchAgents/com.swictation.daemon.plist
-rm ~/Library/Logs/swictation
-rm -rf ~/Applications/Swictation.app
+# Remove data files, config, and models (optional)
+# On macOS config and data share one directory.
+rm -rf ~/Library/Application\ Support/swictation
+rm -rf ~/Library/Logs/swictation
+rm -rf ~/Library/Caches/swictation
+rm -f ~/Library/LaunchAgents/com.swictation.daemon.plist
+rm -f ~/Library/LaunchAgents/com.swictation.ui.plist
 ```
 
 ## Support
