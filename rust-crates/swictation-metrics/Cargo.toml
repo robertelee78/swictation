@@ -10,6 +10,9 @@ crate-type = ["cdylib", "rlib"]  # cdylib for WASM, rlib for native
 # Database
 rusqlite = { version = "0.32", features = ["bundled"] }
 
+# Poison-free synchronization for collector state (ADR-035)
+parking_lot = "0.12"
+
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }

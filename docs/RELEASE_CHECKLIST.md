@@ -13,10 +13,12 @@ This checklist ensures that both Linux and macOS platforms are properly supporte
   - `cp rust-crates/target/x86_64-unknown-linux-gnu/release/swictation-daemon npm-package/lib/native/swictation-daemon.bin`
 
 ### macOS (aarch64-apple-darwin)
-- [ ] Build Rust binaries: `npm run build:macos` or `./npm-package/scripts/build-macos-release.sh`
-- [ ] Verify binary: `file npm-package/bin/swictation-daemon-macos`
-- [ ] Test binary runs: `./npm-package/bin/swictation-daemon-macos --help`
-- [ ] Verify CoreML support: `otool -L npm-package/bin/swictation-daemon-macos | grep onnxruntime`
+Built by CI: `.github/workflows/build-macos.yml` (invoked from release.yml) compiles the
+daemon and places it at `npm-package/packages/darwin-arm64/bin/swictation-daemon`.
+- [ ] CI build-macos workflow green for the release tag
+- [ ] Verify binary artifact: `file npm-package/packages/darwin-arm64/bin/swictation-daemon`
+- [ ] Test binary runs: `./npm-package/packages/darwin-arm64/bin/swictation-daemon --help`
+- [ ] Verify CoreML support: `otool -L npm-package/packages/darwin-arm64/bin/swictation-daemon | grep onnxruntime`
 
 ## ONNX Runtime Libraries
 

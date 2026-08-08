@@ -2,7 +2,8 @@
 
 use anyhow::{Context, Result};
 use chrono::Utc;
-use std::sync::{Arc, Mutex};
+use parking_lot::Mutex;
+use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
@@ -439,7 +440,7 @@ impl Pipeline {
 
         // Set up audio callback to push chunks via channel
         {
-            let mut audio = self.audio.lock().unwrap();
+            let mut audio = self.audio.lock();
             let audio_tx_clone = audio_tx.clone();
 
             audio.set_chunk_callback(move |chunk| {
@@ -530,13 +531,7 @@ impl Pipeline {
 
                     // Process through VAD (scoped to ensure lock is dropped before any async ops)
                     let vad_result = {
-                        let mut vad_lock = match vad.lock() {
-                            Ok(v) => v,
-                            Err(e) => {
-                                eprintln!("VAD lock error: {}", e);
-                                continue;
-                            }
-                        };
+                        let mut vad_lock = vad.lock();
                         vad_lock.process_audio(&vad_chunk)
                     }; // vad_lock automatically dropped here
 
@@ -585,13 +580,7 @@ impl Pipeline {
             // once, so the final ~0.8s of dictation is transcribed instead of
             // discarded, and duplicate injection is structurally impossible
             // (ADR-035; replaces the flush-discard workaround).
-            let flushed = match vad.lock() {
-                Ok(mut vad_lock) => vad_lock.flush(),
-                Err(e) => {
-                    eprintln!("VAD lock error during flush: {}", e);
-                    None
-                }
-            };
+            let flushed = vad.lock().flush();
             if let Some(VadResult::Speech {
                 samples: speech_samples,
                 ..
@@ -616,13 +605,7 @@ impl Pipeline {
                 // Process through STT (scoped to ensure lock is dropped before any async ops)
                 let stt_start = Instant::now();
                 let (text, stt_latency, is_0_6b) = {
-                    let mut stt_lock = match stt.lock() {
-                        Ok(s) => s,
-                        Err(e) => {
-                            eprintln!("STT lock error: {}", e);
-                            continue;
-                        }
-                    };
+                    let mut stt_lock = stt.lock();
 
                     // Use STT engine (OrtRecognizer)
                     let result = stt_lock.recognize(&speech_samples).unwrap_or_else(|e| {
@@ -695,7 +678,7 @@ impl Pipeline {
                     let char_count = capitalized.len() as i32;
 
                     // Get current session ID (scoped to ensure lock is dropped)
-                    let current_session_id = { *session_id.lock().unwrap() };
+                    let current_session_id = { *session_id.lock() };
 
                     if let Some(sid) = current_session_id {
                         let duration_s = (speech_samples.len() as f64) / 16000.0; // samples / sample_rate
@@ -722,14 +705,13 @@ impl Pipeline {
 
                         // Add segment to metrics (scoped to ensure lock is dropped)
                         {
-                            if let Err(e) = metrics.lock().unwrap().add_segment(segment) {
+                            if let Err(e) = metrics.lock().add_segment(segment) {
                                 eprintln!("Failed to add segment metrics: {}", e);
                             }
                         }
 
                         // Broadcast transcription to UI clients (scoped to ensure lock is dropped)
-                        let broadcaster_clone =
-                            { broadcaster.lock().unwrap().as_ref().map(|b| b.clone()) };
+                        let broadcaster_clone = { broadcaster.lock().as_ref().map(|b| b.clone()) };
 
                         if let Some(broadcaster_ref) = broadcaster_clone {
                             let wpm = (word_count as f64 / (duration_s / 60.0)).min(300.0); // Cap at 300 WPM
@@ -786,7 +768,7 @@ impl Pipeline {
         self.is_recording = false;
 
         // 1. Stop audio capture (cpal stream stops invoking the callback).
-        if let Err(e) = self.audio.lock().unwrap().stop() {
+        if let Err(e) = self.audio.lock().stop() {
             warn!("Audio stop error (continuing): {}", e);
         }
 
@@ -795,7 +777,7 @@ impl Pipeline {
         //    drains whatever was queued, flushes the detector, forwards any
         //    tail speech through the same channel, and exits — nothing is
         //    discarded and nothing is transcribed twice.
-        self.audio.lock().unwrap().set_chunk_callback(|_| {});
+        self.audio.lock().set_chunk_callback(|_| {});
 
         info!("Recording stopped; session tasks detached for drain");
         Ok(DrainHandles {
@@ -840,17 +822,17 @@ impl Pipeline {
 
     /// Set the current session ID
     pub fn set_session_id(&self, session_id: i64) {
-        *self.session_id.lock().unwrap() = Some(session_id);
+        *self.session_id.lock() = Some(session_id);
     }
 
     /// Clear the session ID
     pub fn clear_session_id(&self) {
-        *self.session_id.lock().unwrap() = None;
+        *self.session_id.lock() = None;
     }
 
     /// Set the broadcaster for real-time updates
     pub fn set_broadcaster(&self, broadcaster: Arc<MetricsBroadcaster>) {
-        *self.broadcaster.lock().unwrap() = Some(broadcaster);
+        *self.broadcaster.lock() = Some(broadcaster);
     }
 }
 

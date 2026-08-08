@@ -27,6 +27,9 @@ midstreamer-text-transform = { path = "../../external/midstream/crates/text-tran
 # Async runtime
 tokio = { version = "1.0", features = ["full"] }
 
+# Poison-free synchronization for shared pipeline state (ADR-035)
+parking_lot = "0.12"
+
 # Time and dates
 chrono = "0.4"
 

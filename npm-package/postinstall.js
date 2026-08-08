@@ -1115,7 +1115,7 @@ async function downloadGPULibraries() {
 async function downloadONNXRuntimeCoreML() {
   log('cyan', '\n📦 Setting up ONNX Runtime CoreML library for macOS...');
 
-  // Version info - must match build-macos-release.sh expectations
+  // Version info - must match the CI build workflow (.github/workflows/build-macos.yml)
   // NOTE: Using 1.22.0 due to ORT 1.23.x regression with external data + CoreML
   // See: https://github.com/microsoft/onnxruntime/issues/26261
   // TODO: Upgrade to 1.23.x+ when fix (PR #26263) is released

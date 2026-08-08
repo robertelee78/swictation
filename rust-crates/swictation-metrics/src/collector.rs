@@ -4,7 +4,8 @@
 
 use anyhow::Result;
 use chrono::Utc;
-use std::sync::{Arc, Mutex};
+use parking_lot::Mutex;
+use std::sync::Arc;
 use std::time::Instant;
 use sysinfo::{Pid, System};
 use tracing::info;
@@ -76,7 +77,7 @@ impl MetricsCollector {
         match MemoryMonitor::new() {
             Ok(monitor) => {
                 info!("GPU monitoring enabled: {}", monitor.gpu_device_name());
-                *self.memory_monitor.lock().unwrap() = Some(monitor);
+                *self.memory_monitor.lock() = Some(monitor);
             }
             Err(e) => {
                 info!("GPU monitoring unavailable: {}", e);
@@ -98,14 +99,14 @@ impl MetricsCollector {
         session.session_id = Some(session_id);
 
         // Update state
-        *self.current_session.lock().unwrap() = Some(session);
-        self.session_segments.lock().unwrap().clear();
-        *self.session_start_time.lock().unwrap() = Some(Instant::now());
-        *self.active_time_accumulator.lock().unwrap() = 0.0;
+        *self.current_session.lock() = Some(session);
+        self.session_segments.lock().clear();
+        *self.session_start_time.lock() = Some(Instant::now());
+        *self.active_time_accumulator.lock() = 0.0;
 
         // Update realtime metrics
         {
-            let mut realtime = self.realtime.lock().unwrap();
+            let mut realtime = self.realtime.lock();
             realtime.current_session_id = Some(session_id);
             realtime.segments_this_session = 0;
             realtime.words_this_session = 0;
@@ -120,7 +121,7 @@ impl MetricsCollector {
     /// End current session and finalize metrics
     pub fn end_session(&self) -> Result<SessionMetrics> {
         let session_id = {
-            let current = self.current_session.lock().unwrap();
+            let current = self.current_session.lock();
             current
                 .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("No active session to end"))?
@@ -133,15 +134,14 @@ impl MetricsCollector {
         let total_duration = self
             .session_start_time
             .lock()
-            .unwrap()
             .map(|start| start.elapsed().as_secs_f64())
             .unwrap_or(0.0);
 
-        let active_time = *self.active_time_accumulator.lock().unwrap();
+        let active_time = *self.active_time_accumulator.lock();
         let pause_time = total_duration - active_time;
 
         // Calculate aggregate metrics from segments
-        let segments = self.session_segments.lock().unwrap();
+        let segments = self.session_segments.lock();
         let (avg_latency, median_latency, p95_latency, avg_words, avg_duration) =
             if !segments.is_empty() {
                 let mut latencies: Vec<f64> = segments.iter().map(|s| s.total_latency_ms).collect();
@@ -165,7 +165,7 @@ impl MetricsCollector {
 
         // Update session metrics
         let mut session = {
-            let mut current = self.current_session.lock().unwrap();
+            let mut current = self.current_session.lock();
             current.take().unwrap()
         };
 
@@ -199,7 +199,7 @@ impl MetricsCollector {
     /// Record a segment
     pub fn add_segment(&self, segment: SegmentMetrics) -> Result<()> {
         let session_id = {
-            let current = self.current_session.lock().unwrap();
+            let current = self.current_session.lock();
             current
                 .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("No active session"))?
@@ -217,7 +217,7 @@ impl MetricsCollector {
 
         // Update session aggregates
         {
-            let mut current = self.current_session.lock().unwrap();
+            let mut current = self.current_session.lock();
             if let Some(ref mut session) = *current {
                 session.words_dictated += seg.words;
                 session.characters_typed += seg.characters;
@@ -228,14 +228,14 @@ impl MetricsCollector {
         }
 
         // Add to segment list
-        self.session_segments.lock().unwrap().push(seg.clone());
+        self.session_segments.lock().push(seg.clone());
 
         // Update active time accumulator
-        *self.active_time_accumulator.lock().unwrap() += seg.duration_s;
+        *self.active_time_accumulator.lock() += seg.duration_s;
 
         // Update realtime metrics
         {
-            let mut realtime = self.realtime.lock().unwrap();
+            let mut realtime = self.realtime.lock();
             realtime.segments_this_session += 1;
             realtime.words_this_session += seg.words;
             realtime.last_segment_words = seg.words;
@@ -244,7 +244,7 @@ impl MetricsCollector {
             realtime.last_transcription = seg.text.clone();
 
             // Calculate session WPM
-            let active_time = *self.active_time_accumulator.lock().unwrap();
+            let active_time = *self.active_time_accumulator.lock();
             if active_time > 0.0 {
                 realtime.wpm_this_session =
                     (realtime.words_this_session as f64 / active_time) * 60.0;
@@ -261,7 +261,7 @@ impl MetricsCollector {
 
     /// Update GPU memory metrics
     pub fn update_gpu_memory(&self, current_mb: f64, total_mb: f64) {
-        let mut realtime = self.realtime.lock().unwrap();
+        let mut realtime = self.realtime.lock();
         realtime.gpu_memory_current_mb = current_mb;
         realtime.gpu_memory_total_mb = total_mb;
         realtime.gpu_memory_percent = if total_mb > 0.0 {
@@ -271,7 +271,7 @@ impl MetricsCollector {
         };
 
         // Track peak in session
-        if let Some(ref mut session) = *self.current_session.lock().unwrap() {
+        if let Some(ref mut session) = *self.current_session.lock() {
             session.gpu_memory_peak_mb = session.gpu_memory_peak_mb.max(current_mb);
         }
 
@@ -287,36 +287,36 @@ impl MetricsCollector {
 
     /// Update CPU usage
     pub fn update_cpu_usage(&self, cpu_percent: f64) {
-        let mut realtime = self.realtime.lock().unwrap();
+        let mut realtime = self.realtime.lock();
         realtime.cpu_percent_current = cpu_percent;
 
         // Track peak in session
-        if let Some(ref mut session) = *self.current_session.lock().unwrap() {
+        if let Some(ref mut session) = *self.current_session.lock() {
             session.cpu_usage_peak_percent = session.cpu_usage_peak_percent.max(cpu_percent);
         }
     }
 
     /// Update recording duration based on VAD segment accumulation
     pub fn update_recording_duration(&self) {
-        let mut realtime = self.realtime.lock().unwrap();
-        realtime.recording_duration_s = *self.active_time_accumulator.lock().unwrap();
+        let mut realtime = self.realtime.lock();
+        realtime.recording_duration_s = *self.active_time_accumulator.lock();
     }
 
     /// Get current realtime metrics (clone)
     pub fn get_realtime_metrics(&self) -> RealtimeMetrics {
-        self.realtime.lock().unwrap().clone()
+        self.realtime.lock().clone()
     }
 
     /// Check if session is active
     pub fn has_active_session(&self) -> bool {
-        self.current_session.lock().unwrap().is_some()
+        self.current_session.lock().is_some()
     }
 
     /// Update system metrics (CPU, memory, GPU)
     /// Should be called periodically (e.g., every 1 second)
     pub fn update_system_metrics(&self) {
         // Refresh system info
-        let mut system = self.system.lock().unwrap();
+        let mut system = self.system.lock();
         system.refresh_cpu_all();
         system.refresh_memory();
         system.refresh_processes(sysinfo::ProcessesToUpdate::All, false);
@@ -335,7 +335,7 @@ impl MetricsCollector {
         self.update_cpu_usage(cpu_percent as f64);
 
         // Update GPU metrics if available
-        if let Some(ref mut monitor) = *self.memory_monitor.lock().unwrap() {
+        if let Some(ref mut monitor) = *self.memory_monitor.lock() {
             let stats = monitor.get_stats();
 
             // Update GPU memory if VRAM stats are available
@@ -345,7 +345,7 @@ impl MetricsCollector {
         }
 
         // Update session means if active
-        if let Some(ref mut session) = *self.current_session.lock().unwrap() {
+        if let Some(ref mut session) = *self.current_session.lock() {
             // Update CPU mean using incremental average formula
             // new_mean = old_mean + (new_value - old_mean) / sample_count
             let sample_count = session.total_samples.saturating_add(1) as f64;

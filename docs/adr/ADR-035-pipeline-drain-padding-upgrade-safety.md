@@ -68,10 +68,22 @@
    - When the STT task dies mid-session, the VAD task now sends an error through the
      transcription channel — previously recording, hotkeys, and metrics kept "working"
      while transcription was silently dead until restart.
-   - **Deferred (deliberate):** the parking_lot/poison-free mutex sweep (~40 sites in
-     pipeline.rs, main.rs, metrics collector). The known panic sites that triggered
-     poisoning are eliminated above; the sweep is mechanical but wide and lands in the
-     next batch, not as a rushed tail to this one.
+   - **Deferred (deliberate) — resolved 2026-08-08:** the parking_lot/poison-free mutex
+     sweep (~40 sites in pipeline.rs, main.rs, metrics collector). The known panic sites
+     that triggered poisoning were eliminated above; the sweep was mechanical but wide,
+     so it landed as its own change rather than a rushed tail to this one.
+     **Swept:** 46 lock sites — `pipeline.rs` (12: audio/vad/stt/metrics/session_id/
+     broadcaster), `main.rs` (6: the metrics lock in toggle/updater, plus the
+     `last_toggle` debounce mutex), `metrics/collector.rs` (28). `std::sync::Mutex` →
+     `parking_lot::Mutex` in those three files only; `.lock()` returns the guard
+     directly, so the `.unwrap()`s are gone and the VAD/STT `match`-on-lock-result arms
+     (which `continue`d past a poisoned lock) collapse to direct locking — the failure
+     mode they handled no longer exists. **Not touched:** every `tokio::sync` lock, and
+     every lock ORDERING (the deadlock-history comments are preserved verbatim) — this
+     was poison-elimination only. `database.rs`'s `Arc<Mutex<Connection>>` is still std
+     (outside the scope this note named). Proof: `cargo test --workspace` green (142
+     passed, 0 failed), `cargo clippy -p swictation-daemon -p swictation-metrics
+     --all-targets` 0 errors and no new warnings, `cargo fmt --check` clean.
 
 5. **Postinstall hybrid migration — spike verdict accepted, PRD constraint superseded.**
    The spike reconstructed the fence: the all-in-one rule at

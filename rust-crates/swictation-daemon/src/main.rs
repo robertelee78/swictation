@@ -160,7 +160,7 @@ impl Daemon {
                 let sid = {
                     let pipeline = self.pipeline.read().await;
                     let metrics = pipeline.get_metrics();
-                    let sid = metrics.lock().unwrap().start_session()?;
+                    let sid = metrics.lock().start_session()?;
                     sid
                 };
 
@@ -221,7 +221,7 @@ impl Daemon {
                     *state = DaemonState::Idle;
 
                     let metrics = pipeline.get_metrics();
-                    let session_metrics = metrics.lock().unwrap().end_session()?;
+                    let session_metrics = metrics.lock().end_session()?;
                     let sid = *session_id;
                     *session_id = None;
 
@@ -667,7 +667,7 @@ async fn daemon_main(
 
                 // NOW safe to acquire metrics lock (no other locks held)
                 let realtime = {
-                    let metrics_guard = metrics.lock().unwrap();
+                    let metrics_guard = metrics.lock();
                     metrics_guard.update_system_metrics();
                     metrics_guard.update_recording_duration();
                     let mut realtime = metrics_guard.get_realtime_metrics();
@@ -823,7 +823,7 @@ async fn daemon_main(
     // toggle() undoes the first toggle (e.g., stop immediately followed by start).
     const TOGGLE_DEBOUNCE_MS: u64 = 500;
     let last_toggle =
-        std::sync::Mutex::new(std::time::Instant::now() - std::time::Duration::from_secs(10)); // allow first toggle immediately
+        parking_lot::Mutex::new(std::time::Instant::now() - std::time::Duration::from_secs(10)); // allow first toggle immediately
 
     // Main event loop
     loop {
@@ -842,7 +842,7 @@ async fn daemon_main(
                         // Debounce: reject if too soon after last toggle.
                         // This prevents the "double-tap race" where a second keypress
                         // during a slow toggle() undoes the first (stop->start).
-                        let elapsed = last_toggle.lock().unwrap().elapsed();
+                        let elapsed = last_toggle.lock().elapsed();
                         if elapsed < std::time::Duration::from_millis(TOGGLE_DEBOUNCE_MS) {
                             info!("Toggle debounced ({}ms since last)", elapsed.as_millis());
                             // Drain any additional queued toggle events
@@ -854,7 +854,7 @@ async fn daemon_main(
                             }
                             continue;
                         }
-                        *last_toggle.lock().unwrap() = std::time::Instant::now();
+                        *last_toggle.lock() = std::time::Instant::now();
 
                         // Execute toggle (serialized via toggle_lock inside Daemon)
                         if let Err(e) = daemon_clone.toggle().await {
@@ -863,7 +863,7 @@ async fn daemon_main(
 
                         // After toggle completes, update debounce timestamp and
                         // drain any events that queued during the slow toggle
-                        *last_toggle.lock().unwrap() = std::time::Instant::now();
+                        *last_toggle.lock() = std::time::Instant::now();
                         if let Some(ref mut manager) = hotkey_manager {
                             let drained = manager.try_drain();
                             if drained > 0 {
