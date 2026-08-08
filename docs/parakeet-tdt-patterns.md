@@ -400,7 +400,7 @@ This was removed in v0.6.0 when sherpa-rs was fully replaced with OrtRecognizer.
 ### Test Audio Files
 - `/opt/swictation/examples/en-short.mp3` - Basic test phrases
 - `/opt/swictation/examples/en-long.mp3` - Longer technical content
-- `/opt/swictation/scripts/test_transcription.sh` - Automated test harness
+- `/opt/swictation/scripts/archive/test_transcription.sh` - Automated test harness
 
 ### Validation
 ✅ VAD working (threshold 0.25, 0.8s silence)
@@ -501,7 +501,7 @@ Needed: State machine in transformation layer
 - **Daemon config:** `/opt/swictation/rust-crates/swictation-daemon/src/config.rs`
 - **VAD settings:** `threshold=0.25, min_silence=0.8s`
 - **Model:** Parakeet-TDT-1.1B via ONNX Runtime
-- **Test script:** `/opt/swictation/scripts/test_transcription.sh`
+- **Test script:** `/opt/swictation/scripts/archive/test_transcription.sh`
 - **Production logs:** `journalctl --user -u swictation-daemon`
 
 ---

@@ -1601,7 +1601,7 @@ tauri-ui/
 **Key Files:**
 - `tauri-ui/src-tauri/src/main.rs` — Tray icon setup, icon rendering, polling task, menu events
 - `tauri-ui/src-tauri/src/socket/daemon_ipc.rs` — IPC socket client for daemon commands
-- `src/ui/swictation_tray.py` — Python tray app (Linux only, legacy)
+- `npm-package/src/ui/swictation_tray.py` — Python tray app (Linux only, legacy)
 - `rust-crates/swictation-daemon/src/ipc.rs` — Daemon IPC server
 
 ---

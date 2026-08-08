@@ -17,12 +17,11 @@ Built with **Tauri** (Rust) + **React** (TypeScript) for maximum performance and
 
 ## Screenshots
 
-*(TODO: Add screenshots once UI is implemented)*
 
 ## Architecture
 
 - **Frontend**: React 18 + TypeScript + Vite
-- **Backend**: Rust + Tauri 1.5
+- **Backend**: Rust + Tauri 2
 - **Database**: SQLite (read-only access to daemon DB)
 - **Real-time**: Unix socket connection to daemon
 - **Charts**: Recharts for data visualization
@@ -56,7 +55,7 @@ For detailed architecture documentation, see:
 
 ```bash
 # Clone repository
-git clone https://github.com/ruvnet/swictation.git
+git clone https://github.com/robertelee78/swictation.git
 cd swictation/tauri-ui
 
 # Install dependencies
@@ -77,7 +76,7 @@ sudo rpm -i src-tauri/target/release/bundle/rpm/swictation-ui_*.rpm
 
 ```bash
 # Download and install
-curl -LO https://github.com/ruvnet/swictation/releases/latest/download/swictation-ui.AppImage
+curl -LO https://github.com/robertelee78/swictation/releases/latest/download/swictation-ui.AppImage
 chmod +x swictation-ui.AppImage
 ./swictation-ui.AppImage
 ```
@@ -299,7 +298,7 @@ Contributions are welcome! Please see [CONTRIBUTING.md](../CONTRIBUTING.md) for 
 - [ ] AI-powered insights
 - [ ] Full-text search with FTS5
 
-See [GitHub Issues](https://github.com/ruvnet/swictation/issues) for detailed roadmap.
+See [GitHub Issues](https://github.com/robertelee78/swictation/issues) for detailed roadmap.
 
 ## Performance
 
@@ -330,7 +329,7 @@ Benchmarks on Ubuntu 22.04, Intel i5-1135G7:
 
 ### Vulnerability Reporting
 
-Please report security issues to: security@ruvnet.io
+Please report security issues to: robert@agidreams.us
 
 Do not open public GitHub issues for security vulnerabilities.
 
@@ -347,17 +346,17 @@ This project is part of the Swictation project and is licensed under the MIT Lic
 
 ## Links
 
-- **Main Project**: [Swictation](https://github.com/ruvnet/swictation)
+- **Main Project**: [Swictation](https://github.com/robertelee78/swictation)
 - **Documentation**: [docs/](docs/)
-- **Issues**: [GitHub Issues](https://github.com/ruvnet/swictation/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/ruvnet/swictation/discussions)
+- **Issues**: [GitHub Issues](https://github.com/robertelee78/swictation/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/robertelee78/swictation/discussions)
 
 ## Support
 
 - 📖 **Documentation**: See [docs/](docs/) directory
-- 💬 **Discussions**: [GitHub Discussions](https://github.com/ruvnet/swictation/discussions)
-- 🐛 **Bug Reports**: [GitHub Issues](https://github.com/ruvnet/swictation/issues)
-- 💡 **Feature Requests**: [GitHub Issues](https://github.com/ruvnet/swictation/issues)
+- 💬 **Discussions**: [GitHub Discussions](https://github.com/robertelee78/swictation/discussions)
+- 🐛 **Bug Reports**: [GitHub Issues](https://github.com/robertelee78/swictation/issues)
+- 💡 **Feature Requests**: [GitHub Issues](https://github.com/robertelee78/swictation/issues)
 
 ---
 

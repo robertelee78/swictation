@@ -134,7 +134,7 @@ All colors use CSS custom properties defined in `src/index.css`:
 
 ## UI Layout Reference
 
-The UI mirrors the QML implementation in `/opt/swictation/src/ui/MetricsUI.qml`:
+The UI supersedes the retired QML implementation (removed 2026-08; see git history for `src/ui/MetricsUI.qml`):
 
 ### Live Session Tab
 - State indicator (Idle/Recording/Processing)
