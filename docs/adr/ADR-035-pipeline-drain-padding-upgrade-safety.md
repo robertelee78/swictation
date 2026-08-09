@@ -373,6 +373,132 @@ exports its pure helpers and guards the auto-run with `require.main === module`;
 returns in ~5 ms without installing, running it still prints the install
 banner).
 
+## IPC-availability round (daemon audit) — resolved 2026-08-08
+
+Two findings against `swictation-daemon/src/ipc.rs`. Both stem from the same
+place: connections are served **inline** inside `main()`'s `tokio::select!`,
+deliberately, because `Daemon` is `!Send` (cpal raw pointers) and cannot be
+moved into a spawned task.
+
+- **A silent peer froze the whole daemon.** `handle_connection` did one
+  unbounded `stream.read().await`. Because that await happens inside the select
+  arm, `nc -U ~/.../swictation.sock` — connect, send nothing, hold — stopped the
+  hotkey handler, the accept loop and the Ctrl-C arm for as long as the peer
+  kept the socket open. Any local user could freeze dictation with one command
+  and no privilege. The per-connection work is now wrapped in a
+  `tokio::time::timeout(CONNECTION_TIMEOUT)` (2 s); on expiry the future is
+  dropped, which closes the stream so the peer sees EOF rather than a
+  connection nobody is reading. That bounds the worst-case stall at 2 s instead
+  of unbounded. **The `!Send` inline architecture is deliberately left alone** —
+  serving connections off the select loop needs `Daemon` split into a `Send`
+  control surface and a `!Send` audio half, which is a larger change than this
+  availability fix warrants. The timeout is the whole fix; the restructure
+  stays future work.
+- **`quit` bypassed teardown.** `CommandType::Quit` called
+  `std::process::exit(0)` inside the handler, so the broadcaster was never
+  stopped, the metrics socket was never released, and the caller got EOF
+  instead of an acknowledgement. `Daemon` now carries a `tokio::sync::Notify`
+  raised by `request_shutdown()`, and the main loop selects on it beside
+  `ctrl_c()` — so quit runs the identical teardown path Ctrl-C already did. The
+  signal is raised *after* the response write is queued, so the caller gets its
+  `{"status":"success"}` before the socket goes away. This was a one-arm
+  addition to the select, not a restructure. No IPC client sends `quit` today
+  (repo-wide sweep), so the new response is purely additive.
+
+The 1 KiB read cap and the 0-byte (`n == 0`) early return were already correct;
+the cap is now named `MAX_COMMAND_BYTES` and covered by a test rather than
+being an unexplained buffer size.
+
+Proof: 6 new tests in `ipc.rs`, driving a real `UnixListener` over a temp socket
+path. To reach them without building an audio pipeline, the daemon operations
+IPC needs are behind a small `IpcTarget` trait (`toggle`/`status`/
+`request_shutdown`); `Daemon` is the only production impl and `handle_connection`
+is generic over it, so the code under test is the shipped path. The freeze test
+mirrors `main()`'s inline loop — one silent peer plus one well-formed `status`
+— and asserts the second command is answered, which is the regression that
+matters. Both fences were mutation-checked: before the timeout existed the
+silent-peer test hung until the 60 s harness cap (that is the bug, reproduced);
+removing `request_shutdown()` fails the quit test on its assertion. Tests use a
+150 ms limit via a private `handle_connection_within` so the suite stays fast;
+production keeps 2 s. `cargo test -p swictation-daemon --all-targets` green (89
+passed, 0 failed), `cargo clippy -p swictation-daemon --all-targets` 0 errors
+with no warnings in the touched files, `cargo fmt --check` clean.
+
+Verification caveat: the tests exercise `handle_connection` against a `Send`
+test target, so they prove the timeout and the quit routing but not that the
+real `!Send` `Daemon` still composes in the select — that is covered only by
+compilation. The 2 s constant itself is not asserted by a test.
+
+### Amendment — 2026-08-08: timeout scope, quit ordering, macOS exit
+
+A review of the round above found four defects *in the fix itself*. All four are
+resolved in the same uncommitted change; where this amendment disagrees with the
+note above, this supersedes it.
+
+- **The 2 s timeout wrapped the whole command, not just the read** (HIGH).
+  Wrapping all of `serve()` meant a legitimate stop-drain longer than 2 s was
+  cancelled mid-`toggle()`. The caller got no response — and because
+  `Daemon::toggle` lowered its `toggling` `AtomicBool` with a store *after* the
+  await, cancellation skipped that store and left the flag raised, so every
+  later toggle answered "Toggle already in progress" until the daemon was
+  restarted. One dropped future disabled dictation permanently. Two independent
+  fixes: the timeout now covers the socket **read** only (`CONNECTION_TIMEOUT`
+  renamed `READ_TIMEOUT`), with command execution and the response write
+  untimed — bounding the read is what closes the silent-peer hole, and the work
+  after it is the daemon's own rather than attacker-controlled; and the flag is
+  now lowered by an RAII guard (`ToggleInProgress`) on `Drop`, so no future
+  cancellation can wedge it. The guard is declared after the lock guard, so it
+  drops first and the flag is down before the lock admits the next toggle.
+- **`quit` could be acknowledged with truncated JSON** (MEDIUM). The response
+  write was spawned and `request_shutdown()` signalled immediately after, so
+  runtime teardown could abort the write in flight. Quit now awaits its
+  write+flush *before* signalling. That await is bounded by the same read limit,
+  because it is the one await after the read that a peer has any influence over
+  and shutdown must not hinge on it. Other commands keep the spawned write.
+- **`quit` left the process alive on macOS** (HIGH). Routing quit through
+  `daemon_main`'s teardown fixed the cleanup but not the exit: on macOS
+  `daemon_main` runs on a background thread while the main thread blocks in
+  `RunApplicationEventLoop()`, which returning from `daemon_main` does not end.
+  `quit` tore the broadcaster down and then sat there. The shutdown path now
+  ends in `std::process::exit(0)` — *after* the teardown, so it restores the old
+  exit's effect without restoring the cleanup it skipped. Checked that the
+  skipped destructors cost nothing: `MetricsBroadcaster::stop()` already removes
+  the metrics socket and aborts the accept task, making its `Drop` a redundant
+  backstop, and `HotkeyManager`'s unregistration is reclaimed by the OS at
+  process death.
+- **The select could service a queued event after quit** (MEDIUM).
+  `tokio::select!` picks among ready arms at random, so a hotkey press or IPC
+  connection that arrived alongside quit's notification could be handled after
+  the daemon had been told to stop. The loop is now `biased;` with the shutdown
+  and `ctrl_c` arms written first, so shutdown is polled before either and wins
+  deterministically.
+
+Proof: 3 new fences, written RED-first and each observed failing before its fix.
+In `ipc.rs`, `a_command_slower_than_the_timeout_still_completes` drives a target
+whose first toggle takes 3 s through the *production* `handle_connection` (2 s
+limit) and asserts both the response and a working second toggle; it failed with
+an empty response beforehand. `quit_is_acknowledged_before_shutdown_is_signalled`
+hands the target the caller's socket end, non-blocking, and has
+`request_shutdown()` record what the caller actually held at that instant — on
+the single-threaded test runtime the spawned write provably had not run yet, so
+it failed on `""`. In `main.rs`,
+`a_cancelled_toggle_leaves_the_next_one_workable` cancels a toggle mid-await and
+asserts the next one still runs; it was mutation-checked after the fix, and
+restoring the trailing store fails that test and only that test. To reach the
+flag logic without an audio pipeline, the serialization moved into a free
+`serialized_toggle(lock, flag, body)` that `Daemon::toggle` now calls, so the
+tested code is the shipped path. The private test seam is now `serve` itself —
+the `handle_connection_within` alias named above became a pure passthrough once
+the timeout moved inside, and is gone. `cargo test -p swictation-daemon
+--all-targets` green (93 passed, 0 failed), `cargo clippy -p swictation-daemon
+--all-targets` 0 errors with no warnings in `ipc.rs` or `main.rs`, `cargo fmt
+--check` clean.
+
+Verification caveat: the macOS exit and the `biased;` ordering have **no**
+automated fence. Both live in `daemon_main`, which needs a real audio pipeline —
+and, for the exit, a live Carbon event loop — to exercise; they rest on
+compilation and review only. The 2 s constant is still not asserted by a test.
+
 ## Consequences
 
 - Linux ONNX dictation stops spending ~97 % of encoder compute on synthetic frames;

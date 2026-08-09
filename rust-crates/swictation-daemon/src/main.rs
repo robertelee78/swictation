@@ -78,6 +78,71 @@ struct Daemon {
     toggle_lock: tokio::sync::Mutex<()>,
     /// Atomic flag for fast non-blocking "toggle in progress" check
     toggling: AtomicBool,
+    /// Raised by the IPC quit command. The main loop owns the actual teardown
+    /// (broadcaster stop, socket removal), so quit must ask rather than exit.
+    shutdown: tokio::sync::Notify,
+}
+
+impl crate::ipc::IpcTarget for Daemon {
+    async fn toggle(&self) -> Result<String> {
+        Daemon::toggle(self).await
+    }
+
+    async fn status(&self) -> String {
+        Daemon::status(self).await
+    }
+
+    fn request_shutdown(&self) {
+        self.shutdown.notify_one();
+    }
+}
+
+/// Lowers the "toggle in progress" flag when dropped.
+///
+/// A store after the await would be skipped whenever the toggle future is
+/// cancelled, and the flag is never lowered again — see [`serialized_toggle`].
+struct ToggleInProgress<'a>(&'a AtomicBool);
+
+impl Drop for ToggleInProgress<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
+/// Run `body` as the daemon's one in-flight toggle.
+///
+/// Skips when a toggle is already running, otherwise holds `toggle_lock` for
+/// the duration of `body` and raises `toggling` while it runs.
+///
+/// The flag is lowered by an RAII guard rather than a store after the await:
+/// `toggle()` is awaited inline from the IPC handler and from the hotkey arm of
+/// the main `select!`, so its future can be dropped mid-flight. On that path a
+/// trailing store never runs, and every later toggle answers "Toggle already in
+/// progress" until the daemon is restarted.
+///
+/// Free-standing so the serialization can be exercised without building an
+/// audio pipeline; `Daemon::toggle` is the only production caller.
+async fn serialized_toggle<F>(
+    toggle_lock: &tokio::sync::Mutex<()>,
+    toggling: &AtomicBool,
+    body: F,
+) -> Result<String>
+where
+    F: std::future::Future<Output = Result<String>>,
+{
+    // Fast non-blocking check: if a toggle is already in progress, skip
+    if toggling.load(Ordering::SeqCst) {
+        info!("Toggle already in progress, skipping");
+        return Ok("Toggle already in progress".to_string());
+    }
+
+    // Acquire serialization lock (blocks if another toggle is running)
+    let _serialize = toggle_lock.lock().await;
+    toggling.store(true, Ordering::SeqCst);
+    // Declared after `_serialize`, so it drops first: the flag is down before
+    // the lock lets the next toggle through.
+    let _in_progress = ToggleInProgress(toggling);
+    body.await
 }
 
 impl Daemon {
@@ -107,6 +172,7 @@ impl Daemon {
             session_id: Arc::new(RwLock::new(None)),
             toggle_lock: tokio::sync::Mutex::new(()),
             toggling: AtomicBool::new(false),
+            shutdown: tokio::sync::Notify::new(),
         };
 
         // Start broadcaster Unix socket server
@@ -130,18 +196,7 @@ impl Daemon {
     /// off the event loop. The AtomicBool provides a fast non-blocking check
     /// for callers that want to skip duplicate toggles.
     async fn toggle(&self) -> Result<String> {
-        // Fast non-blocking check: if a toggle is already in progress, skip
-        if self.toggling.load(Ordering::SeqCst) {
-            info!("Toggle already in progress, skipping");
-            return Ok("Toggle already in progress".to_string());
-        }
-
-        // Acquire serialization lock (blocks if another toggle is running)
-        let _guard = self.toggle_lock.lock().await;
-        self.toggling.store(true, Ordering::SeqCst);
-        let result = self.toggle_inner().await;
-        self.toggling.store(false, Ordering::SeqCst);
-        result
+        serialized_toggle(&self.toggle_lock, &self.toggling, self.toggle_inner()).await
     }
 
     /// Inner toggle implementation — must only be called with toggle_lock held.
@@ -861,6 +916,24 @@ async fn daemon_main(
     // Main event loop
     loop {
         tokio::select! {
+            // Polled in written order, shutdown first. Unbiased, the macro picks
+            // a ready arm at random, so a hotkey or IPC event queued alongside
+            // quit's notification could be serviced after the daemon has been
+            // told to stop. Shutdown must win that race every time.
+            biased;
+
+            // Quit over IPC, routed through the same teardown as Ctrl-C
+            _ = daemon_clone.shutdown.notified() => {
+                info!("Received quit command over IPC");
+                break;
+            }
+
+            // Shutdown signal
+            _ = tokio::signal::ctrl_c() => {
+                info!("Received shutdown signal");
+                break;
+            }
+
             // Hotkey events (primary UX) - only if hotkeys are available
             Some(event) = async {
                 if let Some(ref mut manager) = hotkey_manager {
@@ -968,12 +1041,6 @@ async fn daemon_main(
                     error!("IPC connection error: {}", e);
                 }
             }
-
-            // Shutdown signal
-            _ = tokio::signal::ctrl_c() => {
-                info!("Received shutdown signal");
-                break;
-            }
         }
     }
 
@@ -987,7 +1054,15 @@ async fn daemon_main(
 
     info!("👋 Swictation daemon stopped");
 
-    Ok(())
+    // Required to terminate the process, not just this function.
+    //
+    // On macOS `daemon_main` runs on a background thread while the main thread
+    // blocks in RunApplicationEventLoop(); returning here ends only the
+    // background thread and leaves the process alive with no way to quit it.
+    // Teardown has already run above, so this exits a daemon that has finished
+    // its cleanup — unlike the std::process::exit(0) the IPC quit handler used
+    // to make, which skipped it.
+    std::process::exit(0);
 }
 
 /// Get current process memory usage in MB
@@ -1002,5 +1077,73 @@ fn get_memory_usage_mb() -> u64 {
         process.memory() / 1_048_576 // bytes to MB
     } else {
         0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    /// `toggle()` is awaited inline from the IPC handler and the hotkey arm of
+    /// `main`'s `select!`, so its future can be dropped mid-flight. Clearing
+    /// `toggling` with a store after the await never runs on that path, and the
+    /// daemon then answers "Toggle already in progress" until it is restarted.
+    #[tokio::test]
+    async fn a_cancelled_toggle_leaves_the_next_one_workable() {
+        let toggle_lock = tokio::sync::Mutex::new(());
+        let toggling = AtomicBool::new(false);
+
+        // A stop-drain long enough that whatever was awaiting it gives up first.
+        let cancelled = serialized_toggle(&toggle_lock, &toggling, async {
+            tokio::time::sleep(Duration::from_secs(3600)).await;
+            Ok("never reached".to_string())
+        });
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), cancelled)
+                .await
+                .is_err(),
+            "the body should still have been running when it was cancelled"
+        );
+
+        assert!(
+            !toggling.load(Ordering::SeqCst),
+            "a cancelled toggle left the in-progress flag raised"
+        );
+
+        let next = serialized_toggle(&toggle_lock, &toggling, async {
+            Ok("Recording started".to_string())
+        })
+        .await
+        .unwrap();
+        assert_eq!(next, "Recording started");
+    }
+
+    /// The fast path the flag exists for: a second toggle arriving while one is
+    /// running is dropped rather than queued behind it.
+    #[tokio::test]
+    async fn a_toggle_arriving_mid_toggle_is_skipped() {
+        let toggle_lock = tokio::sync::Mutex::new(());
+        let toggling = AtomicBool::new(false);
+
+        let running = serialized_toggle(&toggle_lock, &toggling, async {
+            tokio::time::sleep(Duration::from_secs(3600)).await;
+            Ok("never reached".to_string())
+        });
+        tokio::pin!(running);
+
+        // Poll it far enough to take the lock and raise the flag.
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), &mut running)
+                .await
+                .is_err()
+        );
+
+        let skipped = serialized_toggle(&toggle_lock, &toggling, async {
+            panic!("the second toggle should not have run")
+        })
+        .await
+        .unwrap();
+        assert_eq!(skipped, "Toggle already in progress");
     }
 }

@@ -9,7 +9,8 @@ const { spawn, execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { downloadWithRetry } = require('../src/download');
+const { downloadWithRetry, checksumFile } = require('../src/download');
+const { InstallError } = require('../src/install-error');
 
 // Every .mlmodelc bundle has exactly this internal structure
 const MLMODELC_INTERNAL_FILES = [
@@ -19,6 +20,10 @@ const MLMODELC_INTERNAL_FILES = [
   'coremldata.bin',
   'analytics/coremldata.bin'
 ];
+
+// Integrity manifest: per-model pinned revision + per-file sha256/size.
+// Regenerate with scripts/generate-model-manifest.js (see ADR-036).
+const DEFAULT_MANIFEST_PATH = path.join(__dirname, '..', 'models.manifest.json');
 
 // Model definitions
 const MODELS = {
@@ -102,6 +107,102 @@ const MODELS = {
 // The Rust model loader (recognizer_ort.rs) automatically prefers .fp16.onnx
 // files on macOS (darwin), falling back to FP32 if FP16 variants are absent.
 
+/**
+ * Expand a model's declared file list into the concrete files on the wire:
+ * a .mlmodelc bundle is a DIRECTORY, so it becomes its five internal leaves.
+ * @returns {string[]} repo-relative paths
+ */
+function expandModelFiles(model) {
+  const out = [];
+  for (const file of model.files) {
+    if (file.endsWith('.mlmodelc')) {
+      for (const internal of MLMODELC_INTERNAL_FILES) out.push(`${file}/${internal}`);
+    } else {
+      out.push(file);
+    }
+  }
+  return out;
+}
+
+/**
+ * Read the integrity manifest. Returns null when it is absent or unreadable —
+ * callers degrade to unverified downloads rather than refusing to install.
+ * @param {string} [manifestPath]
+ * @returns {object|null}
+ */
+function loadManifest(manifestPath = DEFAULT_MANIFEST_PATH) {
+  try {
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    if (!manifest || typeof manifest.models !== 'object' || manifest.models === null) return null;
+    return manifest;
+  } catch {
+    return null;
+  }
+}
+
+// A file that failed verification is renamed out of the way with this suffix.
+const QUARANTINE_SUFFIX_RE = /\.corrupt\.\d+(?:\.\d+)?$/;
+
+/**
+ * Move a file that failed verification out of the way.
+ *
+ * The bytes are kept, not deleted: a corrupt 4 GB download is still the user's
+ * disk state, and having it on hand is what makes a support report possible.
+ * What matters is that it stops occupying the path the daemon loads from — and
+ * the path every existence/size check looks at, which is how a corrupt file
+ * used to survive into the next install as "already downloaded".
+ *
+ * @param {string} filePath
+ * @returns {string|null} the quarantine path, or null if there was nothing to move
+ */
+function quarantineFile(filePath) {
+  const stamp = Date.now();
+  let target = `${filePath}.corrupt.${stamp}`;
+  for (let n = 1; fs.existsSync(target); n++) target = `${filePath}.corrupt.${stamp}.${n}`;
+  try {
+    fs.renameSync(filePath, target);
+    return target;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Verify one downloaded file against its manifest entry.
+ *
+ * Size is checked first because it is a stat() and rules out the common
+ * failures (truncated transfer, HTML error page written as a model) without
+ * reading gigabytes. The hash is streamed — these files reach 4 GB and must
+ * never be buffered.
+ *
+ * @param {string} filePath
+ * @param {{sha256: string, size: number}} expected
+ * @returns {Promise<{ok: boolean, reason?: string}>}
+ */
+async function verifyFile(filePath, expected) {
+  let stat;
+  try {
+    stat = fs.statSync(filePath);
+  } catch (err) {
+    return { ok: false, reason: `missing (${err.code || err.message})` };
+  }
+  if (!stat.isFile()) return { ok: false, reason: 'not a regular file' };
+  if (stat.size !== expected.size) {
+    return { ok: false, reason: `size mismatch: expected ${expected.size} bytes, got ${stat.size}` };
+  }
+
+  let actual;
+  try {
+    actual = await checksumFile(filePath);
+  } catch (err) {
+    return { ok: false, reason: `unreadable: ${err.message}` };
+  }
+  if (actual !== expected.sha256) {
+    return { ok: false, reason: `sha256 mismatch: expected ${expected.sha256}, got ${actual}` };
+  }
+  return { ok: true };
+}
+
 class ModelDownloader {
   constructor(options = {}) {
     // Platform-aware default (ADR-034): the previous hardcoded XDG path sent
@@ -109,6 +210,112 @@ class ModelDownloader {
     this.modelDir = options.modelDir || require('../src/paths').getModelsDir();
     this.force = options.force || false;
     this.verbose = options.verbose || false;
+    this.manifestPath = options.manifestPath || DEFAULT_MANIFEST_PATH;
+    this._manifest = undefined;   // undefined = not loaded yet, null = absent
+    this._manifestWarned = false;
+    this._partialWarned = new Set();
+  }
+
+  /** Seam over child_process.spawn so the spawn-driven tiers stay testable. */
+  _spawn(command, args, options) {
+    return spawn(command, args, options);
+  }
+
+  /** Seam over downloadWithRetry, for the same reason. */
+  _download(url, dest, options) {
+    return downloadWithRetry(url, dest, options);
+  }
+
+  /**
+   * The parsed manifest, or null. Warns ONCE per downloader when it is absent:
+   * that is a shipping defect worth shouting about, but repeating it per file
+   * across ~50 files would bury everything else.
+   */
+  manifest() {
+    if (this._manifest === undefined) {
+      this._manifest = loadManifest(this.manifestPath);
+      if (this._manifest === null && !this._manifestWarned) {
+        this._manifestWarned = true;
+        this.log('\n⚠️  WARNING: models.manifest.json is missing or unreadable.');
+        this.log('   Model downloads will NOT be integrity-verified and will use the');
+        this.log('   mutable "main" branch. Reinstall the package to restore verification.\n');
+      }
+    }
+    return this._manifest;
+  }
+
+  /** The manifest entry for a model key, or null. */
+  manifestEntry(modelKey) {
+    const manifest = this.manifest();
+    return (manifest && manifest.models[modelKey]) || null;
+  }
+
+  /** The expected {sha256, size} for one repo-relative file, or null. */
+  _expectedFile(modelKey, filePath) {
+    const entry = this.manifestEntry(modelKey);
+    if (!entry) return null;
+    return entry.files.find(f => f.path === filePath) || null;
+  }
+
+  /**
+   * Download URL for one repo-relative file, pinned to the manifest revision.
+   * Falls back to `main` only when the manifest cannot supply a revision.
+   */
+  fileUrl(modelKey, filePath) {
+    const model = MODELS[modelKey];
+    const entry = this.manifestEntry(modelKey);
+    const source = (entry && entry.source) || {};
+    const repo = source.repo || (model && model.repo);
+    if (!repo) throw new Error(`No repository known for model: ${modelKey}`);
+    return `https://huggingface.co/${repo}/resolve/${source.revision || 'main'}/${encodeURI(filePath)}`;
+  }
+
+  /**
+   * Verify a downloaded model tree against the manifest.
+   *
+   * Files the manifest does not know about are reported as `unverified` and
+   * warned about, never failed: a manifest that lags a MODELS edit must not
+   * block an install.
+   *
+   * @returns {Promise<{ok: boolean, verified: string[], failures: {path: string, reason: string}[], unverified: string[]}>}
+   */
+  async verifyModelFiles(modelKey, targetPath, filePaths) {
+    const report = { ok: true, verified: [], failures: [], unverified: [] };
+    const entry = this.manifestEntry(modelKey);
+    if (!entry) {
+      report.unverified = [...filePaths];
+      return report;
+    }
+
+    const expectedByPath = new Map(entry.files.map(f => [f.path, f]));
+    for (const rel of filePaths) {
+      const expected = expectedByPath.get(rel);
+      if (!expected) {
+        report.unverified.push(rel);
+        this.log(`   ⚠️  ${rel} is not in models.manifest.json — kept WITHOUT verification`);
+        continue;
+      }
+      const result = await verifyFile(path.join(targetPath, rel), expected);
+      if (result.ok) {
+        report.verified.push(rel);
+      } else {
+        report.ok = false;
+        report.failures.push({ path: rel, reason: result.reason });
+      }
+    }
+    return report;
+  }
+
+  /** Build the InstallError raised when a downloaded file fails verification. */
+  _integrityError(modelKey, rel, reason, targetPath) {
+    return new InstallError('SW-E004', `Integrity check failed for ${modelKey}`, {
+      cause: `${rel}: ${reason}`,
+      fix: 'The downloaded file does not match the signed manifest — it was corrupted in\n' +
+           '  transit or served by something other than the pinned upstream revision.\n' +
+           `  Remove the partial download and retry:\n    rm -rf "${targetPath}"\n` +
+           `    swictation download-model ${modelKey}`,
+      context: { model: modelKey, file: rel, reason },
+    });
   }
 
   /**
@@ -151,20 +358,69 @@ class ModelDownloader {
   }
 
   /**
-   * Check if a model is already downloaded
+   * Check if a model is already downloaded.
+   *
+   * With a manifest this compares every file's SIZE — cheap enough to run on
+   * every install, and it catches the half-written tree that existence-only
+   * checks happily reported as installed. Content verification is the
+   * download path's job (hashing 7 GB on every startup is not a check anyone
+   * would keep). Without a manifest — or with one that does not describe the
+   * whole model — this degrades to the old existence test.
    */
   isModelDownloaded(modelKey) {
     const model = MODELS[modelKey];
-    if (!model) return false;
+    const entry = this.manifestEntry(modelKey);
 
-    const modelPath = path.join(this.modelDir, model.targetDir);
+    const targetDir = (entry && entry.targetDir) || (model && model.targetDir);
+    if (!targetDir) return false;
+
+    const modelPath = path.join(this.modelDir, targetDir);
     if (!fs.existsSync(modelPath)) return false;
 
-    // Check if all required files exist
-    return model.files.every(file => {
-      const filePath = path.join(modelPath, file);
-      return fs.existsSync(filePath);
-    });
+    if (entry && this._manifestCoversModel(modelKey, entry)) {
+      return entry.files.every(file => {
+        // A quarantined name is by definition a file that failed verification;
+        // it can never be what makes a model count as installed.
+        if (QUARANTINE_SUFFIX_RE.test(file.path)) return false;
+        try {
+          const stat = fs.statSync(path.join(modelPath, file.path));
+          return stat.isFile() && stat.size === file.size;
+        } catch {
+          return false;
+        }
+      });
+    }
+
+    if (entry) this._warnPartialEntry(modelKey);
+
+    if (!model) return false;
+    return model.files.every(file => fs.existsSync(path.join(modelPath, file)));
+  }
+
+  /**
+   * Whether the manifest entry describes EVERY file MODELS declares.
+   *
+   * A `--model=` regeneration that never merged, or a hand-edit, produces an
+   * entry covering a subset — and `[].every()` is vacuously true, so an empty
+   * one covers nothing at all. Either would let a fraction of a model vouch for
+   * the whole of it. A key MODELS does not know (a fixture, a manifest that
+   * outlived a removed model) has nothing to cross-check against, so the
+   * manifest stays authoritative there.
+   */
+  _manifestCoversModel(modelKey, entry) {
+    const model = MODELS[modelKey];
+    if (!model) return true;
+    const covered = new Set(entry.files.map(f => f.path));
+    return expandModelFiles(model).every(f => covered.has(f));
+  }
+
+  /** Warn once per model that its manifest entry is too incomplete to trust. */
+  _warnPartialEntry(modelKey) {
+    if (this._partialWarned.has(modelKey)) return;
+    this._partialWarned.add(modelKey);
+    this.log(`\n⚠️  WARNING: models.manifest.json does not cover every file declared`);
+    this.log(`   for "${modelKey}". Treating it as unverifiable and falling back to an`);
+    this.log('   existence check. Regenerate with scripts/generate-model-manifest.js.\n');
   }
 
   /**
@@ -190,17 +446,23 @@ class ModelDownloader {
       this.log(`   URL: ${model.directUrl}`);
       this.log(`   Destination: ${targetPath}\n`);
 
-      return new Promise((resolve, reject) => {
-        // Create target directory
-        if (!fs.existsSync(targetPath)) {
-          fs.mkdirSync(targetPath, { recursive: true });
-        }
+      // Create target directory
+      if (!fs.existsSync(targetPath)) {
+        fs.mkdirSync(targetPath, { recursive: true });
+      }
 
-        const filePath = path.join(targetPath, model.files[0]);
-        const proc = spawn('curl', [
+      const fileName = model.files[0];
+      const filePath = path.join(targetPath, fileName);
+      // curl writes to a staging name so an unverified (or half-written) file
+      // can never occupy the path the daemon loads from.
+      const stagingPath = `${filePath}.partial`;
+
+      await new Promise((resolve, reject) => {
+        const proc = this._spawn('curl', [
           '-L',  // Follow redirects
+          '--fail',  // a 404 must be an error, not an HTML file named silero_vad.onnx
           model.directUrl,
-          '-o', filePath,
+          '-o', stagingPath,
           '--progress-bar'
         ], {
           stdio: this.verbose ? 'inherit' : 'pipe'
@@ -222,18 +484,34 @@ class ModelDownloader {
 
         proc.on('close', (code) => {
           if (code !== 0) {
+            fs.rmSync(stagingPath, { force: true });
             reject(new Error(`Download failed with code ${code}\n${stderr}`));
             return;
           }
-
-          this.log(`✓ ${model.name} downloaded successfully\n`);
           resolve();
         });
 
         proc.on('error', (err) => {
+          fs.rmSync(stagingPath, { force: true });
           reject(new Error(`Failed to spawn curl: ${err.message}`));
         });
       });
+
+      const expected = this._expectedFile(modelKey, fileName);
+      if (expected) {
+        const result = await verifyFile(stagingPath, expected);
+        if (!result.ok) {
+          fs.rmSync(stagingPath, { force: true });
+          throw this._integrityError(modelKey, fileName, result.reason, targetPath);
+        }
+        this.log(`   ✓ verified ${fileName}`);
+      } else {
+        this.log(`   ⚠️  ${fileName} is not in models.manifest.json — kept WITHOUT verification`);
+      }
+
+      fs.renameSync(stagingPath, filePath);
+      this.log(`✓ ${model.name} downloaded successfully\n`);
+      return;
     }
 
     // Handle HuggingFace CLI downloads (with fallback chain)
@@ -270,6 +548,10 @@ class ModelDownloader {
       }
     }
 
+    // Tier 3 verifies each file as it lands, so a Tier 1/2 integrity failure
+    // above is recoverable: we re-fetch at the pinned revision rather than
+    // aborting the install.
+
     // Tier 3: Direct HTTP download from HuggingFace
     await this.downloadModelDirect(modelKey);
   }
@@ -285,10 +567,20 @@ class ModelDownloader {
         '--local-dir', targetPath
       ];
 
+      // Pin to the manifest revision so the CLI tier resolves the same
+      // immutable commit the hashes were generated from.
+      const entry = this.manifestEntry(modelKey);
+      const revision = entry && entry.source && entry.source.revision;
+      if (revision) {
+        args.push('--revision', revision);
+      } else {
+        this.log('   ⚠️  No pinned revision in the manifest — hf CLI will use "main".');
+      }
+
       // Note: We don't use --include because it's unreliable with hf CLI
       // Just download all files from the repository
 
-      const proc = spawn(this.hfPath || 'hf', args, {
+      const proc = this._spawn(this.hfPath || 'hf', args, {
         stdio: this.verbose ? 'inherit' : 'pipe'
       });
 
@@ -311,13 +603,33 @@ class ModelDownloader {
           return;
         }
 
-        // Run post-download processing if defined
-        if (model.postDownload) {
-          model.postDownload(targetPath);
-        }
+        // The CLI tier writes files under their FINAL names, so verification
+        // happens after the fact. A failure here rejects, which drops us to the
+        // direct-HTTP tier — that one re-fetches and verifies file by file.
+        this.log('   Verifying downloaded files...');
+        this.verifyModelFiles(modelKey, targetPath, expandModelFiles(model)).then((report) => {
+          if (!report.ok) {
+            // Quarantine before falling through: leaving a rejected file under
+            // its real name lets the next run's size-only isModelDownloaded
+            // bless it, and a same-size corruption would never be re-hashed.
+            for (const failure of report.failures) {
+              const moved = quarantineFile(path.join(targetPath, failure.path));
+              if (moved) this.log(`   ⚠️  quarantined ${failure.path} → ${path.basename(moved)}`);
+            }
+            const detail = report.failures.map(f => `${f.path} (${f.reason})`).join('; ');
+            reject(new Error(`integrity check failed for ${report.failures.length} file(s): ${detail}`));
+            return;
+          }
+          this.log(`   ✓ verified ${report.verified.length} file(s)`);
 
-        this.log(`✓ ${model.name} downloaded successfully\n`);
-        resolve();
+          // Run post-download processing if defined
+          if (model.postDownload) {
+            model.postDownload(targetPath);
+          }
+
+          this.log(`✓ ${model.name} downloaded successfully\n`);
+          resolve();
+        }, reject);
       });
 
       proc.on('error', (err) => {
@@ -381,33 +693,84 @@ class ModelDownloader {
     const targetPath = path.join(this.modelDir, model.targetDir);
 
     // Expand the file list: .mlmodelc bundles become multiple internal files
-    const filesToDownload = [];
-    for (const file of model.files) {
-      if (file.endsWith('.mlmodelc')) {
-        // Expand .mlmodelc bundle to its internal files
-        for (const internalFile of MLMODELC_INTERNAL_FILES) {
-          filesToDownload.push(path.join(file, internalFile));
-        }
-      } else {
-        filesToDownload.push(file);
-      }
-    }
+    const filesToDownload = expandModelFiles(model);
 
     this.log(`   Downloading ${filesToDownload.length} file(s) via direct HTTP...`);
 
     for (let i = 0; i < filesToDownload.length; i++) {
       const file = filesToDownload[i];
-      const url = `https://huggingface.co/${model.repo}/resolve/main/${file}`;
+      const url = this.fileUrl(modelKey, file);
       const dest = path.join(targetPath, file);
+      const expected = this._expectedFile(modelKey, file);
+
+      // Already correct on disk (an interrupted install, or a re-run): don't
+      // re-pull gigabytes we can prove we already have.
+      if (!this.force && expected && fs.existsSync(dest)) {
+        const existing = await verifyFile(dest, expected);
+        if (existing.ok) {
+          this.log(`   [${i + 1}/${filesToDownload.length}] ${file} — already verified, skipping`);
+          continue;
+        }
+      }
 
       this.log(`   [${i + 1}/${filesToDownload.length}] ${file}`);
 
-      await downloadWithRetry(url, dest, {
-        maxRetries: 3,
-        timeout: 60000,
-        checkDiskSpace: i === 0 // only check disk space on first file
-      });
+      // Download to a staging name; the file only takes its real name once it
+      // has been proven to match the manifest.
+      const staging = `${dest}.download`;
+
+      // downloadWithRetry resumes from `<its dest>.partial`, so introducing the
+      // staging name moved the resume file from <dest>.partial to
+      // <dest>.download.partial. Adopt a pre-upgrade partial instead of
+      // orphaning it — otherwise an interrupted install restarts from zero and
+      // leaves the old bytes on disk forever.
+      const legacyPartial = `${dest}.partial`;
+      const stagingPartial = `${staging}.partial`;
+      if (fs.existsSync(legacyPartial) && !fs.existsSync(stagingPartial)) {
+        try {
+          fs.renameSync(legacyPartial, stagingPartial);
+          this.log(`   ↻ resuming ${file} from a pre-upgrade partial download`);
+        } catch {
+          // Not worth failing an install over: we just download from zero.
+        }
+      }
+
+      // A complete staging file means the bytes arrived and we were interrupted
+      // during hashing. Verification below still has to pass, so re-fetching
+      // gigabytes to reach the same check buys nothing.
+      const stagedComplete = !this.force && expected && fs.existsSync(staging) &&
+        fs.statSync(staging).size === expected.size;
+
+      if (stagedComplete) {
+        this.log('         already staged in full — verifying without re-downloading');
+        // The staged file supersedes any resume partial (including one just
+        // migrated from the legacy name) — remove it so it can't linger.
+        fs.rmSync(stagingPartial, { force: true });
+      } else {
+        await this._download(url, staging, {
+          maxRetries: 3,
+          timeout: 60000,
+          checkDiskSpace: i === 0 // only check disk space on first file
+        });
+      }
+
+      if (expected) {
+        const result = await verifyFile(staging, expected);
+        if (!result.ok) {
+          // Never leave a bad file as a resume base for the next attempt.
+          fs.rmSync(staging, { force: true });
+          throw this._integrityError(modelKey, file, result.reason, targetPath);
+        }
+      } else {
+        this.log(`   ⚠️  ${file} is not in models.manifest.json — kept WITHOUT verification`);
+      }
+
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.renameSync(staging, dest);
     }
+
+    const verifiedCount = filesToDownload.filter(f => this._expectedFile(modelKey, f)).length;
+    if (verifiedCount > 0) this.log(`   ✓ verified ${verifiedCount} file(s) against models.manifest.json`);
 
     // Run post-download processing if defined
     if (model.postDownload) {
@@ -460,6 +823,15 @@ class ModelDownloader {
 
 // Expose the model table so callers derive valid names from one place (ADR-034).
 ModelDownloader.MODELS = MODELS;
+// Integrity surface (ADR-036), exposed for scripts/generate-model-manifest.js
+// and tests/test-model-manifest.js.
+ModelDownloader.MLMODELC_INTERNAL_FILES = MLMODELC_INTERNAL_FILES;
+ModelDownloader.DEFAULT_MANIFEST_PATH = DEFAULT_MANIFEST_PATH;
+ModelDownloader.expandModelFiles = expandModelFiles;
+ModelDownloader.loadManifest = loadManifest;
+ModelDownloader.verifyFile = verifyFile;
+ModelDownloader.quarantineFile = quarantineFile;
+ModelDownloader.QUARANTINE_SUFFIX_RE = QUARANTINE_SUFFIX_RE;
 
 module.exports = ModelDownloader;
 

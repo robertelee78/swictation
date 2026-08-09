@@ -2876,6 +2876,29 @@ function isModelDownloaded(modelName) {
   const targetDir = modelDirs[modelName];
   if (!targetDir) return false;
 
+  // Prefer the downloader's manifest-aware check (ADR-036: size-verified per
+  // file) so a pre-existing corrupt/truncated tree triggers a re-download
+  // instead of short-circuiting the verified path. Fall back to the legacy
+  // existence checks below if the downloader or manifest is unavailable.
+  const downloaderKeys = {
+    '0.6b': '0.6b',
+    '0.6b-gpu': '0.6b',
+    'cpu-only': '0.6b',
+    '1.1b': '1.1b',
+    '1.1b-gpu': '1.1b',
+    '0.6b-coreml': '0.6b-coreml',
+    '1.1b-coreml': '1.1b-coreml'
+  };
+  try {
+    const ModelDownloader = require('./lib/model-downloader.js');
+    const downloader = new ModelDownloader({ modelDir });
+    if (downloader.manifest()) {
+      return downloader.isModelDownloaded(downloaderKeys[modelName]);
+    }
+  } catch {
+    // fall through to legacy checks
+  }
+
   const modelPath = path.join(modelDir, targetDir);
   if (!fs.existsSync(modelPath)) return false;
 
