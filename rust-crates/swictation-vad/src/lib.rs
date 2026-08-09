@@ -51,6 +51,7 @@ mod silero_ort;
 
 pub use error::{Result, VadError};
 use silero_ort::SileroVadOrt;
+use std::collections::VecDeque;
 
 /// VAD detection result
 #[derive(Debug, Clone, PartialEq)]
@@ -242,6 +243,11 @@ pub struct VadDetector {
     is_speaking: bool,
     // Buffer for incomplete chunks
     chunk_buffer: Vec<f32>,
+    // Segments that completed during a call that had already produced one.
+    // A single call covers many windows, so with max_speech splitting it can
+    // finish more than one segment; returning only the last would silently
+    // drop dictation.
+    pending_segments: VecDeque<VadResult>,
 }
 
 impl VadDetector {
@@ -256,6 +262,7 @@ impl VadDetector {
             config.window_size as usize,
             (config.min_speech_duration * 1000.0) as i32,
             (config.min_silence_duration * 1000.0) as i32,
+            (config.max_speech_duration * 1000.0) as i32,
             config.provider.clone(),
             config.debug,
         )
@@ -267,6 +274,7 @@ impl VadDetector {
             total_samples_processed: 0,
             is_speaking: false,
             chunk_buffer: Vec::new(),
+            pending_segments: VecDeque::new(),
         })
     }
 
@@ -303,7 +311,8 @@ impl VadDetector {
         }
 
         let window_size = self.config.window_size as usize;
-        let mut result = VadResult::Silence;
+        // Segments deferred from an earlier call are handed back first, in order.
+        let mut completed: VecDeque<VadResult> = std::mem::take(&mut self.pending_segments);
 
         // Combine buffered samples with new samples
         let mut all_samples = self.chunk_buffer.clone();
@@ -335,15 +344,15 @@ impl VadDetector {
                         );
                     }
 
-                    // Return this speech segment
+                    // Queue this speech segment
                     let start_sample = (self
                         .total_samples_processed
                         .saturating_sub(speech_samples.len()))
                         as i32;
-                    result = VadResult::Speech {
+                    completed.push_back(VadResult::Speech {
                         start_sample,
                         samples: speech_samples,
-                    };
+                    });
                     // Don't break - continue processing remaining chunks
                 }
                 None => {
@@ -368,7 +377,24 @@ impl VadDetector {
             }
         }
 
+        let result = completed.pop_front().unwrap_or(VadResult::Silence);
+        self.pending_segments = completed;
+
         Ok(result)
+    }
+
+    /// Segments that completed but have not been returned yet
+    ///
+    /// Non-zero only when a single [`Self::process_audio`] call finished more
+    /// than one segment; they are returned by the following calls, or by
+    /// [`Self::drain_pending`].
+    pub fn pending_count(&self) -> usize {
+        self.pending_segments.len()
+    }
+
+    /// Take every segment that has completed but not yet been returned
+    pub fn drain_pending(&mut self) -> Vec<VadResult> {
+        self.pending_segments.drain(..).collect()
     }
 
     /// Check if speech is currently being detected (real-time)
@@ -382,6 +408,9 @@ impl VadDetector {
     ///
     /// Call this at the end of a stream to process any remaining audio.
     /// Returns any remaining speech segment if available.
+    ///
+    /// If several segments are outstanding, the oldest is returned and the rest
+    /// stay queued for [`Self::drain_pending`].
     pub fn flush(&mut self) -> Option<VadResult> {
         // Get any remaining buffered speech from VAD
         if let Some(speech_samples) = self.vad.flush() {
@@ -392,29 +421,33 @@ impl VadDetector {
                 );
             }
 
-            self.is_speaking = false;
             let start_sample = (self
                 .total_samples_processed
                 .saturating_sub(speech_samples.len())) as i32;
 
-            Some(VadResult::Speech {
+            self.pending_segments.push_back(VadResult::Speech {
                 start_sample,
                 samples: speech_samples,
-            })
-        } else {
-            self.is_speaking = false;
-            None
+            });
         }
+
+        self.is_speaking = false;
+        self.pending_segments.pop_front()
     }
 
-    /// Clear the internal buffer
+    /// Reset every trace of the previous stream
     ///
-    /// Call this to reset the VAD state (e.g., between different audio sources).
-    pub fn clear(&mut self) {
+    /// Clears the model state, the partial-window carry buffer, the
+    /// segmenter's own buffers, and any segment still queued for
+    /// [`Self::drain_pending`]. Call this when starting a new session, so a
+    /// segment left over from the last one cannot surface as the first thing
+    /// the new one transcribes.
+    pub fn reset(&mut self) {
         self.vad.reset();
         self.is_speaking = false;
         self.total_samples_processed = 0;
         self.chunk_buffer.clear();
+        self.pending_segments.clear();
     }
 
     /// Get total samples processed

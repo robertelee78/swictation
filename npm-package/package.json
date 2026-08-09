@@ -52,7 +52,7 @@
   "scripts": {
     "postinstall": "node postinstall.js",
     "preuninstall": "node preuninstall.js",
-    "test": "node tests/test-nvidia-hibernation.js && node tests/test-config-step.js",
+    "test": "node tests/test-nvidia-hibernation.js && node tests/test-config-step.js && node tests/test-gpu-lib-cleanup.js",
     "build": "./scripts/build-release.sh",
     "build-ui": "../tauri-ui/scripts/build-ui-release.sh",
     "verify": "../scripts/verify-before-push.sh",

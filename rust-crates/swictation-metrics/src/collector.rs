@@ -118,8 +118,14 @@ impl MetricsCollector {
         Ok(session_id)
     }
 
-    /// End current session and finalize metrics
-    pub fn end_session(&self) -> Result<SessionMetrics> {
+    /// End current session and finalize metrics.
+    ///
+    /// `end_time` is when the session actually ended, for callers that finish
+    /// work after that point — the daemon stamps the instant audio capture
+    /// detached, so the post-stop drain (real STT inference on the tail
+    /// utterance) is not billed as dictation wall time (ADR-035). Pass `None`
+    /// to end the session as of now.
+    pub fn end_session(&self, end_time: Option<Instant>) -> Result<SessionMetrics> {
         let session_id = {
             let current = self.current_session.lock();
             current
@@ -129,12 +135,16 @@ impl MetricsCollector {
                 .ok_or_else(|| anyhow::anyhow!("Session has no ID"))?
         };
 
-        // Finalize timing
-        let now = Utc::now();
+        // Finalize timing against the supplied end instant (or now), so both
+        // the wall-clock stamp and the duration describe the same moment.
+        let end_instant = end_time.unwrap_or_else(Instant::now);
+        let since_end = chrono::Duration::from_std(end_instant.elapsed())
+            .unwrap_or_else(|_| chrono::Duration::zero());
+        let now = Utc::now() - since_end;
         let total_duration = self
             .session_start_time
             .lock()
-            .map(|start| start.elapsed().as_secs_f64())
+            .map(|start| end_instant.saturating_duration_since(start).as_secs_f64())
             .unwrap_or(0.0);
 
         let active_time = *self.active_time_accumulator.lock();
@@ -396,8 +406,63 @@ mod tests {
         collector.add_segment(segment).unwrap();
 
         // End session
-        let session = collector.end_session().unwrap();
+        let session = collector.end_session(None).unwrap();
         assert_eq!(session.words_dictated, 10);
         assert!(!collector.has_active_session());
+    }
+
+    /// ADR-035: the stop-drain runs real STT inference after the mic is off.
+    /// A session ended with the capture-stop instant must not be charged for
+    /// it — otherwise every session's wall time (and its WPM) is inflated by
+    /// however long the final utterance took to transcribe.
+    #[test]
+    fn end_session_at_capture_stop_excludes_the_drain() {
+        let tmp_dir = TempDir::new().unwrap();
+        let db_path = tmp_dir.path().join("drain_timing.db");
+
+        let collector =
+            MetricsCollector::new(db_path.to_str().unwrap(), 40.0, false, true, 1000.0, 80.0)
+                .unwrap();
+
+        collector.start_session().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(40));
+
+        // The mic detaches here; everything after is drain, not dictation.
+        let capture_stopped_at = Instant::now();
+        std::thread::sleep(std::time::Duration::from_millis(120));
+
+        let session = collector.end_session(Some(capture_stopped_at)).unwrap();
+
+        assert!(
+            session.total_duration_s < 0.120,
+            "session wall time {:.3}s still includes the 120ms drain",
+            session.total_duration_s
+        );
+        assert!(
+            session.total_duration_s >= 0.040,
+            "session wall time {:.3}s dropped the dictation before the stop",
+            session.total_duration_s
+        );
+    }
+
+    #[test]
+    fn end_session_without_an_end_time_still_measures_up_to_now() {
+        let tmp_dir = TempDir::new().unwrap();
+        let db_path = tmp_dir.path().join("default_timing.db");
+
+        let collector =
+            MetricsCollector::new(db_path.to_str().unwrap(), 40.0, false, true, 1000.0, 80.0)
+                .unwrap();
+
+        collector.start_session().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(60));
+
+        let session = collector.end_session(None).unwrap();
+
+        assert!(
+            session.total_duration_s >= 0.060,
+            "unchanged callers must still measure to the call site, got {:.3}s",
+            session.total_duration_s
+        );
     }
 }

@@ -194,9 +194,10 @@ function verifyBinaries(binDir, binaries) {
  *   ui: '/path/to/node_modules/@agidreams/linux-x64/bin/swictation-ui'
  * }
  *
- * libDir is where postinstall.js will download GPU-specific libraries:
- * - Linux: libcudart.so, libcublas.so, etc. (based on GPU detection)
- * - macOS: CoreML libraries (already included in ONNX Runtime)
+ * libDir holds the libraries shipped inside the platform package. Downloaded
+ * GPU libraries no longer land here — since ADR-035 they go to getGpuLibsDir()
+ * (outside npm-owned trees, which upgrades wipe), and postinstall removes any
+ * copies earlier installs left in libDir.
  */
 function resolveBinaryPaths() {
   // Detect platform
@@ -243,7 +244,7 @@ function resolveBinaryPaths() {
     packageName: platformInfo.packageName,
     packageDir,
     binDir,
-    libDir, // GPU libraries will be downloaded here by postinstall.js
+    libDir, // libraries shipped in the platform package (see ADR-035 note above)
     daemon: path.join(binDir, platformInfo.binaries.daemon),
     ui: path.join(binDir, platformInfo.binaries.ui)
   };

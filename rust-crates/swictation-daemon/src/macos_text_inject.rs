@@ -3,20 +3,22 @@
 //! This module provides text injection for macOS using the CGEvent framework.
 //! It supports:
 //! - Plain text injection via Unicode strings
-//! - Keyboard shortcuts (<KEY:Cmd+C>, <KEY:Cmd+V>, etc.)
 //! - Accessibility permission checking
+//!
+//! Text is injected verbatim: see `text_injection` for why no marker syntax is
+//! interpreted.
 //!
 //! ## CRITICAL: FFI Required
 //!
 //! The `core-graphics` crate does NOT expose `CGEventKeyboardSetUnicodeString`.
 //! We must declare the FFI binding manually.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use core_foundation::base::TCFType;
 use core_foundation::boolean::CFBoolean;
 use core_foundation::dictionary::CFDictionary;
 use core_foundation::string::CFString;
-use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation, CGKeyCode};
+use core_graphics::event::{CGEvent, CGEventTapLocation};
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use foreign_types_shared::ForeignType;
 use std::os::raw::{c_long, c_void};
@@ -108,6 +110,34 @@ const BATCH_DELAY_MS: u64 = 5;
 #[inline]
 fn is_high_surrogate(code_unit: u16) -> bool {
     (0xD800..=0xDBFF).contains(&code_unit)
+}
+
+/// Split `text` into the UTF-16 payloads to be carried by successive CGEvents.
+///
+/// Every code unit of the input appears exactly once and in order, so the text
+/// handed to the injector is the text that gets typed — angle brackets, colons
+/// and anything resembling a marker included. Chunks stay within
+/// [`BATCH_UTF16_LIMIT`] and never split a surrogate pair.
+fn utf16_chunks(text: &str) -> Vec<Vec<u16>> {
+    let utf16_all: Vec<u16> = text.encode_utf16().collect();
+    let mut chunks = Vec::new();
+
+    let mut offset = 0;
+    while offset < utf16_all.len() {
+        let remaining = utf16_all.len() - offset;
+        let mut chunk_len = remaining.min(BATCH_UTF16_LIMIT);
+
+        // If we'd split a surrogate pair, back off by one code unit so
+        // the high surrogate moves to the next chunk.
+        if chunk_len < remaining && is_high_surrogate(utf16_all[offset + chunk_len - 1]) {
+            chunk_len -= 1;
+        }
+
+        chunks.push(utf16_all[offset..offset + chunk_len].to_vec());
+        offset += chunk_len;
+    }
+
+    chunks
 }
 
 /// No-op callback for CGEventTap validation
@@ -290,11 +320,12 @@ impl MacOSTextInjector {
         }
     }
 
-    /// Inject text into the active window, handling <KEY:...> markers
+    /// Inject text into the active window, verbatim
     ///
     /// # Arguments
     ///
-    /// * `text` - The text to inject, may contain <KEY:...> markers for shortcuts
+    /// * `text` - The text to type. Every character is typed as-is; no marker
+    ///   or escape syntax is interpreted.
     ///
     /// # Examples
     ///
@@ -302,62 +333,14 @@ impl MacOSTextInjector {
     /// # use swictation_daemon::macos_text_inject::MacOSTextInjector;
     /// let injector = MacOSTextInjector::new()?;
     ///
-    /// // Plain text
     /// injector.inject_text("Hello, world!")?;
-    ///
-    /// // With keyboard shortcuts
-    /// injector.inject_text("Copy this <KEY:Cmd+C>")?;
     /// # Ok::<(), anyhow::Error>(())
     /// ```
     pub fn inject_text(&self, text: &str) -> Result<()> {
-        // Check if text contains keyboard shortcut markers
-        if text.contains("<KEY:") {
-            self.inject_with_keys(text)
-        } else {
-            // Plain text injection
-            self.inject_plain_text(text)
-        }
+        self.inject_plain_text(text)
     }
 
-    /// Process text with <KEY:...> markers
-    ///
-    /// Splits text into plain text segments and keyboard shortcuts,
-    /// injecting each in sequence.
-    fn inject_with_keys(&self, text: &str) -> Result<()> {
-        let mut remaining = text;
-
-        while !remaining.is_empty() {
-            if let Some(key_start) = remaining.find("<KEY:") {
-                // Inject any text before the key marker
-                if key_start > 0 {
-                    let text_part = &remaining[..key_start];
-                    self.inject_plain_text(text_part)?;
-                }
-
-                // Find the end of the key marker
-                let key_end = remaining[key_start..]
-                    .find('>')
-                    .context("Malformed KEY marker: missing closing '>'")?;
-
-                // Extract the key combination (e.g., "Cmd+C")
-                let key_combo = &remaining[key_start + 5..key_start + key_end];
-
-                // Send the key combination
-                self.send_key_combination(key_combo)?;
-
-                // Move past this marker
-                remaining = &remaining[key_start + key_end + 1..];
-            } else {
-                // No more markers, inject remaining text
-                self.inject_plain_text(remaining)?;
-                break;
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Inject plain text (no key markers)
+    /// Type text as Unicode characters
     ///
     /// Uses CGEventKeyboardSetUnicodeString to inject Unicode text in batched
     /// chunks. Each CGEvent carries up to [`BATCH_UTF16_LIMIT`] UTF-16 code
@@ -389,25 +372,7 @@ impl MacOSTextInjector {
         let char_count = text.chars().count();
         debug!("Injecting {} characters (batched)", char_count);
 
-        // Encode entire string to UTF-16 up-front
-        let utf16_all: Vec<u16> = text.encode_utf16().collect();
-
-        // Post chunks of up to BATCH_UTF16_LIMIT UTF-16 code units.
-        // We must not split a surrogate pair (high surrogate 0xD800..0xDBFF
-        // followed by low surrogate 0xDC00..0xDFFF) across chunk boundaries.
-        let mut offset = 0;
-        while offset < utf16_all.len() {
-            let remaining = utf16_all.len() - offset;
-            let mut chunk_len = remaining.min(BATCH_UTF16_LIMIT);
-
-            // If we'd split a surrogate pair, back off by one code unit so
-            // the high surrogate moves to the next chunk.
-            if chunk_len < remaining && is_high_surrogate(utf16_all[offset + chunk_len - 1]) {
-                chunk_len -= 1;
-            }
-
-            let chunk = &utf16_all[offset..offset + chunk_len];
-
+        for chunk in utf16_chunks(text) {
             // Key down event carrying the chunk's Unicode content
             let event = CGEvent::new_keyboard_event((*self.event_source).clone(), 0, true)
                 .map_err(|_| anyhow::anyhow!("Failed to create key down event"))?;
@@ -432,158 +397,9 @@ impl MacOSTextInjector {
             // Each chunk is processed atomically, so we only need to wait
             // once per chunk rather than once per character.
             std::thread::sleep(std::time::Duration::from_millis(BATCH_DELAY_MS));
-
-            offset += chunk_len;
         }
 
         Ok(())
-    }
-
-    /// Send a keyboard shortcut combination (e.g., "Cmd+C", "Cmd+Shift+V")
-    ///
-    /// Parses the combination string and sends the appropriate key events
-    /// with modifiers.
-    fn send_key_combination(&self, combo: &str) -> Result<()> {
-        // Parse the key combination
-        let parts: Vec<&str> = combo.split('+').map(|s| s.trim()).collect();
-
-        if parts.is_empty() {
-            anyhow::bail!("Empty key combination");
-        }
-
-        // Extract modifiers and key
-        let modifiers = &parts[..parts.len() - 1];
-        let key = parts
-            .last()
-            .context("Key combination must have at least one key")?;
-
-        debug!("Sending key combination: {} (key: {})", combo, key);
-
-        // Build modifier flags
-        let mut flags = CGEventFlags::CGEventFlagNull;
-        for modifier in modifiers {
-            flags |= match modifier.to_lowercase().as_str() {
-                "cmd" | "command" | "super" => CGEventFlags::CGEventFlagCommand,
-                "ctrl" | "control" => CGEventFlags::CGEventFlagControl,
-                "alt" | "option" => CGEventFlags::CGEventFlagAlternate,
-                "shift" => CGEventFlags::CGEventFlagShift,
-                "fn" => CGEventFlags::CGEventFlagSecondaryFn,
-                _ => {
-                    warn!("Unknown modifier: {}", modifier);
-                    continue;
-                }
-            };
-        }
-
-        // Map key name to key code
-        let key_code = self.key_name_to_code(key)?;
-
-        // Create and post key down event with modifiers
-        let event_down = CGEvent::new_keyboard_event((*self.event_source).clone(), key_code, true)
-            .map_err(|_| anyhow::anyhow!("Failed to create key down event"))?;
-        event_down.set_flags(flags);
-        event_down.post(CGEventTapLocation::HID);
-
-        // Small delay between down and up
-        std::thread::sleep(std::time::Duration::from_millis(10));
-
-        // Create and post key up event
-        let event_up = CGEvent::new_keyboard_event((*self.event_source).clone(), key_code, false)
-            .map_err(|_| anyhow::anyhow!("Failed to create key up event"))?;
-        event_up.post(CGEventTapLocation::HID);
-
-        Ok(())
-    }
-
-    /// Map key name to macOS virtual key code
-    ///
-    /// This is a partial mapping of common keys. Extend as needed.
-    fn key_name_to_code(&self, key: &str) -> Result<CGKeyCode> {
-        let code = match key.to_lowercase().as_str() {
-            // Letters
-            "a" => 0x00,
-            "b" => 0x0B,
-            "c" => 0x08,
-            "d" => 0x02,
-            "e" => 0x0E,
-            "f" => 0x03,
-            "g" => 0x05,
-            "h" => 0x04,
-            "i" => 0x22,
-            "j" => 0x26,
-            "k" => 0x28,
-            "l" => 0x25,
-            "m" => 0x2E,
-            "n" => 0x2D,
-            "o" => 0x1F,
-            "p" => 0x23,
-            "q" => 0x0C,
-            "r" => 0x0F,
-            "s" => 0x01,
-            "t" => 0x11,
-            "u" => 0x20,
-            "v" => 0x09,
-            "w" => 0x0D,
-            "x" => 0x07,
-            "y" => 0x10,
-            "z" => 0x06,
-
-            // Numbers
-            "0" => 0x1D,
-            "1" => 0x12,
-            "2" => 0x13,
-            "3" => 0x14,
-            "4" => 0x15,
-            "5" => 0x17,
-            "6" => 0x16,
-            "7" => 0x1A,
-            "8" => 0x1C,
-            "9" => 0x19,
-
-            // Special keys
-            "return" | "enter" => 0x24,
-            "tab" => 0x30,
-            "space" => 0x31,
-            "delete" | "backspace" => 0x33,
-            "escape" | "esc" => 0x35,
-
-            // Arrow keys
-            "left" => 0x7B,
-            "right" => 0x7C,
-            "down" => 0x7D,
-            "up" => 0x7E,
-
-            // Function keys
-            "f1" => 0x7A,
-            "f2" => 0x78,
-            "f3" => 0x63,
-            "f4" => 0x76,
-            "f5" => 0x60,
-            "f6" => 0x61,
-            "f7" => 0x62,
-            "f8" => 0x64,
-            "f9" => 0x65,
-            "f10" => 0x6D,
-            "f11" => 0x67,
-            "f12" => 0x6F,
-
-            // Punctuation
-            "semicolon" | ";" => 0x29,
-            "equals" | "=" => 0x18,
-            "comma" | "," => 0x2B,
-            "minus" | "-" => 0x1B,
-            "period" | "." => 0x2F,
-            "slash" | "/" => 0x2C,
-            "backtick" | "`" => 0x32,
-            "leftbracket" | "[" => 0x21,
-            "backslash" | "\\" => 0x2A,
-            "rightbracket" | "]" => 0x1E,
-            "quote" | "'" => 0x27,
-
-            _ => anyhow::bail!("Unknown key name: {}", key),
-        };
-
-        Ok(code)
     }
 }
 
@@ -633,8 +449,52 @@ mod tests {
         }
     }
 
+    /// Regression: what is typed is exactly what was passed in.
+    ///
+    /// This injector used to parse `<KEY:Cmd+C>` out of its input and post the
+    /// real key events, so dictating that phrase pressed Cmd+C in the focused
+    /// window. Every code unit must now survive to the keyboard as a character.
     #[test]
-    fn test_key_name_mapping() {
+    fn test_typed_payload_is_the_input_verbatim() {
+        for text in [
+            "Copy this <KEY:Cmd+C>",
+            "<KEY:Cmd+Shift+V>",
+            "unterminated <KEY:Cmd+C",
+            "plain text",
+            // Longer than one CGEvent payload, so it spans several chunks
+            "a marker <KEY:Cmd+A> buried in a sentence long enough to be split",
+            // Non-BMP characters exercise the surrogate-pair boundary
+            "emoji 🎤 and <KEY:Cmd+V> 👍🏽 mixed",
+        ] {
+            let typed = String::from_utf16(&utf16_chunks(text).concat())
+                .expect("chunks must recombine into valid UTF-16");
+            assert_eq!(typed, text, "injected payload must equal the input");
+        }
+    }
+
+    #[test]
+    fn test_chunks_respect_cgevent_limits() {
+        let text = "🎤".repeat(40) + &"x".repeat(100);
+        let chunks = utf16_chunks(&text);
+
+        for (i, chunk) in chunks.iter().enumerate() {
+            assert!(
+                chunk.len() <= BATCH_UTF16_LIMIT,
+                "chunk {i} carries {} code units, over Apple's limit",
+                chunk.len()
+            );
+            let is_last = i + 1 == chunks.len();
+            if !is_last {
+                assert!(
+                    !is_high_surrogate(*chunk.last().unwrap()),
+                    "chunk {i} ends on a high surrogate, splitting a character"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_key_markers_are_typed_not_pressed() {
         let injector = match MacOSTextInjector::new() {
             Ok(inj) => inj,
             Err(_) => {
@@ -643,34 +503,16 @@ mod tests {
             }
         };
 
-        // Test some common key mappings
-        assert!(injector.key_name_to_code("a").is_ok());
-        assert!(injector.key_name_to_code("return").is_ok());
-        assert!(injector.key_name_to_code("left").is_ok());
-        assert!(injector.key_name_to_code("f1").is_ok());
-
-        // Test case insensitivity
-        assert!(injector.key_name_to_code("A").is_ok());
-        assert!(injector.key_name_to_code("RETURN").is_ok());
-
-        // Test unknown key
-        assert!(injector.key_name_to_code("unknown_key").is_err());
-    }
-
-    #[test]
-    fn test_key_combination_parsing() {
-        // Test that we can parse key combinations
-        // (without actually sending them)
-        let combos = vec!["Cmd+C", "Cmd+Shift+V", "Ctrl+Alt+Delete", "Cmd+Left"];
-
-        for combo in combos {
-            let parts: Vec<&str> = combo.split('+').collect();
+        for text in [
+            "Copy this <KEY:Cmd+C>",
+            "<KEY:Cmd+Shift+V>",
+            // Previously aborted injection with "Malformed KEY marker"
+            "unterminated <KEY:Cmd+C",
+        ] {
             assert!(
-                !parts.is_empty(),
-                "Combo should have at least one part: {}",
-                combo
+                injector.inject_text(text).is_ok(),
+                "literal injection should succeed for {text:?}"
             );
-            println!("✅ Parsed combo: {} → {:?}", combo, parts);
         }
     }
 }

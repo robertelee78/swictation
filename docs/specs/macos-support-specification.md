@@ -242,27 +242,12 @@ impl TextInjector {
         Ok(())
     }
 
-    /// Send key combination using CGEvent (for <KEY:...> markers)
-    fn send_cgevent_keys(&self, combo: &str) -> Result<()> {
-        // Parse combo string (e.g., "super-Right", "ctrl-c")
-        let parts: Vec<&str> = combo.split('-').collect();
-
-        let modifiers = parse_modifiers(&parts[..parts.len()-1])?;
-        let key = parse_keycode(parts.last().unwrap())?;
-
-        let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)?;
-
-        // Create event with modifiers
-        let event = CGEvent::new_keyboard_event(source, key, true)?;
-        event.set_flags(modifiers);
-        event.post(CGEventTapLocation::HID);
-
-        // Release
-        let event = CGEvent::new_keyboard_event(source, key, false)?;
-        event.post(CGEventTapLocation::HID);
-
-        Ok(())
-    }
+    // Injection is literal, and there is deliberately no key-combination
+    // path. An earlier design parsed `<KEY:...>` markers out of the text and
+    // posted the corresponding CGEvent — but the text is transcribed speech
+    // run through the user's correction table, so a dictated phrase could
+    // press arbitrary key combinations in whatever window had focus. Nothing
+    // in the pipeline ever produced such a marker (ADR-035).
 }
 
 /// Helper: Map character to macOS virtual keycode
@@ -278,26 +263,6 @@ fn char_to_keycode(ch: char) -> CGKeyCode {
         '\n' => 0x24, // Return
         _ => 0x00,    // Fallback
     }
-}
-
-/// Helper: Parse modifier keys
-#[cfg(target_os = "macos")]
-fn parse_modifiers(modifiers: &[&str]) -> Result<CGEventFlags> {
-    use core_graphics::event::CGEventFlags;
-
-    let mut flags = CGEventFlags::empty();
-
-    for modifier in modifiers {
-        match modifier.to_lowercase().as_str() {
-            "super" | "cmd" | "command" => flags |= CGEventFlags::CGEventFlagCommand,
-            "ctrl" | "control" => flags |= CGEventFlags::CGEventFlagControl,
-            "alt" | "option" => flags |= CGEventFlags::CGEventFlagAlternate,
-            "shift" => flags |= CGEventFlags::CGEventFlagShift,
-            _ => anyhow::bail!("Unknown modifier: {}", modifier),
-        }
-    }
-
-    Ok(flags)
 }
 ```
 

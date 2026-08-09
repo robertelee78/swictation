@@ -230,7 +230,7 @@ Application Request
 │   └────────┘      └──────────┘      └─────────┘    └─────────┘   │
 │                                                                     │
 │   Special handling:                                                │
-│   • <KEY:...> markers → key events                                 │
+│   • Injected text is literal — no marker syntax                    │
 │   • Clipboard paste fallback (large text)                          │
 │   • GNOME Wayland → requires ydotool                               │
 │                                                                     │

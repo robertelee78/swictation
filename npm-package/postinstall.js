@@ -908,6 +908,109 @@ async function verifyChecksum(filePath, filename, checksums) {
   log('green', `  ✓ Checksum verified (SHA-512)`);
 }
 
+/**
+ * Files the platform package ships deliberately and must keep, whatever the
+ * downloaded GPU set happens to contain. `libonnxruntime.so` is the CPU /
+ * fallback ONNX Runtime built into the platform package
+ * (packages/linux-x64/scripts/build.sh step 8); generate-service.js points
+ * LD_LIBRARY_PATH at it whenever gpu-libs has no ORT of its own. Deleting it
+ * as "superseded" would strip the only runtime a CPU-only install has.
+ */
+const PLATFORM_OWNED_LIBS = new Set(['libonnxruntime.so']);
+
+/**
+ * The node_modules directory `startDir` sits under, or null in a dev checkout
+ * / global-less layout. Resolved through realpath so a symlinked install
+ * (npm link, pnpm store) cannot alias its way past the guard.
+ */
+function ownNodeModulesRoot(startDir = __dirname) {
+  let dir;
+  try {
+    dir = fs.realpathSync(startDir);
+  } catch {
+    return null;
+  }
+  while (true) {
+    if (path.basename(dir) === 'node_modules') return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
+/** True when `dir` is `root` or lives beneath it. Both must already be real paths. */
+function isWithin(root, dir) {
+  return dir === root || dir.startsWith(root + path.sep);
+}
+
+/**
+ * Names in the downloaded GPU set that are allowed to displace a same-named
+ * copy inside the platform package: shared objects (libfoo.so, libfoo.so.12,
+ * libfoo.so.9.15.1) minus the files the platform package owns outright.
+ */
+function supersededLibNames(gpuLibNames) {
+  const isSharedObject = (name) => /\.so(\.\d+)*$/.test(name);
+  return new Set(gpuLibNames.filter((name) => isSharedObject(name) && !PLATFORM_OWNED_LIBS.has(name)));
+}
+
+/**
+ * Remove GPU libraries that earlier installs extracted into the npm platform
+ * package, now that the authoritative set lives in getGpuLibsDir() (ADR-035).
+ * Only names the new directory also provides are removed, so platform-package
+ * files that were never duplicated stay put. Cleanup is best-effort: a failure
+ * here leaves a redundant library on disk, which must never fail the install.
+ *
+ * @param {string} gpuLibsDir - authoritative library directory, already populated
+ */
+function cleanupSupersededGpuLibs(gpuLibsDir) {
+  try {
+    const { resolveBinaryPaths, isPlatformPackageInstalled } = require('./src/resolve-binary');
+    if (!isPlatformPackageInstalled()) return;
+
+    const legacyDir = resolveBinaryPaths().libDir;
+    if (!legacyDir || !fs.existsSync(legacyDir)) return;
+    if (path.resolve(legacyDir) === path.resolve(gpuLibsDir)) return;
+
+    // resolve-binary searches `npm root -g` before the local tree, so a local
+    // install can resolve a GLOBAL platform package. Deleting from it would
+    // let `npm install swictation` in any project mutate another install's
+    // libraries. Only ever touch the node_modules tree we ourselves live in.
+    const ownRoot = ownNodeModulesRoot();
+    if (!ownRoot) return;
+    let realLegacyDir;
+    try {
+      realLegacyDir = fs.realpathSync(legacyDir);
+    } catch {
+      return;
+    }
+    if (!isWithin(ownRoot, realLegacyDir)) {
+      log('cyan', `  Skipping GPU library cleanup: ${legacyDir} is outside this install`);
+      return;
+    }
+
+    const superseded = supersededLibNames(fs.readdirSync(gpuLibsDir));
+    if (superseded.size === 0) return;
+
+    const removed = [];
+    for (const file of fs.readdirSync(legacyDir)) {
+      if (!superseded.has(file)) continue;
+      try {
+        fs.unlinkSync(path.join(legacyDir, file));
+        removed.push(file);
+      } catch (err) {
+        log('yellow', `    Could not remove superseded ${file}: ${err.message}`);
+      }
+    }
+
+    if (removed.length > 0) {
+      log('green', `  ✓ Removed ${removed.length} superseded GPU library file(s) from ${legacyDir}`);
+      log('cyan', `    ${removed.join(', ')}`);
+    }
+  } catch (err) {
+    log('yellow', `  ⚠️  GPU library cleanup skipped: ${err.message}`);
+  }
+}
+
 async function downloadGPULibraries() {
   const hasGPU = detectNvidiaGPU();
 
@@ -1081,6 +1184,16 @@ async function downloadGPULibraries() {
       } catch (err) {
         log('yellow', `   ⚠️  Could not save package metadata: ${err.message}`);
       }
+    }
+
+    // Pre-ADR-035 installs put these same libraries inside the npm platform
+    // package. With both copies on disk, LD_LIBRARY_PATH order decides which
+    // CUDA/ORT build the daemon loads. Runs on the skip path too: the very
+    // upgrade that reinstalls the platform package (restoring the shadowing
+    // copies) is the one whose receipt still matches, so it downloads nothing.
+    // The sentinel proves the authoritative set is really there first.
+    if (fs.existsSync(path.join(gpuLibsDir, 'libonnxruntime.so'))) {
+      cleanupSupersededGpuLibs(gpuLibsDir);
     }
 
     log('green', '\n✅ GPU acceleration enabled!');
@@ -1342,14 +1455,31 @@ async function downloadONNXRuntimeCoreML() {
 function detectOrtLibrary() {
   log('cyan', '\n🔍 Detecting ONNX Runtime library path...');
 
-  // PRIORITY 1: Check platform package library (new architecture)
+  const isMacOS = process.platform === 'darwin';
+  const ortFileName = isMacOS ? 'libonnxruntime.dylib' : 'libonnxruntime.so';
+
+  // PRIORITY 1: Downloaded gpu-libs directory (ADR-035)
+  // Same order generate-service.js uses to build LD_LIBRARY_PATH, so the model
+  // verification below exercises the exact ONNX Runtime the service will load.
+  try {
+    const { getGpuLibsDir } = require('./src/paths');
+    const gpuLibsOrtLib = path.join(getGpuLibsDir(), ortFileName);
+
+    if (fs.existsSync(gpuLibsOrtLib)) {
+      log('green', `✓ Found ONNX Runtime (downloaded gpu-libs): ${gpuLibsOrtLib}`);
+      log('cyan', '  Using the same library the generated service loads');
+      return gpuLibsOrtLib;
+    }
+  } catch (err) {
+    // Paths module unavailable - continue to fallbacks
+  }
+
+  // PRIORITY 2: Check platform package library (new architecture)
   // Platform packages (@agidreams/linux-x64, @agidreams/darwin-arm64) include GPU-enabled ORT
   try {
     const { resolveBinaryPaths, isPlatformPackageInstalled } = require('./src/resolve-binary');
     if (isPlatformPackageInstalled()) {
       const binaryPaths = resolveBinaryPaths();
-      const isMacOS = process.platform === 'darwin';
-      const ortFileName = isMacOS ? 'libonnxruntime.dylib' : 'libonnxruntime.so';
       const platformOrtLib = path.join(binaryPaths.libDir, ortFileName);
 
       if (fs.existsSync(platformOrtLib)) {
@@ -1362,7 +1492,7 @@ function detectOrtLibrary() {
     // Platform package not installed yet - continue to fallbacks
   }
 
-  // PRIORITY 2: Check legacy bundled library path (deprecated, for backwards compatibility)
+  // PRIORITY 3: Check legacy bundled library path (deprecated, for backwards compatibility)
   const npmOrtLib = path.join(__dirname, 'lib', 'native', 'libonnxruntime.so');
   if (fs.existsSync(npmOrtLib)) {
     log('green', `✓ Found ONNX Runtime (bundled): ${npmOrtLib}`);
@@ -1370,7 +1500,7 @@ function detectOrtLibrary() {
     return npmOrtLib;
   }
 
-  // PRIORITY 3: Fall back to Python installation (usually CPU-only)
+  // PRIORITY 4: Fall back to Python installation (usually CPU-only)
   log('yellow', '⚠️  Platform package ORT not found - checking Python fallback...');
 
   try {
@@ -1983,9 +2113,11 @@ async function interactiveConfigMigration() {
   // paths. The previous unconditional rewrite reset every user customization
   // on every upgrade (and its single-slot backup lost the original on the
   // second one).
+  // resetManagedOverride: this is the pre-download pass, so an installer-written
+  // stt_model_override reverts to "auto" and this install re-tests the hardware.
   try {
     const configStep = require('./src/steps/config');
-    configStep.run({ log, generateDefaultConfig });
+    configStep.run({ log, generateDefaultConfig, resetManagedOverride: true });
   } catch (err) {
     log('yellow', `  Could not process config: ${err.message}`);
   }
@@ -2959,7 +3091,20 @@ function updateConfigWithTestedModel(testedModel) {
     const currentOverride = configContent.match(/stt_model_override\s*=\s*"([^"]+)"/);
 
     if (currentOverride && currentOverride[1] === 'auto') {
-      // Only update if it's still on "auto" - user hasn't customized it
+      // Only update if it's still on "auto" - user hasn't customized it.
+      // Claim ownership BEFORE writing (ADR-035). The config step reads the
+      // sidecar on the next install: a value matching it is installer-authored
+      // and reverts to "auto" for re-testing, anything else is the user's and
+      // is preserved. Recording after the write fails open — an unwritable
+      // sidecar would leave a forced model that looks user-authored forever,
+      // so no install could ever re-test the hardware. Leave "auto" instead;
+      // the daemon's own auto-detection picks a model at runtime either way.
+      if (!require('./src/steps/config').recordManagedOverride(testedModel)) {
+        log('yellow', '  ⚠️  Could not record installer-managed override; leaving stt_model_override = "auto"');
+        log('cyan', `    Tested model: ${testedModel} (auto-detection will select it at runtime)`);
+        return;
+      }
+
       configContent = configContent.replace(
         /stt_model_override\s*=\s*"auto"/,
         `stt_model_override = "${testedModel}"`
@@ -3251,13 +3396,23 @@ async function main() {
   }
 }
 
-// Run postinstall
-main().catch(err => {
-  if (err instanceof InstallError) {
-    console.log(err.format());
-  } else {
-    console.log(`\x1b[31mPostinstall error: ${err.message}\x1b[0m`);
-  }
-  // Don't exit with error code - npm install should still succeed
-  process.exit(0);
-});
+// Run postinstall. Guarded so tests can require this file for its helpers
+// without kicking off a real install; `node postinstall.js` is unaffected.
+if (require.main === module) {
+  main().catch(err => {
+    if (err instanceof InstallError) {
+      console.log(err.format());
+    } else {
+      console.log(`\x1b[31mPostinstall error: ${err.message}\x1b[0m`);
+    }
+    // Don't exit with error code - npm install should still succeed
+    process.exit(0);
+  });
+}
+
+module.exports = {
+  PLATFORM_OWNED_LIBS,
+  ownNodeModulesRoot,
+  isWithin,
+  supersededLibNames,
+};

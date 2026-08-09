@@ -70,9 +70,17 @@ pub struct DrainHandles {
     vad_task: Option<tokio::task::JoinHandle<()>>,
     stt_task: Option<tokio::task::JoinHandle<()>>,
     backpressure_task: Option<tokio::task::JoinHandle<()>>,
+    capture_stopped_at: Instant,
 }
 
 impl DrainHandles {
+    /// The instant audio capture detached. This — not the moment the drain
+    /// finishes — is when the user stopped dictating, so it is what the
+    /// session's wall time must be measured against (ADR-035).
+    pub fn capture_stopped_at(&self) -> Instant {
+        self.capture_stopped_at
+    }
+
     /// Await the VAD task (drains queued audio, flushes the detector, forwards
     /// the flush through the same channel streamed segments used), then the
     /// STT task (drains every remaining segment including that flush), then
@@ -93,6 +101,35 @@ impl DrainHandles {
             task.abort();
         }
     }
+}
+
+/// The speech one `process_audio` call produced, oldest first.
+///
+/// A call spans many windows, so with `max_speech` splitting it can complete
+/// more than one segment: it returns the oldest and queues the rest for
+/// `drain_pending`. Both have to reach STT. The queue had no consumer at all
+/// when it was introduced, so every segment past the first was silently
+/// dropped — a speaker who never paused lost all but one slice per call.
+fn payloads_from_call(returned: VadResult, queued: Vec<VadResult>) -> Vec<Vec<f32>> {
+    speech_only(std::iter::once(returned).chain(queued))
+}
+
+/// Everything the detector still owes once audio stops, oldest first.
+///
+/// The queue drains BEFORE the flush: those segments completed while audio was
+/// still arriving, so they precede the tail the flush produces.
+fn payloads_at_stop(queued: Vec<VadResult>, flushed: Option<VadResult>) -> Vec<Vec<f32>> {
+    speech_only(queued.into_iter().chain(flushed))
+}
+
+fn speech_only(results: impl IntoIterator<Item = VadResult>) -> Vec<Vec<f32>> {
+    results
+        .into_iter()
+        .filter_map(|result| match result {
+            VadResult::Speech { samples, .. } => Some(samples),
+            VadResult::Silence => None,
+        })
+        .collect()
 }
 
 impl Pipeline {
@@ -429,6 +466,12 @@ impl Pipeline {
         self.is_recording = true;
         info!("Recording started");
 
+        // Start from a clean detector. A segment left queued by the previous
+        // session — or audio still buffered mid-utterance in the segmenter —
+        // must never surface as the first thing this session transcribes
+        // (ADR-035).
+        self.vad.lock().reset();
+
         // Create BOUNDED channel for audio chunks (cpal callback → VAD/STT processing)
         // Capacity: 20 chunks = 10 seconds at 0.5s/chunk
         // This prevents memory exhaustion if processing falls behind
@@ -529,42 +572,53 @@ impl Pipeline {
                     eprintln!("DEBUG: Processing VAD chunk, buffer len: {}, max_amplitude: {:.6}, avg_amplitude: {:.6}",
                               buffer.len(), max_amplitude, avg_amplitude);
 
-                    // Process through VAD (scoped to ensure lock is dropped before any async ops)
+                    // Process through VAD (scoped to ensure lock is dropped before any async ops).
+                    // The call returns its oldest completed segment and queues
+                    // any others it finished, so both are taken here.
                     let vad_result = {
                         let mut vad_lock = vad.lock();
-                        vad_lock.process_audio(&vad_chunk)
+                        match vad_lock.process_audio(&vad_chunk) {
+                            Ok(returned) => {
+                                Ok(payloads_from_call(returned, vad_lock.drain_pending()))
+                            }
+                            Err(e) => Err(e),
+                        }
                     }; // vad_lock automatically dropped here
 
                     match vad_result {
-                        Ok(VadResult::Speech {
-                            samples: speech_samples,
-                            ..
-                        }) => {
-                            eprintln!(
-                                "DEBUG: VAD detected speech! {} samples",
-                                speech_samples.len()
-                            );
+                        Ok(segments) if segments.is_empty() => {
+                            eprintln!("DEBUG: VAD detected silence");
+                            // Skip silence (VAD ensures we only transcribe speech segments)
+                        }
+                        Ok(segments) => {
+                            let mut stt_gone = false;
+                            for speech_samples in segments {
+                                eprintln!(
+                                    "DEBUG: VAD detected speech! {} samples",
+                                    speech_samples.len()
+                                );
 
-                            // Send speech segment to STT task (non-blocking with backpressure)
-                            if let Err(e) = vad_tx.send(speech_samples).await {
-                                // STT task died mid-session (previously this was
-                                // silent: hotkey and metrics kept "working" while
-                                // no text ever appeared again). Surface it through
-                                // the transcription channel so it reaches the logs
-                                // and the daemon consumer (ADR-035).
-                                eprintln!("Failed to send speech segment to STT task: {}", e);
-                                let _ = tx_for_vad
-                                    .send(Err(anyhow::anyhow!(
+                                // Send speech segment to STT task (non-blocking with backpressure)
+                                if let Err(e) = vad_tx.send(speech_samples).await {
+                                    // STT task died mid-session (previously this was
+                                    // silent: hotkey and metrics kept "working" while
+                                    // no text ever appeared again). Surface it through
+                                    // the transcription channel so it reaches the logs
+                                    // and the daemon consumer (ADR-035).
+                                    eprintln!("Failed to send speech segment to STT task: {}", e);
+                                    let _ = tx_for_vad
+                                        .send(Err(anyhow::anyhow!(
                                         "STT task terminated unexpectedly — transcription halted. \
                                          Toggle recording off and on to restart it."
                                     )))
-                                    .await;
+                                        .await;
+                                    stt_gone = true;
+                                    break;
+                                }
+                            }
+                            if stt_gone {
                                 break; // STT task has terminated
                             }
-                        }
-                        Ok(VadResult::Silence) => {
-                            eprintln!("DEBUG: VAD detected silence");
-                            // Skip silence (VAD ensures we only transcribe speech segments)
                         }
                         Err(e) => {
                             eprintln!("VAD error: {}", e);
@@ -574,24 +628,30 @@ impl Pipeline {
             }
 
             // Audio channel closed (stop_recording replaced the capture callback,
-            // dropping the only sender). Flush the detector and forward any
-            // buffered tail speech through the SAME channel the streamed
-            // segments used — the single STT consumer processes it exactly
-            // once, so the final ~0.8s of dictation is transcribed instead of
-            // discarded, and duplicate injection is structurally impossible
-            // (ADR-035; replaces the flush-discard workaround).
-            let flushed = vad.lock().flush();
-            if let Some(VadResult::Speech {
-                samples: speech_samples,
-                ..
-            }) = flushed
-            {
+            // dropping the only sender). Hand over everything the detector
+            // still owes — segments queued by the last call, then the flushed
+            // tail — through the SAME channel the streamed segments used. The
+            // single STT consumer processes each exactly once, so the final
+            // ~0.8s of dictation is transcribed instead of discarded, and
+            // duplicate injection is structurally impossible (ADR-035;
+            // replaces the flush-discard workaround).
+            let tail = {
+                let mut vad_lock = vad.lock();
+                // Drain BEFORE flushing: flush() pushes onto the same queue and
+                // returns its front, so flushing first would hand back an older
+                // segment and reorder the tail.
+                let queued = vad_lock.drain_pending();
+                let flushed = vad_lock.flush();
+                payloads_at_stop(queued, flushed)
+            };
+            for speech_samples in tail {
                 info!(
-                    "Forwarding flushed tail speech to STT: {} samples",
+                    "Forwarding tail speech to STT: {} samples",
                     speech_samples.len()
                 );
                 if let Err(e) = vad_tx.send(speech_samples).await {
-                    eprintln!("Failed to forward flushed speech to STT task: {}", e);
+                    eprintln!("Failed to forward tail speech to STT task: {}", e);
+                    break;
                 }
             }
             // vad_tx drops here → stt_rx closes after the STT task drains it.
@@ -762,6 +822,7 @@ impl Pipeline {
                 vad_task: None,
                 stt_task: None,
                 backpressure_task: None,
+                capture_stopped_at: Instant::now(),
             });
         }
 
@@ -779,11 +840,17 @@ impl Pipeline {
         //    discarded and nothing is transcribed twice.
         self.audio.lock().set_chunk_callback(|_| {});
 
+        // 3. The mic is off as of here. Stamp the moment so the drain that
+        //    follows — real STT inference on the tail utterance — is not
+        //    billed to the user as dictation wall time (ADR-035).
+        let capture_stopped_at = Instant::now();
+
         info!("Recording stopped; session tasks detached for drain");
         Ok(DrainHandles {
             vad_task: self.vad_task.take(),
             stt_task: self.stt_task.take(),
             backpressure_task: self.backpressure_task.take(),
+            capture_stopped_at,
         })
     }
 
@@ -841,6 +908,58 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, Ordering};
 
+    /// A segment whose payload identifies it by content.
+    fn segment(marker: f32) -> VadResult {
+        VadResult::Speech {
+            start_sample: 0,
+            samples: vec![marker; 2],
+        }
+    }
+
+    fn markers(payloads: &[Vec<f32>]) -> Vec<f32> {
+        payloads.iter().map(|payload| payload[0]).collect()
+    }
+
+    /// Queued-segment fence (ADR-035 review round): the VAD queue exists
+    /// because one call can finish several segments, and every one of them is
+    /// dictation. Forwarding only the returned value drops the rest.
+    #[test]
+    fn every_segment_one_vad_call_completed_is_forwarded_in_order() {
+        let forwarded = payloads_from_call(segment(1.0), vec![segment(2.0), segment(3.0)]);
+
+        assert_eq!(
+            markers(&forwarded),
+            vec![1.0, 2.0, 3.0],
+            "the returned segment then the queued ones, oldest first"
+        );
+    }
+
+    #[test]
+    fn a_call_that_completed_nothing_forwards_nothing() {
+        assert!(payloads_from_call(VadResult::Silence, Vec::new()).is_empty());
+    }
+
+    /// Stop ordering fence (ADR-035): segments queued by the last call finished
+    /// while audio was still arriving, so they precede the flushed tail. This
+    /// is also why the VAD task drains the queue BEFORE calling flush —
+    /// `flush()` pushes onto the same queue and returns its front, so flushing
+    /// first would hand back an older segment and reorder the tail.
+    #[test]
+    fn stop_forwards_queued_segments_before_the_flush() {
+        let forwarded = payloads_at_stop(vec![segment(1.0), segment(2.0)], Some(segment(9.0)));
+
+        assert_eq!(
+            markers(&forwarded),
+            vec![1.0, 2.0, 9.0],
+            "queued segments then the flushed tail"
+        );
+    }
+
+    #[test]
+    fn stop_with_nothing_buffered_forwards_nothing() {
+        assert!(payloads_at_stop(Vec::new(), None).is_empty());
+    }
+
     /// Drain contract (ADR-035): drain() must not return until both session
     /// tasks have fully completed, and must abort the backpressure monitor.
     #[tokio::test]
@@ -869,6 +988,7 @@ mod tests {
             vad_task: Some(vad_task),
             stt_task: Some(stt_task),
             backpressure_task: Some(monitor),
+            capture_stopped_at: Instant::now(),
         }
         .drain()
         .await;

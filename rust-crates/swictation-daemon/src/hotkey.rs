@@ -19,7 +19,7 @@ use crate::display_server::{
 };
 
 /// Hotkey events
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HotkeyEvent {
     /// Toggle recording on/off
     Toggle,
@@ -27,6 +27,55 @@ pub enum HotkeyEvent {
     PushToTalkPressed,
     /// Push-to-talk released
     PushToTalkReleased,
+}
+
+/// Net effect of the hotkey events that queued during a slow toggle (ADR-035).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DrainOutcome {
+    /// Stale `Toggle` events dropped by the drain.
+    pub toggles_discarded: usize,
+    /// The one push-to-talk action still owed once the batch is replayed:
+    /// a press if the key ended up held, a release if it ended up let go,
+    /// `None` if the batch left the hold state where it started.
+    pub pending: Option<HotkeyEvent>,
+    /// Whether push-to-talk is held once the batch has been replayed.
+    pub ptt_active: bool,
+}
+
+/// Reduce a drained batch of hotkey events to the action still owed.
+///
+/// `Toggle` events in the batch are stale by construction — the toggle they
+/// would have driven has already run — so they are counted and dropped. The
+/// push-to-talk events are instead replayed against `ptt_active`, because a
+/// press and its release are a pair: discarding a press while honouring its
+/// release would start a recording after the user let go. A press and release
+/// inside the same batch therefore cancel out, a release with no matching
+/// press is a no-op, and only a batch that leaves the key in a different hold
+/// state than it started owes an action.
+pub fn reduce_drained_events(ptt_active: bool, events: &[HotkeyEvent]) -> DrainOutcome {
+    let started_held = ptt_active;
+    let mut held = ptt_active;
+    let mut toggles_discarded = 0;
+
+    for event in events {
+        match event {
+            HotkeyEvent::Toggle => toggles_discarded += 1,
+            HotkeyEvent::PushToTalkPressed => held = true,
+            HotkeyEvent::PushToTalkReleased => held = false,
+        }
+    }
+
+    let pending = match (started_held, held) {
+        (false, true) => Some(HotkeyEvent::PushToTalkPressed),
+        (true, false) => Some(HotkeyEvent::PushToTalkReleased),
+        _ => None,
+    };
+
+    DrainOutcome {
+        toggles_discarded,
+        pending,
+        ptt_active: held,
+    }
 }
 
 /// Hotkey-specific display server types (extends base detection with Sway)
@@ -555,19 +604,20 @@ bindsym {} exec swictation toggle
         }
     }
 
-    /// Drain all queued hotkey events without blocking.
-    /// Returns the number of events drained.
-    /// Used after debounce to discard stale events that queued during a slow toggle.
-    pub fn try_drain(&mut self) -> usize {
+    /// Drain all queued hotkey events without blocking and reduce them via
+    /// [`reduce_drained_events`]: stale toggles are dropped, push-to-talk
+    /// press/release pairing survives. Used after debounce and after a slow
+    /// toggle to clear events that queued while the daemon was busy.
+    pub fn drain_stale(&mut self, ptt_active: bool) -> DrainOutcome {
         let rx = match &mut self.backend {
             HotkeyBackend::GlobalHotkey { rx, .. } => rx,
             HotkeyBackend::SwayIpc { rx } => rx,
         };
-        let mut count = 0;
-        while rx.try_recv().is_ok() {
-            count += 1;
+        let mut events = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            events.push(event);
         }
-        count
+        reduce_drained_events(ptt_active, &events)
     }
 }
 
@@ -782,5 +832,113 @@ mod tests {
         assert_eq!(parse_key_code("space").unwrap(), Code::Space);
         assert_eq!(parse_key_code("f4").unwrap(), Code::F4);
         assert!(parse_key_code("invalid").is_err());
+    }
+
+    #[test]
+    fn drain_discards_every_stale_toggle() {
+        let outcome = reduce_drained_events(
+            false,
+            &[
+                HotkeyEvent::Toggle,
+                HotkeyEvent::Toggle,
+                HotkeyEvent::Toggle,
+            ],
+        );
+
+        assert_eq!(outcome.toggles_discarded, 3);
+        assert_eq!(outcome.pending, None);
+        assert!(!outcome.ptt_active);
+    }
+
+    /// The ADR-035 inversion: a push-to-talk press that queues during a slow
+    /// stop-drain used to be discarded wholesale, so its release arrived from
+    /// Idle and toggled recording ON after the user had already let go.
+    #[test]
+    fn drain_swallowing_a_press_does_not_leave_its_release_starting_a_recording() {
+        // The press queues during the drain and is consumed by it...
+        let drained = reduce_drained_events(false, &[HotkeyEvent::PushToTalkPressed]);
+        assert_eq!(drained.pending, Some(HotkeyEvent::PushToTalkPressed));
+        assert!(drained.ptt_active, "the key is still physically held");
+
+        // ...so the release that follows has a matching press to close.
+        let after_release =
+            reduce_drained_events(drained.ptt_active, &[HotkeyEvent::PushToTalkReleased]);
+        assert_eq!(after_release.pending, Some(HotkeyEvent::PushToTalkReleased));
+        assert!(!after_release.ptt_active);
+    }
+
+    #[test]
+    fn drain_cancels_a_press_and_release_that_both_landed_inside_it() {
+        let outcome = reduce_drained_events(
+            false,
+            &[
+                HotkeyEvent::PushToTalkPressed,
+                HotkeyEvent::Toggle,
+                HotkeyEvent::PushToTalkReleased,
+            ],
+        );
+
+        assert_eq!(outcome.toggles_discarded, 1);
+        assert_eq!(
+            outcome.pending, None,
+            "a press the user has already released owes no recording"
+        );
+        assert!(!outcome.ptt_active);
+    }
+
+    #[test]
+    fn drain_ignores_a_release_with_no_active_press() {
+        let outcome = reduce_drained_events(false, &[HotkeyEvent::PushToTalkReleased]);
+
+        assert_eq!(outcome.pending, None);
+        assert!(!outcome.ptt_active);
+    }
+
+    #[test]
+    fn drain_owes_a_release_when_the_key_was_held_before_it() {
+        let outcome = reduce_drained_events(true, &[HotkeyEvent::PushToTalkReleased]);
+
+        assert_eq!(outcome.pending, Some(HotkeyEvent::PushToTalkReleased));
+        assert!(!outcome.ptt_active);
+    }
+
+    #[test]
+    fn drain_collapses_key_repeat_into_one_pending_press() {
+        let outcome = reduce_drained_events(
+            false,
+            &[
+                HotkeyEvent::PushToTalkPressed,
+                HotkeyEvent::PushToTalkPressed,
+                HotkeyEvent::PushToTalkPressed,
+            ],
+        );
+
+        assert_eq!(outcome.pending, Some(HotkeyEvent::PushToTalkPressed));
+        assert!(outcome.ptt_active);
+    }
+
+    #[test]
+    fn drain_of_a_press_release_press_burst_ends_held() {
+        let outcome = reduce_drained_events(
+            false,
+            &[
+                HotkeyEvent::PushToTalkPressed,
+                HotkeyEvent::PushToTalkReleased,
+                HotkeyEvent::PushToTalkPressed,
+            ],
+        );
+
+        assert_eq!(outcome.pending, Some(HotkeyEvent::PushToTalkPressed));
+        assert!(outcome.ptt_active);
+    }
+
+    #[test]
+    fn drain_of_an_empty_batch_changes_nothing() {
+        for held in [false, true] {
+            let outcome = reduce_drained_events(held, &[]);
+            assert_eq!(outcome.toggles_discarded, 0);
+            assert_eq!(outcome.pending, None);
+            assert_eq!(outcome.ptt_active, held);
+        }
     }
 }

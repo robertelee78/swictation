@@ -178,17 +178,21 @@ impl Daemon {
                 // Locks released here before broadcast
 
                 // Phase 4: Broadcast (no locks held - prevents deadlock with metrics updater)
-                // CRITICAL: Spawn broadcasts to prevent blocking IPC responses
-                // Broadcasting to UI clients can block if clients are slow/disconnected
-                // By spawning, we return immediately and let broadcasts happen async
+                // Broadcasts run in one ordered task, awaited before returning —
+                // toggle_lock then serializes lifecycle broadcasts across toggles
+                // in BOTH directions (start-then-stop and stop-then-start), so a
+                // rapid double-tap can't interleave session updates (ADR-035).
                 {
                     let broadcaster = Arc::clone(&self.broadcaster);
-                    tokio::spawn(async move {
+                    let broadcast_task = tokio::spawn(async move {
                         broadcaster.start_session(sid).await;
                         broadcaster
                             .broadcast_state_change(swictation_metrics::DaemonState::Recording)
                             .await;
                     });
+                    if let Err(e) = broadcast_task.await {
+                        warn!("Start broadcast task join error: {}", e);
+                    }
                 }
 
                 Ok(format!("Recording started (Session #{})", sid))
@@ -201,6 +205,21 @@ impl Daemon {
                     let mut pipeline = self.pipeline.write().await;
                     pipeline.stop_recording()?
                 };
+
+                // The mic detached at this instant, so this is where the
+                // session ends — end_session is stamped with it below so the
+                // drain is not billed as dictation wall time. Go Idle now,
+                // before draining: the metrics updater re-broadcasts daemon
+                // state every second off this value, so leaving it Recording
+                // would keep the UI claiming Recording for the whole drain
+                // (ADR-035). The explicit Idle broadcast is deferred to
+                // phase 4, where it is ordered behind end_session.
+                let capture_stopped_at = drain.capture_stopped_at();
+                {
+                    let mut state = self.state.write().await;
+                    *state = DaemonState::Idle;
+                }
+
                 // Phase 2b: Drain OUTSIDE all daemon locks — the drain runs STT
                 // inference on the final utterance and takes the metrics lock,
                 // which would deadlock against the metrics updater
@@ -212,16 +231,15 @@ impl Daemon {
                 }
                 // Pipeline lock released before we touch state
 
-                // Phase 3: Update state and end session
+                // Phase 3: End the session. This stays AFTER the drain because
+                // segments transcribed during the drain are added to the open
+                // session; only its end timestamp comes from before it.
                 let (session_metrics, sid) = {
-                    let mut state = self.state.write().await;
                     let pipeline = self.pipeline.read().await;
                     let mut session_id = self.session_id.write().await;
 
-                    *state = DaemonState::Idle;
-
                     let metrics = pipeline.get_metrics();
-                    let session_metrics = metrics.lock().end_session()?;
+                    let session_metrics = metrics.lock().end_session(Some(capture_stopped_at))?;
                     let sid = *session_id;
                     *session_id = None;
 
@@ -229,12 +247,18 @@ impl Daemon {
                 };
                 // All locks released before broadcast
 
-                // Phase 4: Broadcast (no locks held)
-                // CRITICAL: Spawn broadcasts to prevent blocking IPC responses
-                // Same rationale as start_recording - avoid blocking on slow clients
+                // Phase 4: Broadcast (no locks held).
+                // ONE task, so end_session and the Idle state change cannot be
+                // reordered against each other; awaited here so toggle_lock —
+                // which this runs under — also orders both ahead of the next
+                // toggle's start broadcasts. Two independent tasks could
+                // interleave with those, and a replayed push-to-talk press
+                // starts the next toggle immediately (ADR-035).
+                // Spawned rather than inlined so a panicking client broadcast
+                // cannot take the toggle down with it.
                 {
                     let broadcaster = Arc::clone(&self.broadcaster);
-                    tokio::spawn(async move {
+                    let broadcasts = tokio::spawn(async move {
                         if let Some(sid) = sid {
                             broadcaster.end_session(sid).await;
                         }
@@ -242,6 +266,9 @@ impl Daemon {
                             .broadcast_state_change(swictation_metrics::DaemonState::Idle)
                             .await;
                     });
+                    if let Err(e) = broadcasts.await {
+                        warn!("Stop broadcast task failed: {}", e);
+                    }
                 }
 
                 Ok(format!(
@@ -825,6 +852,12 @@ async fn daemon_main(
     let last_toggle =
         parking_lot::Mutex::new(std::time::Instant::now() - std::time::Duration::from_secs(10)); // allow first toggle immediately
 
+    // Whether the push-to-talk key is currently held. Tracked here because a
+    // release is only meaningful against a matching press: without this, a
+    // press swallowed by a drain leaves its release toggling recording ON
+    // after the user has already let go (ADR-035).
+    let mut ptt_held = false;
+
     // Main event loop
     loop {
         tokio::select! {
@@ -845,42 +878,83 @@ async fn daemon_main(
                         let elapsed = last_toggle.lock().elapsed();
                         if elapsed < std::time::Duration::from_millis(TOGGLE_DEBOUNCE_MS) {
                             info!("Toggle debounced ({}ms since last)", elapsed.as_millis());
-                            // Drain any additional queued toggle events
-                            if let Some(ref mut manager) = hotkey_manager {
-                                let drained = manager.try_drain();
-                                if drained > 0 {
-                                    info!("Drained {} queued hotkey events", drained);
+                        } else {
+                            *last_toggle.lock() = std::time::Instant::now();
+
+                            // Execute toggle (serialized via toggle_lock inside Daemon)
+                            if let Err(e) = daemon_clone.toggle().await {
+                                error!("Toggle error: {}", e);
+                            }
+
+                            // After toggle completes, restart the debounce window
+                            *last_toggle.lock() = std::time::Instant::now();
+                        }
+
+                        // Clear whatever queued while we were busy. Only stale
+                        // toggles are discarded — push-to-talk press/release
+                        // pairing survives the drain, so a press caught here
+                        // cannot leave its release starting a recording after
+                        // the user let go (ADR-035).
+                        let pending = if let Some(ref mut manager) = hotkey_manager {
+                            let outcome = manager.drain_stale(ptt_held);
+                            ptt_held = outcome.ptt_active;
+                            if outcome.toggles_discarded > 0 {
+                                info!(
+                                    "Discarded {} stale toggle event(s) queued during toggle",
+                                    outcome.toggles_discarded
+                                );
+                            }
+                            outcome.pending
+                        } else {
+                            None
+                        };
+
+                        // Apply the owed action only if it moves the daemon the
+                        // way the key asks. A press that raced a *start* toggle
+                        // must not stop the recording it was asking for; its
+                        // release still stops that recording, because ptt_held
+                        // now says the key owns it.
+                        let recording = daemon_clone.status().await == "recording";
+                        match pending {
+                            Some(HotkeyEvent::PushToTalkPressed) if !recording => {
+                                info!("Push-to-talk still held after drain; starting recording");
+                                if let Err(e) = daemon_clone.toggle().await {
+                                    error!("PTT start error: {}", e);
                                 }
                             }
-                            continue;
-                        }
-                        *last_toggle.lock() = std::time::Instant::now();
-
-                        // Execute toggle (serialized via toggle_lock inside Daemon)
-                        if let Err(e) = daemon_clone.toggle().await {
-                            error!("Toggle error: {}", e);
-                        }
-
-                        // After toggle completes, update debounce timestamp and
-                        // drain any events that queued during the slow toggle
-                        *last_toggle.lock() = std::time::Instant::now();
-                        if let Some(ref mut manager) = hotkey_manager {
-                            let drained = manager.try_drain();
-                            if drained > 0 {
-                                info!("Drained {} queued hotkey events after toggle", drained);
+                            Some(HotkeyEvent::PushToTalkReleased) if recording => {
+                                info!("Push-to-talk released during drain; stopping recording");
+                                if let Err(e) = daemon_clone.toggle().await {
+                                    error!("PTT stop error: {}", e);
+                                }
                             }
+                            _ => {}
                         }
                     }
                     HotkeyEvent::PushToTalkPressed => {
-                        info!("Push-to-talk pressed");
-                        if let Err(e) = daemon_clone.toggle().await {
-                            error!("PTT start error: {}", e);
+                        if ptt_held {
+                            // Key repeat while already held — the recording is
+                            // already running.
+                            debug!("Push-to-talk repeat press ignored");
+                        } else {
+                            ptt_held = true;
+                            info!("Push-to-talk pressed");
+                            if let Err(e) = daemon_clone.toggle().await {
+                                error!("PTT start error: {}", e);
+                            }
                         }
                     }
                     HotkeyEvent::PushToTalkReleased => {
-                        info!("Push-to-talk released");
-                        if let Err(e) = daemon_clone.toggle().await {
-                            error!("PTT stop error: {}", e);
+                        if ptt_held {
+                            ptt_held = false;
+                            info!("Push-to-talk released");
+                            if let Err(e) = daemon_clone.toggle().await {
+                                error!("PTT stop error: {}", e);
+                            }
+                        } else {
+                            // No matching press: toggling here would start a
+                            // recording the user never asked for (ADR-035).
+                            debug!("Push-to-talk released with no active press; ignoring");
                         }
                     }
                 }
