@@ -66,10 +66,21 @@ swictation start
 If postinstall was interrupted or you skipped it, the same work is reachable manually:
 
 ```bash
-swictation download-models   # fetch VAD + STT models
-swictation setup             # install services, configure hotkeys/permissions
+swictation doctor            # what, if anything, is missing or broken
+swictation setup --repair    # run only the steps that are not healthy
 swictation start
 ```
+
+`swictation setup` with no flags runs the whole install (config, GPU libraries, models,
+services) and is still fine to use; `--repair` is the faster path once something is
+merely broken rather than absent. See [Troubleshooting](#troubleshooting).
+
+**Installs are tamper-evident.** Every model file is pinned to an immutable upstream
+revision and verified against a SHA-256 recorded in `models.manifest.json` before it
+takes its final name, so a truncated transfer, a proxy-injected error page, or an
+upstream force-push fails the download instead of surfacing later as an opaque daemon
+crash. A file that fails verification is never left in place: it is re-fetched on the
+next run, and `swictation doctor --deep` re-checks the whole tree on demand (ADR-036).
 
 ### First Use
 
@@ -164,8 +175,9 @@ Configure phonetic sensitivity in Settings UI (0.0 = exact only, 1.0 = very fuzz
 ### CLI
 
 ```bash
+swictation doctor            # Check every install step, print a repair command per failure
 swictation download-models   # Download AI models (alias: download-model)
-swictation setup             # Install services, configure hotkeys/permissions
+swictation setup             # Run the install steps (config, models, services)
 swictation start [--ui]      # Start the daemon (and optionally the tray UI)
 swictation stop              # Stop the daemon
 swictation status            # Service, socket, and platform status
@@ -173,6 +185,10 @@ swictation toggle            # Toggle recording on/off (what the hotkey calls)
 swictation help              # Full usage
 swictation --version         # Version info for every component
 ```
+
+`doctor` and `setup` are the install-repair pair and are covered in
+[Troubleshooting](#troubleshooting). `status` answers a different question — whether the
+daemon is running right now — and needs a working install to be meaningful.
 
 **`download-models`** fetches the Silero VAD model plus one or more STT models into the
 platform data directory. With no arguments it downloads the platform default set. Pass
@@ -240,6 +256,47 @@ file is valid and unset keys fall back to the values above (ADR-034).
 
 ## Troubleshooting
 
+### Start here: `swictation doctor`
+
+Whatever the symptom, run this first. `doctor` evaluates every install step against what
+is actually on disk and prints one line per step, with a repair command under each
+failure. It executes no install work and writes nothing, so it is safe to run on an
+install that is mid-failure — and it works even when the binaries themselves are missing.
+
+```bash
+swictation doctor          # health table for every install step
+swictation doctor --deep   # ...and verify file contents by hash, not just size
+swictation doctor --json   # machine-readable report (schemaVersion 1)
+```
+
+Exit codes: **0** nothing unhealthy, **1** at least one step unhealthy or blocked,
+**2** doctor itself failed to run. The last one is deliberately distinct so a crashed
+diagnostic is never mistaken for a broken install.
+
+A normal run compares sizes. `--deep` streams a SHA-256 of every model file, GPU library
+and platform binary and compares it against what was recorded when they were installed —
+minutes of I/O on a multi-gigabyte model tree, which is why it is opt-in rather than the
+default. Use it when a file is the right size but the daemon still misbehaves.
+
+### Then fix it: `swictation setup --repair`
+
+`--repair` re-runs only the steps whose check is currently failing, so a mangled service
+unit no longer costs you a 9 GB model re-download — and reinstalling the whole package
+stops being the first thing to reach for. Every step derives its state from disk and is
+idempotent, so running one twice is harmless.
+
+```bash
+swictation setup --repair     # run only the steps that are not healthy
+swictation setup --list       # list the install steps, their ids and what gates them
+swictation setup --<id>       # run exactly one step, e.g. --services
+```
+
+Step ids: `platform`, `binaries`, `config-reset`, `gpu-libs`, `models`, `config-heal`,
+`services`, `integration`, `verify`. (`cleanup` exists but runs only during npm install;
+naming it here is rejected rather than silently ignored, as is any unrecognized flag.)
+`--repair`, `--list` and `--<id>` are non-interactive — they never stop to ask about
+auto-start — so they are safe to script.
+
 ### Where things live
 
 | | Linux | macOS |
@@ -252,7 +309,9 @@ file is valid and unset keys fall back to the values above (ADR-034).
 
 `swictation status` prints the resolved socket paths for your machine.
 
-**Installation issues:** read the install log for your platform from the table above.
+**Installation issues:** run `swictation doctor` — its header prints the resolved install
+log path for your machine, along with the platform, target user, and selected model it
+resolved.
 
 **Daemon won't start:**
 ```bash

@@ -54,7 +54,8 @@ npm install -g swictation --foreground-scripts
 
 3. **Library Download** (~1.5GB)
    - ONNX Runtime with CoreML support
-   - Model files from HuggingFace
+   - Model files from HuggingFace, pinned to immutable upstream revisions and
+     verified against per-file SHA-256 hashes before they are kept
 
 4. **Service Installation**
    - Creates LaunchAgent plists in `~/Library/LaunchAgents/`
@@ -224,6 +225,32 @@ stt_model_override = "1.1b-coreml"  # macOS native CoreML (alias "coreml-native"
 
 ## Troubleshooting
 
+### Start here: `swictation doctor`
+
+Before working through the symptom-specific sections below, run `doctor`. It checks every
+install step against what is on disk — models, GPU libraries, binaries, config, LaunchAgents,
+Accessibility integration — and prints a repair command under each failure. It runs no
+install work and writes nothing, so it is safe on a broken install and works even when the
+binaries are missing.
+
+```bash
+swictation doctor          # health table for every install step
+swictation doctor --deep   # ...and verify every model and library by SHA-256, not just size
+swictation doctor --json   # machine-readable report (schemaVersion 1)
+```
+
+Exit codes: `0` nothing unhealthy, `1` something is unhealthy or blocked, `2` doctor itself
+failed to run. Then fix only what it flagged:
+
+```bash
+swictation setup --repair     # re-run only the steps that are not healthy
+swictation setup --list       # list the install steps and their ids
+swictation setup --services   # or run a single step by id
+```
+
+Reinstalling the package is no longer the first thing to try — `--repair` re-runs the broken
+steps only, so a bad LaunchAgent does not cost you a model re-download.
+
 ### "Permission denied" errors
 
 **Cause:** Accessibility permissions not granted
@@ -279,9 +306,15 @@ grep -i "coreml\|gpu\|metal" ~/Library/Logs/swictation/daemon.log
 
 **Check 1 - Model files corrupted:**
 ```bash
-# Re-download models
-swictation download-models --force
+# Verify every model file against its recorded SHA-256 first
+swictation doctor --deep
+
+# Re-fetch only if doctor reports corruption (repairs the models step alone)
+swictation setup --models
 ```
+
+`--deep` names the specific files that fail verification, so you can tell a corrupt model
+from a permissions or library problem before re-downloading gigabytes.
 
 **Check 2 - Library compatibility:**
 ```bash
@@ -290,7 +323,13 @@ otool -L <platform package dir>/lib/libonnxruntime.dylib
 # All paths should exist
 ```
 
-**Check 3 - Reinstall:**
+**Check 3 - Repair the install:**
+```bash
+swictation doctor          # what is actually broken
+swictation setup --repair  # re-run only those steps
+```
+
+Reinstall only if `doctor` still reports failures after a repair:
 ```bash
 npm uninstall -g swictation
 npm install -g swictation --foreground-scripts
@@ -384,12 +423,14 @@ rm -rf ~/Library/Caches/swictation
 
 ## Known Limitations
 
-### Current Limitations (v0.7.0)
+### Current Limitations (v0.7.36)
 
 - **Intel Macs not supported** - Apple Silicon (ARM64) required
 - **macOS 13 and earlier not supported** - CoreML requirements
 - **Tray icon** - provided by the Tauri UI (`com.swictation.ui`)
-- **Single model** - all supported Macs run the CoreML 1.1B bundle; no 0.6B path
+- **Auto-selection is single-model** - on all supported Macs auto-select runs the
+  CoreML 1.1B bundle; the 0.6B CoreML bundle can still be fetched manually with
+  `swictation setup --models` / `download-model 0.6b-coreml` if you want it
 
 ### Compared to Linux
 

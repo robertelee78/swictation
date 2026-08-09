@@ -37,8 +37,9 @@ The `--foreground-scripts` flag shows installation progress. Postinstall automat
 ## Commands
 
 ```bash
+swictation doctor            # Check every install step, print a repair command per failure
 swictation download-models   # Download AI models (alias: download-model)
-swictation setup             # Install services, configure hotkeys/permissions
+swictation setup             # Run the install steps (config, models, services)
 swictation start [--ui]      # Start the daemon (and optionally the tray UI)
 swictation stop              # Stop the daemon
 swictation status            # Show service, socket, and platform status
@@ -58,6 +59,41 @@ with `--model=` (a bare positional also works, e.g. `download-model 1.1b-gpu`) a
   (6.96 GB; alias `1.1b-gpu`), or `both` (default, ~9.5 GB)
 - **macOS:** `1.1b-coreml` (1.9 GB; alias `coreml-native`), `0.6b-coreml` (2.67 GB), or
   `both` (default — VAD plus the CoreML 1.1B bundle)
+
+## When something is broken
+
+Run `swictation doctor` first. It evaluates every install step against what is on disk,
+runs nothing and writes nothing, and prints a repair command under each failure — so it
+works on a half-installed machine and is safe to run mid-failure.
+
+```bash
+swictation doctor          # health table for every install step
+swictation doctor --deep   # ...and verify contents by hash, not just size
+swictation doctor --json   # machine-readable report (schemaVersion 1)
+```
+
+Exit codes: `0` nothing unhealthy, `1` at least one step unhealthy or blocked, `2` doctor
+itself failed to run.
+
+Then repair only what it flagged, instead of reinstalling the package:
+
+```bash
+swictation setup --repair     # run only the steps that are not healthy
+swictation setup --list       # list the install steps and their ids
+swictation setup --<id>       # run one step, e.g. --services, --models, --gpu-libs
+```
+
+Step ids: `platform`, `binaries`, `config-reset`, `gpu-libs`, `models`, `config-heal`,
+`services`, `integration`, `verify`. Steps are idempotent and derive their state from
+disk, so re-running one is harmless; these flags are non-interactive and safe to script.
+
+## Model integrity
+
+Model downloads are pinned to immutable upstream revisions and verified against per-file
+SHA-256 hashes shipped in `models.manifest.json`. A file only takes its final name after
+it passes, so a truncated transfer or a changed upstream fails the download rather than
+turning into an opaque runtime error later. Files that fail verification are re-fetched
+on the next run, and `swictation doctor --deep` re-verifies the installed tree on demand.
 
 ## Where things live
 
