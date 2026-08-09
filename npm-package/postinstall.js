@@ -2351,12 +2351,20 @@ function detectUnifiedMemoryMacOS() {
     gpuInfo.totalMemoryMB = Math.round(totalMemBytes / (1024 * 1024));
     gpuInfo.totalMemoryGB = Math.round(gpuInfo.totalMemoryMB / 1024);
 
-    // Hard gate: macOS requires 16GB+ unified memory
+    // Hardware gate: macOS needs 16GB+ unified memory for the CoreML models.
+    // Record the shortfall and refuse CLEANLY — a hard process.exit(1) here
+    // would make npm report a failed, half-installed package (the mid-flight
+    // abort the audit flagged; ADR-037 decision 5). The install completes;
+    // `swictation doctor`/`start` surface the same requirement and won't run.
     if (gpuInfo.totalMemoryMB < 14500) {
       log('red', `\n✖ Swictation on macOS requires 16GB+ unified memory.`);
       log('red', `  Detected: ${gpuInfo.totalMemoryGB}GB total system RAM.`);
       log('red', `  The CoreML speech models need at least 16GB to run reliably.`);
-      process.exit(1);
+      log('yellow', `  Install will finish, but the daemon will not start until this`);
+      log('yellow', `  requirement is met (run "swictation doctor" to check).`);
+      gpuInfo.insufficientMemory = true;
+      gpuInfo.recommendedModel = null;
+      return gpuInfo;
     }
 
     // Apply 65/35 split (matches gpu.rs implementation)
