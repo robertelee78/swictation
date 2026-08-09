@@ -1,6 +1,6 @@
 {
   "name": "swictation",
-  "version": "0.7.35",
+  "version": "0.7.36",
   "description": "Cross-platform voice-to-text dictation for Linux and macOS with GPU acceleration (NVIDIA CUDA/CoreML), Secretary Mode (60+ natural language commands), Context-Aware Meta-Learning, and pure Rust performance. Meta-package that automatically installs platform-specific binaries.",
   "keywords": [
     "voice-to-text",
@@ -85,8 +85,8 @@
     "which": "^2.0.2"
   },
   "optionalDependencies": {
-    "@agidreams/darwin-arm64": "0.7.35",
-    "@agidreams/linux-x64": "0.7.35"
+    "@agidreams/darwin-arm64": "0.7.36",
+    "@agidreams/linux-x64": "0.7.36"
   },
   "devDependencies": {
     "eslint": "^8.0.0"

@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.36] - 2026-08-09
+
+Six-reviewer audit (Claude + gpt-5.6-sol + Kimi K3) and remediation; every change
+verified with adversarial review before merge. See ADR-034 through ADR-037.
+
+### Fixed — first-contact & correctness
+- **Config never crashes on first run**: every `config.toml` key is optional (field-level
+  serde defaults), `~` expands, and the shipped `config.example.toml` is round-trip tested
+  so it can never drift from the parser again (ADR-034).
+- **`swictation setup` repairs instead of breaking installs**: single source of truth for
+  the systemd/launchd unit — the divergent generator that omitted `ORT_DYLIB_PATH` (blank
+  transcriptions) is gone (ADR-034).
+- **macOS models download where the daemon reads them** (shared platform-path module); the
+  recovery commands installers print now exist and accept every recommended model name.
+- **STT latency & phantom output**: utterances are no longer zero-padded to ~100 s of
+  encoder frames — the cause of both wasted latency and end-of-utterance "um"-style
+  hallucinations. True-length chunking; regression-tested (ADR-035).
+- **The last words of every dictation are transcribed**: ordered stop-drain protocol
+  replaces the flush-discard workaround; exactly-once, no duplicate injection (ADR-035).
+- **Upgrades preserve user config byte-for-byte**; GPU libraries live outside npm-owned
+  trees so upgrades can't silently strand acceleration (ADR-035).
+- **STT hardening**: NaN-safe decoding, model/tokenizer mismatch diagnostics, and STT task
+  death now surfaces instead of silently killing transcription; `parking_lot` mutexes end
+  poison cascades (ADR-035).
+- **IPC**: a silent socket connection can no longer freeze the daemon (2 s read timeout);
+  `quit` performs graceful teardown.
+
+### Added
+- **`swictation doctor`** — disk-derived install health table (`--json`, `--deep` hash
+  verification), exit 0/1/2.
+- **`swictation setup --repair` / `--list` / `--<step>`** — idempotent per-step install
+  repair. Postinstall and setup now share one ten-step registry; a failed phase yields a
+  named repair command instead of a mystery reinstall (ADR-037).
+- **Model download integrity**: pinned HuggingFace revisions + per-file SHA-256 manifest,
+  streamed verification, corrupt-file quarantine (ADR-036).
+
+### Security
+- Dictated text is no longer written to system logs at default log level.
+- `npm uninstall` can no longer `sudo rm -rf` a source checkout at `/opt/swictation`.
+
+### Changed
+- Corrected STT WER figures to NVIDIA model-card numbers; documented decision to stay on
+  Parakeet-TDT-1.1B (its raw output keeps Secretary Mode authoritative over punctuation).
+- Repository cleanup: removed tracked debris, archived historical docs/scripts, synced all
+  user-facing docs to current behavior.
+
+## [0.7.29] – [0.7.35] - 2026-03 to 2026-08
+
+Consecutive postinstall/daemon resilience fixes: config path migration, dry-run detection,
+model-override and CoreML sequencing, launcher paths, upgrade crash-loop, log rotation,
+chunking dedup. Consolidated and superseded by the 0.7.36 audit remediation above; see git
+history (515469f…435c3b7) for per-release detail.
+
 ## [0.7.28] - 2026-03-23
 
 ### Added - macOS Native CoreML STT & Menu Bar Tray
