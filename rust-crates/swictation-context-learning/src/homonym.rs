@@ -97,9 +97,9 @@ fn analyze_homonym(
         };
     }
 
-    // Sort by frequency
+    // Sort by frequency, descending
     let mut interp_list: Vec<Interpretation> = interpretations.into_values().collect();
-    interp_list.sort_by(|a, b| b.frequency.cmp(&a.frequency));
+    interp_list.sort_by_key(|i| std::cmp::Reverse(i.frequency));
 
     Ok(HomonymResolver {
         word: word.to_string(),

@@ -242,7 +242,7 @@ impl CorrectionEngine {
                 .count()
                 .cmp(&a.original.split_whitespace().count())
         });
-        new_phonetic_words.sort_by(|a, b| b.original.len().cmp(&a.original.len()));
+        new_phonetic_words.sort_by_key(|w| std::cmp::Reverse(w.original.len()));
 
         // Swap in new data
         *exact_phrases.write().unwrap() = new_exact_phrases;

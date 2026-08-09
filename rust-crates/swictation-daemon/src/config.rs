@@ -322,9 +322,11 @@ mod tests {
 
     #[test]
     fn tilde_paths_expand_to_home() {
-        let mut config = DaemonConfig::default();
-        config.socket_path = "~/sock/s.sock".to_string();
-        config.vad_model_path = PathBuf::from("~/models/vad.onnx");
+        let mut config = DaemonConfig {
+            socket_path: "~/sock/s.sock".to_string(),
+            vad_model_path: PathBuf::from("~/models/vad.onnx"),
+            ..Default::default()
+        };
         config.expand_tilde_paths();
         let home = dirs::home_dir().expect("home dir required for test");
         assert_eq!(
@@ -336,8 +338,10 @@ mod tests {
 
     #[test]
     fn non_tilde_paths_pass_through_unchanged() {
-        let mut config = DaemonConfig::default();
-        config.socket_path = "/run/user/1000/s.sock".to_string();
+        let mut config = DaemonConfig {
+            socket_path: "/run/user/1000/s.sock".to_string(),
+            ..Default::default()
+        };
         config.expand_tilde_paths();
         assert_eq!(config.socket_path, "/run/user/1000/s.sock");
     }
