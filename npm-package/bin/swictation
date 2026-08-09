@@ -526,6 +526,10 @@ async function runSetupSteps(options = {}) {
       chalk.white(r.id.padEnd(14)) +
       chalk.gray(`${r.health.code.padEnd(26)} ${r.health.summary}`)
     );
+    // This ledger is the compact one-line-per-step SUMMARY. The detailed
+    // evidence + repair for non-healthy steps is already printed by
+    // runStep()'s announce() as each step runs, so it must NOT be repeated
+    // here — doing so re-created the double-print this round set out to fix.
     if (r.status === 'failed' || r.status === 'blocked') {
       console.log(chalk.yellow(`    repair: ${r.health.repair || steps.repairCommand(steps.getStep(r.id))}`));
     }

@@ -436,6 +436,10 @@ async function checkAll(steps, ctx, options = {}) {
  */
 async function failingSteps(steps, ctx) {
   const rows = await checkAll(steps, ctx);
+  // Anything not conclusively healthy is worth re-running — including UNKNOWN,
+  // where a re-run may resolve a transient detection miss. (A structurally
+  // unverifiable step like macOS Accessibility stays UNKNOWN, but re-surfacing
+  // its guidance is harmless.) NOT_APPLICABLE is the only thing skipped.
   const wanted = new Set(
     rows
       .filter(r => r.health.state !== STATE.HEALTHY && r.health.state !== STATE.NOT_APPLICABLE)

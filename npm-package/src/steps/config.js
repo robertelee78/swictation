@@ -152,7 +152,7 @@ function check() {
  * "is this path stale" is exactly the drift ADR-035 exists to prevent.
  *
  * @returns {{exists: boolean, parses: boolean, parseError: string|null,
- *   healableKeys: string[], overrideResetPending: boolean, path: string}}
+ *   healableKeys: string[], path: string}}
  */
 function inspect() {
   const p = configPath();
@@ -162,7 +162,6 @@ function inspect() {
     parses: false,
     parseError: null,
     healableKeys: [],
-    overrideResetPending: false,
   };
   if (!result.exists) return result;
 
@@ -193,12 +192,16 @@ function inspect() {
     }
   }
 
-  const managed = readPostinstallState().managedOverride;
-  if (typeof managed === 'string' && managed !== AUTO_OVERRIDE) {
-    // A marker that no longer matches is consumed (not reset) by run(), so it
-    // is still work pending — the same condition run() acts on.
-    result.overrideResetPending = true;
-  }
+  // NOTE (ADR-037 health round): inspect() intentionally does NOT judge whether
+  // an installer-written stt_model_override is "stale". The only side-effect-free
+  // signal available — gpu-info.json's recommendation — is persisted from the
+  // last install and is NOT re-detected here, so after a hardware change BOTH it
+  // and the override stay at the old value and agree, detecting nothing. Rather
+  // than make a claim it cannot honestly verify (and cry wolf on every fresh
+  // install, where a current override is correct), config-reset reports healthy
+  // whenever the config parses. Resetting the installer override to "auto" is an
+  // install-time action, scoped to postinstall's pre-download pass where the
+  // hardware IS freshly re-detected — see config-reset.run().
 
   return result;
 }

@@ -207,15 +207,10 @@ module.exports = {
     const postinstall = require('../../postinstall');
 
     if (ctx.platform === 'darwin') {
-      ctx.log('cyan', '');
-      ctx.log('cyan', 'Accessibility Permission:');
-      ctx.log('cyan', '  macOS will prompt you to grant Accessibility permission when the');
-      ctx.log('cyan', '  daemon first attempts to inject text. Click "Open System Settings"');
-      ctx.log('cyan', '  and enable the permission for swictation-daemon.');
-      ctx.log('cyan', '');
-      ctx.log('cyan', '  If text injection does not work, check:');
-      ctx.log('cyan', '    System Settings > Privacy & Security > Accessibility');
-      ctx.log('cyan', '');
+      // No prose block here: the check()'s health summary + evidence + repair
+      // already state exactly this (grant Accessibility in System Settings),
+      // and the framework renders them. Printing it again from run() was the
+      // double-print users saw under `setup --repair` (ADR-037 health round).
       return {
         changed: false,
         components: [componentSkipped('accessibility', 'granted by the user, not by the installer')],

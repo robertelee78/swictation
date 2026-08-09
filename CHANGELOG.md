@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.37] - 2026-08-10
+
+### Fixed
+- **`swictation doctor` no longer flags a healthy fresh install.** `config-reset` reported
+  UNHEALTHY on every brand-new install (because the installer records the model it tested),
+  making `doctor` exit 1 and prompting a pointless reset of a correct choice. `config-reset`
+  now reports healthy whenever the config parses; it no longer claims to judge override
+  "staleness" — that cannot be determined reliably without live hardware re-detection, and
+  the daemon already picks a working model from `auto` at startup. The installer's
+  reset-to-`auto` (to re-test hardware) is confined to the postinstall pass, so `swictation
+  setup` no longer churns a working configuration.
+- **`swictation setup --repair` no longer prints the macOS Accessibility guidance twice.**
+
 ## [0.7.36] - 2026-08-09
 
 Six-reviewer audit (Claude + gpt-5.6-sol + Kimi K3) and remediation; every change

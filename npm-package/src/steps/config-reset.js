@@ -42,12 +42,11 @@ module.exports = {
         evidence: [state.path, state.parseError || 'unknown parse error'],
       });
     }
-    if (state.overrideResetPending) {
-      return unhealthy('CONFIG_OVERRIDE_PENDING',
-        'an installer-written stt_model_override is still recorded', {
-          evidence: [configStep.statePath()],
-        });
-    }
+    // A parseable config is healthy. We do NOT flag an installer-written
+    // override here: its staleness cannot be judged side-effect-free (gpu-info
+    // is persisted, not re-detected), and flagging its mere presence cried wolf
+    // on every fresh install (ADR-037 health round). The reset-to-auto that
+    // re-tests hardware is an install action, done by run() in postinstall only.
     return healthy('CONFIG_OK', 'config.toml present and parseable', { evidence: [state.path] });
   },
 
@@ -56,7 +55,12 @@ module.exports = {
     const result = configStep.run({
       log: ctx.log,
       generateDefaultConfig: ctx.generateDefaultConfig,
-      resetManagedOverride: true,
+      // Reset an installer-written override to "auto" ONLY during the
+      // postinstall pre-download pass, where the models phase then re-tests the
+      // hardware and writes a fresh choice. In `setup`/doctor there is no such
+      // re-test, so resetting a working override would just churn it (ADR-037
+      // health round: full `swictation setup` must not rewrite a healthy one).
+      resetManagedOverride: ctx.mode === 'postinstall',
     });
     return {
       changed: result.action !== 'kept',

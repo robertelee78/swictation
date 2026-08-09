@@ -421,6 +421,38 @@ actually checks.
 tested, review-hardened step-shaped modules; postinstall.js is already requirable
 without side effects (`require.main` guard). The contract generalizes what they proved.
 
+## Health round — 2026-08-10 (first production `doctor`, v0.7.36 → v0.7.37)
+
+A fresh v0.7.36 install on an M5 Max surfaced a real false alarm: `config-reset`
+reported **UNHEALTHY** on a brand-new, fully-working install, so `doctor` exited 1
+and told the user to repair — and `setup --repair` then reset a correct explicit
+`1.1b-coreml` to `auto`. Root cause: `config.js` inspect() set `overrideResetPending`
+whenever the sidecar held any non-`auto` managed override, which every install writes.
+It conflated "an installer wrote an override" (normal) with "the override is stale"
+(the actual problem, only after a hardware change).
+
+Fix (revised after review — the first attempt compared the override against
+`gpu-info.json`'s recommendation, but that file is *persisted*, not re-detected, so
+after a hardware change both it and the override stay at the old value and agree,
+detecting nothing — a false negative codex caught): **config-reset does not judge
+override staleness at all.** Staleness cannot be determined honestly from
+side-effect-free data, so rather than make an unverifiable claim (and cry wolf on
+every fresh install), `check()` reports healthy whenever the config parses. The
+reset-to-`auto` that re-tests hardware is an install action, and `run()` now performs
+it **only in postinstall mode** (`ctx.mode === 'postinstall'`) — its pre-download pass.
+Correctness rests on `auto` itself: the daemon detects live hardware at startup and
+picks a model that works, independent of any persisted `gpu-info.json` (which is why
+the earlier stale-comparison was unsound — that file is not re-detection). In
+`setup`/`doctor` there is no install re-test, so a working override is left untouched
+(this also fixes a churn codex flagged: full `swictation setup` was rewriting a healthy
+override to `auto`).
+Fences: parseable-config-with-override-healthy, run-resets-in-postinstall,
+run-leaves-untouched-in-setup. Also removed a duplicated Accessibility guidance block
+in `integration.run()` and taught the `setup` render to print evidence for non-healthy
+rows (as `doctor` does), so the guidance shows once, everywhere. `--repair`'s target
+set (anything not healthy/not-applicable, incl. UNKNOWN) was deliberately left as the
+builder designed it — a re-run may resolve a transient unknown.
+
 ## Consequences
 
 - A failed phase produces a named repair command instead of a mystery reinstall.

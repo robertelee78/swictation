@@ -404,16 +404,37 @@ test('config-reset: an unparseable config names the parse error as evidence', ()
   assert.strictEqual(record.evidence.length, 2, 'path plus the parser message');
 });
 
-test('config-reset: a pending installer-written override is unhealthy until consumed', () => {
+// Regression fence (ADR-037 health round): a parseable config is HEALTHY even
+// with an installer-written override present. Flagging its mere presence made
+// every brand-new install report UNHEALTHY and prompted a pointless reset of a
+// correct value. config-reset never judges override staleness — it can't do so
+// honestly side-effect-free (gpu-info is persisted, not re-detected).
+test('config-reset: a parseable config with an installer override is healthy', () => {
   freshConfigDir();
-  fs.writeFileSync(configStep.configPath(), 'stt_model_override = "1.1b"\n');
-  configStep.recordManagedOverride('1.1b');
-  assert.strictEqual(configReset.check(configCtx()).code, 'CONFIG_OVERRIDE_PENDING');
-
-  configReset.run(configCtx());
-  assert.match(fs.readFileSync(configStep.configPath(), 'utf8'), /stt_model_override = "auto"/,
-    'the installer-written override reverts so this install re-tests the hardware');
+  fs.writeFileSync(configStep.configPath(), 'stt_model_override = "1.1b-coreml"\n');
+  configStep.recordManagedOverride('1.1b-coreml');
   assert.strictEqual(configReset.check(configCtx()).state, STATE.HEALTHY);
+  assert.strictEqual(configReset.check(configCtx()).code, 'CONFIG_OK');
+});
+
+// The installer override reverts to "auto" during the POSTINSTALL pre-download
+// pass, so the models phase re-tests the hardware.
+test('config-reset: run() resets an installer override to auto during postinstall', () => {
+  freshConfigDir();
+  fs.writeFileSync(configStep.configPath(), 'stt_model_override = "1.1b-gpu"\n');
+  configStep.recordManagedOverride('1.1b-gpu');
+  configReset.run(ctxWith({ generateDefaultConfig: () => DEFAULTS, mode: 'postinstall' }));
+  assert.match(fs.readFileSync(configStep.configPath(), 'utf8'), /stt_model_override = "auto"/);
+});
+
+// Codex health-round fence: full `swictation setup` (mode=setup) must NOT churn
+// a working installer override — there is no re-test to write it back.
+test('config-reset: run() leaves an installer override untouched in setup mode', () => {
+  freshConfigDir();
+  fs.writeFileSync(configStep.configPath(), 'stt_model_override = "1.1b-coreml"\n');
+  configStep.recordManagedOverride('1.1b-coreml');
+  configReset.run(ctxWith({ generateDefaultConfig: () => DEFAULTS, mode: 'setup' }));
+  assert.match(fs.readFileSync(configStep.configPath(), 'utf8'), /stt_model_override = "1\.1b-coreml"/);
 });
 
 test('config-reset: a user-authored override is never touched', () => {
