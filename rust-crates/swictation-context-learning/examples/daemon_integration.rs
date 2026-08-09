@@ -173,7 +173,7 @@ fn example_predictions(model: &ContextModel) {
 
         println!(
             "  \"{}...\"",
-            &segment_text.chars().take(50).collect::<String>()
+            segment_text.chars().take(50).collect::<String>()
         );
         println!(
             "    → Topic: {} (confidence: {:.0}%, {} keyword matches)",
