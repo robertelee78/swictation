@@ -250,7 +250,7 @@ jobs:
 
     - name: Install frontend dependencies
       working-directory: tauri-ui
-      run: npm ci
+      run: npm ci --ignore-scripts
 
     - name: Build Tauri UI
       working-directory: tauri-ui
@@ -391,7 +391,7 @@ jobs:
 
     - name: Install npm package dependencies
       working-directory: npm-package
-      run: npm ci
+      run: npm ci --ignore-scripts
 
     - name: Copy binaries to platform package
       run: |

@@ -391,10 +391,17 @@ mod tests {
 
         let mut client = UnixStream::connect(&path).await.unwrap();
         let (server, _) = listener.accept().await.unwrap();
+        // Fill the read buffer exactly and close our write half. The server
+        // does a single bounded read of MAX_COMMAND_BYTES, so writing exactly
+        // that leaves nothing unread — a larger payload would leave bytes in
+        // flight and, when the server closes first, trigger a connection reset
+        // on Linux that breaks the client's read (macOS tolerates it). This is
+        // still an at-cap unparseable payload, which is what must be rejected.
         client
-            .write_all(&vec![b'a'; MAX_COMMAND_BYTES * 4])
+            .write_all(&vec![b'a'; MAX_COMMAND_BYTES])
             .await
             .unwrap();
+        client.shutdown().await.unwrap();
 
         serve(server, Arc::new(TestTarget::default()), TEST_LIMIT)
             .await
