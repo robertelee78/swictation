@@ -89,8 +89,8 @@ function getCacheDir() {
 
 /**
  * Generate a default config.toml content string with platform-appropriate paths.
- * Single source of truth for config generation — used by both
- * interactiveConfigMigration() and testLoadModel().
+ * Single source of truth for config generation — used by both the config
+ * step (src/steps/config.js, via the registry ctx) and testLoadModel().
  */
 function generateDefaultConfig() {
   const modelDir = path.join(getDataDir(), 'models');
@@ -141,6 +141,12 @@ function phaseLog(title) {
 }
 
 const _installStart = Date.now();
+
+// GPU libs v1.2.0: Multi-architecture CUDA support (sm_50-120)
+// ONNX Runtime 1.23.2, CUDA 12.9, cuDNN 9.15.1
+// Module scope so the gpu-libs step (src/steps/gpu-libs.js) checks the
+// receipt against the version this package actually ships (ADR-037).
+const GPU_LIBS_VERSION = '1.2.0';
 
 function checkPlatform() {
   const platform = process.platform;
@@ -714,7 +720,7 @@ function detectNvidiaGPU() {
  * Returns { hasGPU: boolean, computeCap: string, smVersion: number }
  * @returns {object} GPU compute capability info
  */
-function detectGPUComputeCapability() {
+function detectGPUComputeCapability(logFn = log) {
   const result = {
     hasGPU: false,
     computeCap: null,  // e.g., "5.2", "8.6", "12.0"
@@ -743,11 +749,11 @@ function detectGPUComputeCapability() {
     const [major, minor] = computeCap.split('.').map(n => parseInt(n));
     result.smVersion = parseInt(`${major}${minor}`);
 
-    log('green', `✓ Detected GPU: ${gpuName}`);
-    log('cyan', `  Compute Capability: ${computeCap} (sm_${result.smVersion})`);
+    logFn('green', `✓ Detected GPU: ${gpuName}`);
+    logFn('cyan', `  Compute Capability: ${computeCap} (sm_${result.smVersion})`);
 
   } catch (err) {
-    log('yellow', `⚠️  Could not detect compute capability: ${err.message}`);
+    logFn('yellow', `⚠️  Could not detect compute capability: ${err.message}`);
   }
 
   return result;
@@ -1060,9 +1066,6 @@ async function downloadGPULibraries() {
   log('cyan', `   Description: ${packageInfo.description}`);
   log('cyan', `   Examples: ${packageInfo.examples}\n`);
 
-  // GPU libs v1.1.0: Multi-architecture CUDA support (sm_50-120)
-  // ONNX Runtime 1.23.2, CUDA 12.9, cuDNN 9.15.1
-  const GPU_LIBS_VERSION = '1.2.0';
   const variant = packageInfo.variant;
   const releaseUrl = `https://github.com/robertelee78/swictation/releases/download/gpu-libs-v${GPU_LIBS_VERSION}/cuda-libs-${variant}.tar.gz`;
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'swictation-gpu-'));
@@ -1778,8 +1781,16 @@ WantedBy=default.target
 /**
  * Generate LaunchAgent plist files for macOS
  * LaunchAgents are macOS equivalent of systemd user services
+ *
+ * @param {string} ortLibPath
+ * @param {object} [options]
+ * @param {boolean} [options.load=true] - bootstrap and start the agents once
+ *   written. `swictation setup` passes false: it asks the user about
+ *   auto-start AFTER generating, and loading here would make answering "No"
+ *   meaningless (ADR-037 amendment, P1).
  */
-function generateLaunchdServices(ortLibPath) {
+function generateLaunchdServices(ortLibPath, options = {}) {
+  const { load = true } = options;
   log('cyan', '\n⚙️  Generating launchd service files...');
 
   try {
@@ -2045,6 +2056,11 @@ function generateLaunchdServices(ortLibPath) {
     }
 
     // Step 3: Auto-load and start services
+    if (!load) {
+      log('cyan', '\n  Plists written; not loading them here.');
+      log('cyan', '  (auto-start is a separate, explicit choice)');
+      return;
+    }
     log('cyan', '\n  Loading services with launchd...');
 
     // Load daemon service (enables auto-start on login)
@@ -2102,28 +2118,6 @@ function generateLaunchdServices(ortLibPath) {
 }
 
 /**
- * Phase 2: Interactive config migration with pacman/apt-style prompts
- * Handles conflicts between old and new config files
- */
-async function interactiveConfigMigration() {
-  log('cyan', '\n📝 Checking configuration files...');
-
-  // Upgrade-safe config step (ADR-035): never clobbers an existing parseable
-  // config — preserves user settings byte-for-byte, healing only stale model
-  // paths. The previous unconditional rewrite reset every user customization
-  // on every upgrade (and its single-slot backup lost the original on the
-  // second one).
-  // resetManagedOverride: this is the pre-download pass, so an installer-written
-  // stt_model_override reverts to "auto" and this install re-tests the hardware.
-  try {
-    const configStep = require('./src/steps/config');
-    configStep.run({ log, generateDefaultConfig, resetManagedOverride: true });
-  } catch (err) {
-    log('yellow', `  Could not process config: ${err.message}`);
-  }
-}
-
-/**
  * Phase 3: Detect GPU VRAM for intelligent model selection
  * Prevents loading models that are too large for available VRAM
  */
@@ -2142,6 +2136,10 @@ function detectGPUVRAM() {
 
   if (!detectNvidiaGPU()) {
     log('cyan', '  No NVIDIA GPU detected - CPU mode will be used');
+    // cpu-only is a real recommendation (VAD + 0.6b on CPU), not an absence
+    // of one — a null here made cpu-only Linux installs fail before ever
+    // downloading a model (ADR-037 adjudication P0).
+    gpuInfo.recommendedModel = 'cpu-only';
     return gpuInfo;
   }
 
@@ -3056,10 +3054,14 @@ async function showNextSteps() {
   }
   console.log('');
 
-  // Auto-download model if not present
-  const modelDownloaded = await autoDownloadModel(recommendation.model);
+  // The models step owns every model download (ADR-037 amendment 6). This
+  // used to be a SECOND autoDownloadModel() call, invisible in the phase
+  // banners — it is why a cpu-only install appeared to skip its model phase
+  // and then quietly downloaded 2.5 GB during "Finalizing installation".
+  // Reporting is all that belongs here.
+  const modelDownloaded = isModelDownloaded(recommendation.model);
 
-  // Only show manual download instructions if auto-download failed
+  // Only show manual download instructions if the model is not there
   if (!modelDownloaded) {
     log('cyan', 'Next steps:');
     console.log('  1. Download recommended AI model:');
@@ -3075,8 +3077,8 @@ async function showNextSteps() {
     console.log('');
   }
 
-  // Show usage info (only if model download succeeded or skipped)
-  if (modelDownloaded || isModelDownloaded(recommendation.model)) {
+  // Show usage info only when there is actually a model to use
+  if (modelDownloaded) {
     log('green', '\nSwictation is installed and running!');
     console.log('');
     if (process.platform === 'darwin') {
@@ -3155,6 +3157,23 @@ async function main() {
   log('cyan', 'This may take 5-10 minutes (downloads GPU libraries and speech models)');
   log('cyan', '');
 
+  // ── Step registry (ADR-037) ───────────────────────────────────────────
+  // ONE execution plan with nine slots, in the original phase order: four
+  // registry steps and five legacy adapters. The registry slots run the
+  // exact code `swictation setup`, `setup --repair` and `doctor` run, so
+  // the recovery path can no longer diverge from the install path. Legacy
+  // slots migrate in Phase B; until then they are ordinary plan entries so
+  // the phase counter is derived from one list rather than guessed.
+  const steps = require('./src/steps');
+  const stepResults = [];
+  let stepCtx = steps.createContext({ mode: 'postinstall', log, generateDefaultConfig });
+
+  const runRegistryStep = async (id) => {
+    const result = await steps.runStep(steps.getStep(id), stepCtx);
+    stepResults.push(result);
+    return result;
+  };
+
   try {
     // Platform and basic checks
     checkPlatform();
@@ -3216,158 +3235,214 @@ async function main() {
     ensureBinaryPermissions();
     createDirectories();
 
-    // Phase 1: Stop running services BEFORE any modifications
-    phaseLog('Checking platform compatibility...');
-    await stopExistingServices();
+    // Resolved facts the steps must never rediscover (ADR-037 amendment 4).
+    // Under sudo, recomputing these picks a different user home and a
+    // different platform package than the one this install just verified.
+    stepCtx = steps.deriveContext(stepCtx, { binaryPaths });
 
-    phaseLog('Cleaning up previous installations...');
-    await cleanOldServices();
-    cleanupOldOnnxRuntime();
-    cleanupOldNpmInstallations();
-
-    phaseLog('Configuring...');
-    await interactiveConfigMigration();
-
-    phaseLog('Downloading GPU libraries...');
     let gpuInfo = { hasGPU: false, recommendedModel: 'cpu-only' };
     let ortLibPath = null;
 
-    if (process.platform === 'linux') {
-      // Linux: NVIDIA GPU with CUDA
-      gpuInfo = detectGPUVRAM();
+    // ── The nine-slot execution plan (ADR-037 amendment 6) ───────────────
+    // Four registry steps and five legacy adapters, in the original phase
+    // order. The phase counter is derived from this one list, which fixes
+    // the static `_totalPhases = 9`: the models phase used to be conditional,
+    // so a cpu-only install promised a ninth phase that never printed.
+    const plan = [
+      {
+        title: 'Checking platform compatibility...',
+        run: async () => {
+          // Stop running services BEFORE any modifications
+          await stopExistingServices();
+        },
+      },
+      {
+        title: 'Cleaning up previous installations...',
+        run: async () => {
+          await cleanOldServices();
+          cleanupOldOnnxRuntime();
+          cleanupOldNpmInstallations();
+        },
+      },
+      {
+        title: steps.getStep('config-reset').title,
+        run: async () => {
+          log('cyan', '\n📝 Checking configuration files...');
+          await runRegistryStep('config-reset');
+        },
+      },
+      {
+        title: 'Downloading GPU libraries...',
+        run: async () => {
+          if (process.platform === 'linux') {
+            // Linux: NVIDIA GPU with CUDA
+            gpuInfo = detectGPUVRAM();
+            stepCtx = steps.deriveContext(stepCtx, {
+              gpuInfo,
+              selectedModel: gpuInfo.recommendedModel,
+              hasNvidiaGpu: gpuInfo.hasGPU === true,
+            });
 
-      // Download GPU libraries if needed
-      if (gpuInfo.hasGPU && gpuInfo.recommendedModel !== 'cpu-only') {
-        await downloadGPULibraries();
-      } else if (!gpuInfo.hasGPU) {
-        log('cyan', '\nℹ No NVIDIA GPU detected - skipping GPU library download');
-        log('cyan', '  CPU-only mode will be used');
-      }
+            // Download GPU libraries if needed
+            if (gpuInfo.hasGPU && gpuInfo.recommendedModel !== 'cpu-only') {
+              await runRegistryStep('gpu-libs');
+            } else if (!gpuInfo.hasGPU) {
+              log('cyan', '\nℹ No NVIDIA GPU detected - skipping GPU library download');
+              log('cyan', '  CPU-only mode will be used');
+            }
 
-      // Detect ONNX Runtime library
-      ortLibPath = detectOrtLibrary();
-    } else if (process.platform === 'darwin') {
-      // macOS: Unified memory with CoreML
-      gpuInfo = detectUnifiedMemoryMacOS();
+            // Detect ONNX Runtime library
+            ortLibPath = detectOrtLibrary();
+          } else if (process.platform === 'darwin') {
+            // macOS: Unified memory with CoreML
+            gpuInfo = detectUnifiedMemoryMacOS();
+            stepCtx = steps.deriveContext(stepCtx, {
+              gpuInfo,
+              selectedModel: gpuInfo.recommendedModel,
+            });
 
-      // Download CoreML-enabled ONNX Runtime
-      if (gpuInfo.recommendedModel !== 'cpu-only') {
-        await downloadONNXRuntimeCoreML();
-      }
+            // Download CoreML-enabled ONNX Runtime
+            if (gpuInfo.recommendedModel !== 'cpu-only') {
+              await downloadONNXRuntimeCoreML();
+            }
 
-      // macOS binaries come from @agidreams/darwin-arm64 platform package
-      // (installed via npm optionalDependencies)
-      log('green', `  ✓ Using binaries from platform package: ${binaryPaths.packageName}`);
+            // macOS binaries come from @agidreams/darwin-arm64 platform package
+            // (installed via npm optionalDependencies)
+            log('green', `  ✓ Using binaries from platform package: ${binaryPaths.packageName}`);
 
-      // macOS ONNX Runtime path
-      ortLibPath = path.join(__dirname, 'lib', 'native', 'libonnxruntime.dylib');
-    } else {
-      throw new Error(`Unsupported platform: ${process.platform} (should have been caught by checkPlatform)`);
-    }
-
-    // Download recommended model BEFORE testing it (fixes chicken-and-egg on fresh installs)
-    let modelReady = false;
-    if (gpuInfo.recommendedModel && gpuInfo.recommendedModel !== 'cpu-only') {
-        phaseLog('Downloading speech models...');
-        modelReady = await autoDownloadModel(gpuInfo.recommendedModel);
-        if (!modelReady) {
+            // macOS ONNX Runtime path
+            ortLibPath = path.join(__dirname, 'lib', 'native', 'libonnxruntime.dylib');
+          } else {
+            throw new Error(`Unsupported platform: ${process.platform} (should have been caught by checkPlatform)`);
+          }
+          stepCtx = steps.deriveContext(stepCtx, { ortLibPath });
+        },
+      },
+      {
+        title: steps.getStep('models').title,
+        run: async () => {
+          // Download the recommended model BEFORE testing it (fixes the
+          // chicken-and-egg on fresh installs). This step now owns every
+          // model download: the second, hidden autoDownloadModel() call in
+          // showNextSteps() is gone (ADR-037 amendment 6), which is what
+          // made a cpu-only install look like it downloaded nothing here.
+          const modelResult = await runRegistryStep('models');
+          const modelReady = modelResult.status === 'ok' || modelResult.status === 'already';
+          if (modelResult.status === 'failed') {
             log('yellow', '  ⚠️  Model download failed — skipping verification test');
-            log('cyan', '     Will retry download in final steps');
-        }
+          }
+
+          // Model test-loading (actual verification)
+          if (!SKIP_MODEL_TEST && modelReady && gpuInfo.hasGPU && gpuInfo.recommendedModel !== 'cpu-only') {
+            log('cyan', '\n  Model Verification:');
+            // Use daemon binary from platform package
+            const daemonBin = binaryPaths.daemon;
+            log('cyan', `  Using daemon: ${daemonBin}`);
+
+            const testResult = await testModelsInOrder(gpuInfo, daemonBin, ortLibPath);
+
+            // Update gpuInfo with test results
+            gpuInfo.recommendedModel = testResult.recommendedModel;
+            gpuInfo.tested = testResult.tested;
+            gpuInfo.vramVerified = testResult.vramVerified || false;
+            gpuInfo.fallbackToCpu = testResult.fallbackToCpu || false;
+
+            // Save updated GPU info with test results
+            const configDir = getConfigDir();
+            const gpuInfoPath = path.join(configDir, 'gpu-info.json');
+
+            try {
+              fs.writeFileSync(gpuInfoPath, JSON.stringify(gpuInfo, null, 2));
+              log('green', `  ✓ Saved verified GPU info to ${gpuInfoPath}`);
+            } catch (err) {
+              log('yellow', `  ⚠️  Could not save GPU info: ${err.message}`);
+            }
+
+            // The tested model is now the selected one for every later step.
+            stepCtx = steps.deriveContext(stepCtx, {
+              gpuInfo,
+              selectedModel: gpuInfo.recommendedModel,
+            });
+          } else if (SKIP_MODEL_TEST) {
+            log('yellow', '  Model test-loading skipped (SKIP_MODEL_TEST=1)');
+            log('cyan', '     Using memory-based heuristics only');
+          }
+
+          // Heal stale model paths now that models exist on disk (ADR-033's
+          // crash loop). Healing requires the platform-default target to
+          // exist, which it could not before this phase — that two-pass
+          // requirement is why config is two step ids, not one.
+          await runRegistryStep('config-heal');
+        },
+      },
+      {
+        title: steps.getStep('services').title,
+        run: async () => {
+          await runRegistryStep('services');
+        },
+      },
+      {
+        title: 'Platform integration...',
+        run: async () => {
+          if (process.platform === 'linux') {
+            await setupWaylandIntegration();
+          } else if (process.platform === 'darwin') {
+            log('cyan', '');
+            log('cyan', 'Accessibility Permission:');
+            log('cyan', '  macOS will prompt you to grant Accessibility permission when the');
+            log('cyan', '  daemon first attempts to inject text. Click "Open System Settings"');
+            log('cyan', '  and enable the permission for swictation-daemon.');
+            log('cyan', '');
+            log('cyan', '  If text injection does not work, check:');
+            log('cyan', '    System Settings > Privacy & Security > Accessibility');
+            log('cyan', '');
+          }
+        },
+      },
+      {
+        title: 'Verifying installation...',
+        run: async () => {
+          if (process.platform === 'linux') {
+            await enableAndStartService();
+          } else if (process.platform === 'darwin') {
+            try {
+              execSync('launchctl print gui/$(id -u)/com.swictation.daemon 2>/dev/null', { stdio: 'ignore', shell: '/bin/bash' });
+              log('green', '  Daemon service: loaded and auto-start enabled');
+            } catch {
+              log('yellow', '  Daemon service: not loaded (will start on next login)');
+            }
+            try {
+              execSync('launchctl print gui/$(id -u)/com.swictation.ui 2>/dev/null', { stdio: 'ignore', shell: '/bin/bash' });
+              log('green', '  UI service: loaded and auto-start enabled');
+            } catch {
+              log('cyan', '  UI service: not loaded (optional)');
+            }
+          }
+
+          // Platform-specific final checks
+          if (process.platform === 'linux') {
+            await checkNvidiaHibernation();
+          } else if (process.platform === 'darwin') {
+            log('green', '✓ macOS system configuration complete');
+          }
+
+          // Final checks and next steps
+          checkDependencies();
+        },
+      },
+      {
+        title: 'Finalizing installation...',
+        run: async () => {
+          await showNextSteps();
+        },
+      },
+    ];
+
+    _totalPhases = plan.length;
+    for (const slot of plan) {
+      phaseLog(slot.title);
+      await slot.run();
     }
-
-    // Model test-loading (actual verification)
-    if (!SKIP_MODEL_TEST && modelReady && gpuInfo.hasGPU && gpuInfo.recommendedModel !== 'cpu-only') {
-      log('cyan', '\n  Model Verification:');
-      // Use daemon binary from platform package
-      const daemonBin = binaryPaths.daemon;
-      log('cyan', `  Using daemon: ${daemonBin}`);
-
-      const testResult = await testModelsInOrder(gpuInfo, daemonBin, ortLibPath);
-
-      // Update gpuInfo with test results
-      gpuInfo.recommendedModel = testResult.recommendedModel;
-      gpuInfo.tested = testResult.tested;
-      gpuInfo.vramVerified = testResult.vramVerified || false;
-      gpuInfo.fallbackToCpu = testResult.fallbackToCpu || false;
-
-      // Save updated GPU info with test results
-      const configDir = getConfigDir();
-      const gpuInfoPath = path.join(configDir, 'gpu-info.json');
-
-      try {
-        fs.writeFileSync(gpuInfoPath, JSON.stringify(gpuInfo, null, 2));
-        log('green', `  ✓ Saved verified GPU info to ${gpuInfoPath}`);
-      } catch (err) {
-        log('yellow', `  ⚠️  Could not save GPU info: ${err.message}`);
-      }
-
-      // Re-run config healing now that models exist on disk (ADR-035): the
-      // config step ran before the download phase, so a stale model path
-      // could not heal then (healing requires the default target to exist).
-      // The step is idempotent — a second pass is a no-op unless it heals.
-      try {
-        require('./src/steps/config').run({ log, generateDefaultConfig });
-      } catch (err) {
-        log('yellow', `  ⚠️  Config re-check failed: ${err.message}`);
-      }
-    } else if (SKIP_MODEL_TEST) {
-      log('yellow', '  Model test-loading skipped (SKIP_MODEL_TEST=1)');
-      log('cyan', '     Using memory-based heuristics only');
-    }
-
-    phaseLog('Configuring system services...');
-    if (process.platform === 'linux') {
-      generateSystemdService(ortLibPath);
-    } else if (process.platform === 'darwin') {
-      generateLaunchdServices(ortLibPath);
-    }
-
-    phaseLog('Platform integration...');
-    // Phase: Platform-specific integration
-    if (process.platform === 'linux') {
-      await setupWaylandIntegration();
-    } else if (process.platform === 'darwin') {
-      log('cyan', '');
-      log('cyan', 'Accessibility Permission:');
-      log('cyan', '  macOS will prompt you to grant Accessibility permission when the');
-      log('cyan', '  daemon first attempts to inject text. Click "Open System Settings"');
-      log('cyan', '  and enable the permission for swictation-daemon.');
-      log('cyan', '');
-      log('cyan', '  If text injection does not work, check:');
-      log('cyan', '    System Settings > Privacy & Security > Accessibility');
-      log('cyan', '');
-    }
-
-    phaseLog('Verifying installation...');
-    if (process.platform === 'linux') {
-      await enableAndStartService();
-    } else if (process.platform === 'darwin') {
-      try {
-        execSync('launchctl print gui/$(id -u)/com.swictation.daemon 2>/dev/null', { stdio: 'ignore', shell: '/bin/bash' });
-        log('green', '  Daemon service: loaded and auto-start enabled');
-      } catch {
-        log('yellow', '  Daemon service: not loaded (will start on next login)');
-      }
-      try {
-        execSync('launchctl print gui/$(id -u)/com.swictation.ui 2>/dev/null', { stdio: 'ignore', shell: '/bin/bash' });
-        log('green', '  UI service: loaded and auto-start enabled');
-      } catch {
-        log('cyan', '  UI service: not loaded (optional)');
-      }
-    }
-
-    // Platform-specific final checks
-    if (process.platform === 'linux') {
-      await checkNvidiaHibernation();
-    } else if (process.platform === 'darwin') {
-      log('green', '✓ macOS system configuration complete');
-    }
-
-    // Final checks and next steps
-    checkDependencies();
-    phaseLog('Finalizing installation...');
-    await showNextSteps();
 
     // ── Install Summary ──
     const duration = ((Date.now() - _installStart) / 1000).toFixed(0);
@@ -3381,6 +3456,28 @@ async function main() {
     log('green', boxLine(`  swictation v${pkgVersion} installed successfully`));
     log('green', boxLine(`  Platform:  ${process.platform} ${process.arch}`));
     log('green', boxLine(`  Duration:  ${durationStr}`));
+    if (stepResults.length > 0) {
+      // Per-step ledger (ADR-037 decision 5): a failed phase is named, with
+      // the command that repairs it, instead of implying a full reinstall.
+      const MARKS = {
+        ok: ['✓', 'green'],
+        already: ['✓', 'green'],
+        failed: ['✗', 'red'],
+        blocked: ['⊘', 'yellow'],
+        'not-applicable': ['–', 'cyan'],
+      };
+
+      log('green', boxLine(''));
+      log('green', boxLine('  Steps:'));
+      for (const r of stepResults) {
+        const [mark, color] = MARKS[r.status] || ['?', 'yellow'];
+        log(color, boxLine(`    ${mark} ${r.id.padEnd(13)} ${r.status}`));
+        if (r.status === 'failed' || r.status === 'blocked') {
+          log('yellow', boxLine(`      ${r.health.code}`));
+          log('yellow', boxLine(`      repair: ${r.health.repair || steps.repairCommand(steps.getStep(r.id))}`));
+        }
+      }
+    }
     if (_installWarnings.length > 0) {
       log('yellow', boxLine(''));
       log('yellow', boxLine(`  Warnings (${_installWarnings.length}):`));
@@ -3438,4 +3535,21 @@ module.exports = {
   ownNodeModulesRoot,
   isWithin,
   supersededLibNames,
+
+  // Callables the step registry wraps (ADR-037). These are exported so
+  // src/steps/* can CALL the one implementation rather than grow a second
+  // one; the registry is the only intended consumer.
+  GPU_LIBS_VERSION,
+  log,
+  generateDefaultConfig,
+  detectNvidiaGPU,
+  detectGPUComputeCapability,
+  selectGPUPackageVariant,
+  detectGPUVRAM,
+  detectUnifiedMemoryMacOS,
+  downloadGPULibraries,
+  isModelDownloaded,
+  autoDownloadModel,
+  generateSystemdService,
+  generateLaunchdServices,
 };

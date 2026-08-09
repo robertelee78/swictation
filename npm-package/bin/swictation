@@ -10,7 +10,6 @@ const which = require('which');
 const { configureNvidiaHibernation, checkNvidiaHibernationStatus } = require('../src/nvidia-hibernation-setup');
 const { getIpcSocketPath, getMetricsSocketPath } = require('../src/socket-paths');
 const { resolveBinaryPaths } = require('../src/resolve-binary');
-const { buildDaemonServiceUnit } = require('../src/generate-service');
 
 // Platform detection
 const isMacOS = process.platform === 'darwin';
@@ -33,7 +32,6 @@ const libDir = binaryPaths ? binaryPaths.libDir : null;
 
 // Config directories (shared platform rules — ADR-034)
 const configDir = require('../src/paths').getConfigDir();
-const systemdUserDir = path.join(os.homedir(), '.config', 'systemd', 'user');
 const launchAgentsDir = path.join(os.homedir(), 'Library', 'LaunchAgents');
 
 // Parse command line arguments
@@ -281,7 +279,294 @@ async function handleStatus() {
   }
 }
 
+/** (color, message) logger the step registry expects, rendered with chalk. */
+const chalkLog = (color, message) => console.log((chalk[color] || chalk.white)(message));
+
+/**
+ * Build the step context `setup` and `doctor` share (ADR-037).
+ * `swictation` is the non-npm entry point, so the plan is filtered to steps
+ * that list `setup` — postinstall-only work never runs from the CLI.
+ */
+function buildStepContext(mode, extraFacts = {}) {
+  const steps = require('../src/steps');
+  return {
+    steps,
+    ctx: steps.createContext({
+      mode,
+      log: chalkLog,
+      ...extraFacts,
+    }),
+  };
+}
+
+/**
+ * The model this machine should have, resolved BEFORE the context is built.
+ *
+ * On an `npm install --ignore-scripts` there is no gpu-info.json, so nothing
+ * has ever decided — and `swictation setup` is the only recovery path those
+ * installs get. Detection lives here rather than inside the models step
+ * because it logs and writes gpu-info.json: a step's check() must stay
+ * side-effect-free, and doctor must never trigger it at all.
+ */
+function resolveSelectedModelForSetup() {
+  const steps = require('../src/steps');
+  const saved = steps.readSavedGpuInfo();
+  if (saved && typeof saved.recommendedModel === 'string') return {};
+
+  console.log(chalk.cyan('No hardware profile recorded yet — detecting...'));
+  try {
+    const postinstall = require('../postinstall.js');
+    const gpuInfo = isMacOS
+      ? postinstall.detectUnifiedMemoryMacOS()
+      : postinstall.detectGPUVRAM();
+    return { gpuInfo, selectedModel: gpuInfo && gpuInfo.recommendedModel };
+  } catch (err) {
+    console.log(chalk.yellow(`Could not detect hardware: ${err.message}`));
+    return {};
+  }
+}
+
+const STATE_RENDER = {
+  healthy: { label: 'HEALTHY', color: 'green' },
+  unhealthy: { label: 'UNHEALTHY', color: 'red' },
+  blocked: { label: 'BLOCKED', color: 'yellow' },
+  'not-applicable': { label: 'N/A', color: 'gray' },
+  unknown: { label: 'UNKNOWN', color: 'yellow' },
+};
+
+const STATUS_RENDER = {
+  ok: { label: 'ok', color: 'green' },
+  already: { label: 'already', color: 'green' },
+  failed: { label: 'FAILED', color: 'red' },
+  blocked: { label: 'BLOCKED', color: 'yellow' },
+  'not-applicable': { label: 'n/a', color: 'gray' },
+};
+
+function installLogPath() {
+  return isMacOS
+    ? path.join(os.homedir(), 'Library', 'Logs', 'swictation', 'install.log')
+    : path.join(os.homedir(), '.local', 'share', 'swictation', 'install.log');
+}
+
+function packageVersion() {
+  try {
+    return require('../package.json').version;
+  } catch {
+    return 'unknown';
+  }
+}
+
+/** The context header every doctor report opens with (amendment 9). */
+function doctorContext(ctx) {
+  return {
+    version: packageVersion(),
+    platform: `${ctx.platform} ${ctx.arch}`,
+    effectiveUser: ctx.effectiveUser,
+    targetUser: ctx.targetUser,
+    targetHome: ctx.targetHome,
+    elevated: ctx.elevatedForAnother,
+    mode: ctx.mode,
+    selectedModel: ctx.selectedModel,
+    gpu: (ctx.gpuInfo && ctx.gpuInfo.gpuName) || null,
+    logPath: installLogPath(),
+  };
+}
+
+/**
+ * `swictation doctor` — evaluate every step's check() and report.
+ * Nothing is executed: check() is side-effect-free by contract, which is
+ * what makes this safe on a machine that is mid-failure. Doctor IS the
+ * read-only plan, so no mutating code carries a dryRun branch.
+ */
+async function handleDoctor() {
+  const wantsJson = args.includes('--json');
+  let steps;
+  let ctx;
+  let rows;
+
+  try {
+    ({ steps, ctx } = buildStepContext('doctor'));
+    // Every step, not just the applicable ones: a table that silently omits
+    // gpu-libs leaves the reader unsure whether it passed or was never
+    // considered. checkAll() labels it not-applicable and says why.
+    rows = await steps.checkAll(steps.STEPS, ctx);
+  } catch (err) {
+    // Exit 2 is reserved for doctor itself being broken, so a genuine
+    // unhealthy install is never confused with a crashed diagnostic.
+    if (wantsJson) {
+      console.log(JSON.stringify({ schemaVersion: 1, error: err.message }, null, 2));
+    } else {
+      console.error(chalk.red(`doctor failed: ${err.message}`));
+    }
+    process.exit(2);
+  }
+
+  const context = doctorContext(ctx);
+
+  if (wantsJson) {
+    console.log(JSON.stringify({
+      schemaVersion: 1,
+      tool: 'swictation doctor',
+      generatedAt: new Date().toISOString(),
+      context,
+      steps: rows.map(row => ({
+        id: row.id,
+        title: row.title,
+        state: row.health.state,
+        code: row.health.code,
+        summary: row.health.summary,
+        evidence: row.health.evidence,
+        repair: row.health.repair || row.repair,
+      })),
+    }, null, 2));
+    process.exit(steps.exitCodeForRows(rows));
+  }
+
+  const userLine = context.elevated
+    ? `${context.effectiveUser} → ${context.targetUser} (${context.targetHome || 'home unknown'})`
+    : `${context.effectiveUser} (${context.targetHome || 'home unknown'})`;
+
+  console.log(chalk.cyan(`\nswictation v${context.version} — doctor`));
+  console.log(chalk.gray(`  platform  ${context.platform}`));
+  console.log(chalk.gray(`  user      ${userLine}`));
+  console.log(chalk.gray(`  mode      ${context.mode}`));
+  console.log(chalk.gray(`  model     ${context.selectedModel || 'not selected'}${context.gpu ? ` (${context.gpu})` : ''}`));
+  console.log(chalk.gray(`  log       ${context.logPath}`));
+  console.log(chalk.gray('─'.repeat(72)));
+
+  for (const row of rows) {
+    const render = STATE_RENDER[row.health.state] || STATE_RENDER.unknown;
+    const paint = chalk[render.color] || chalk.white;
+    console.log(
+      paint(render.label.padEnd(10)) +
+      chalk.white(row.id.padEnd(14)) +
+      chalk.gray(`${row.health.code.padEnd(26)} ${row.health.summary}`)
+    );
+    // Evidence and the repair command only where something is wrong: on a
+    // healthy machine the table stays one line per step.
+    if (row.health.state !== 'healthy') {
+      for (const item of row.health.evidence) console.log(chalk.gray(`    ${item}`));
+      if (row.health.state !== 'not-applicable') {
+        console.log(chalk.yellow(`    repair: ${row.health.repair || row.repair}`));
+      }
+    }
+  }
+
+  console.log(chalk.gray('─'.repeat(72)));
+  const exitCode = steps.exitCodeForRows(rows);
+  if (exitCode === 0) {
+    const unknowns = rows.filter(r => r.health.state === 'unknown').length;
+    console.log(unknowns > 0
+      ? chalk.yellow(`No failures. ${unknowns} step(s) could not be fully verified.`)
+      : chalk.green('All checks healthy.'));
+  } else {
+    console.log(chalk.yellow('Run "swictation setup --repair" to fix everything above.'));
+  }
+  process.exit(exitCode);
+}
+
+/**
+ * Run the requested steps and print a ledger.
+ * @param {object} options - { ids?: string[], repair?: boolean }
+ * @returns {Promise<boolean>} true when nothing failed or was blocked
+ */
+async function runSetupSteps(options = {}) {
+  const { ids, repair = false } = options;
+  const { steps, ctx } = buildStepContext('setup', resolveSelectedModelForSetup());
+
+  let plan = steps.selectSteps({ ids, entrypoint: 'setup' });
+  if (repair) {
+    plan = await steps.failingSteps(plan, ctx);
+    if (plan.length === 0) {
+      console.log(chalk.green('Nothing to repair — every check already passes.'));
+      return true;
+    }
+    console.log(chalk.cyan(`Repairing: ${plan.map(s => s.id).join(', ')}`));
+  }
+
+  const results = await steps.runSteps(plan, ctx);
+
+  console.log(chalk.gray(`\n${'─'.repeat(72)}`));
+  for (const r of results) {
+    const render = STATUS_RENDER[r.status] || { label: r.status, color: 'yellow' };
+    const paint = chalk[render.color] || chalk.white;
+    console.log(
+      paint(render.label.padEnd(10)) +
+      chalk.white(r.id.padEnd(14)) +
+      chalk.gray(`${r.health.code.padEnd(26)} ${r.health.summary}`)
+    );
+    if (r.status === 'failed' || r.status === 'blocked') {
+      console.log(chalk.yellow(`    repair: ${r.health.repair || steps.repairCommand(steps.getStep(r.id))}`));
+    }
+  }
+
+  // A step the user NAMED that did not actually run is a failure of that
+  // request, even when the reason is benign — `setup --gpu-libs` on a Mac
+  // must not exit 0 as though it had installed something. In a full or
+  // --repair run, not-applicable is just accurate reporting.
+  const targeted = Array.isArray(ids) && ids.length > 0;
+  return results.every(r => (targeted
+    ? (r.status === 'ok' || r.status === 'already')
+    : (r.status !== 'failed' && r.status !== 'blocked')));
+}
+
+function listSteps() {
+  const { steps, ctx } = buildStepContext('setup');
+  console.log(chalk.cyan('Install steps (run one with "swictation setup --<id>"):'));
+  for (const step of steps.STEPS) {
+    const gates = [];
+    if (step.needsNetwork) gates.push('network');
+    if (step.needsSession) gates.push('session');
+    if (step.forbidRoot) gates.push('non-root');
+    const gating = gates.length > 0 ? chalk.gray(`  needs: ${gates.join(', ')}`) : '';
+    const after = (step.after || []).length > 0 ? chalk.gray(`  after: ${step.after.join(', ')}`) : '';
+    const scope = steps.appliesTo(step, ctx) ? '' : chalk.gray('  (not applicable here)');
+    console.log(`  ${chalk.white(step.id.padEnd(14))} ${step.title}${gating}${after}${scope}`);
+  }
+}
+
 async function handleSetup() {
+  const { steps: registry } = buildStepContext('setup');
+  const stepIds = registry.STEPS.map(s => s.id);
+  const knownFlags = new Set(['--list', '--repair', ...stepIds.map(id => `--${id}`)]);
+
+  // Reject anything unrecognized rather than ignoring it: silently falling
+  // through to a full setup would start multi-gigabyte downloads the user
+  // never asked for, which is the opposite of a targeted repair. Bare words
+  // are rejected on the same footing as dashed flags — `setup models` is a
+  // typo for `setup --models`, and treating it as "no arguments" is exactly
+  // the failure mode the dashed check was added to prevent.
+  const unrecognized = args.slice(1).filter(arg => !knownFlags.has(arg));
+  if (unrecognized.length > 0) {
+    const dashed = unrecognized.filter(a => a.startsWith('-'));
+    const bare = unrecognized.filter(a => !a.startsWith('-'));
+    if (dashed.length > 0) {
+      console.error(chalk.red(`Unknown setup option(s): ${dashed.join(', ')}`));
+    }
+    for (const word of bare) {
+      const suggestion = stepIds.includes(word) ? ` — did you mean "--${word}"?` : '';
+      console.error(chalk.red(`Unexpected argument: ${word}${suggestion}`));
+    }
+    console.log(chalk.yellow('Run "swictation setup --list" to see the available steps'));
+    process.exit(1);
+  }
+
+  // Targeted invocations (--list / --<id> / --repair) are non-interactive:
+  // a scripted repair must not stop to ask about auto-start.
+  if (args.includes('--list')) {
+    listSteps();
+    return;
+  }
+
+  const requested = stepIds.filter(id => args.includes(`--${id}`));
+  const repair = args.includes('--repair');
+
+  if (requested.length > 0 || repair) {
+    const ok = await runSetupSteps({ ids: requested.length > 0 ? requested : undefined, repair });
+    if (!ok) process.exit(1);
+    return;
+  }
+
   console.log(chalk.cyan('Setting up Swictation...'));
   console.log(chalk.gray(isMacOS ? 'This will configure launchd services' : 'This will configure systemd services and hotkeys'));
 
@@ -292,47 +577,24 @@ async function handleSetup() {
   }
 
   if (isLinux) {
-    // Linux: systemd setup
+    // systemd is what the services step writes units for; without it there is
+    // nothing for setup to configure.
     try {
       which.sync('systemctl');
     } catch {
       console.error(chalk.red('Error: systemd is required but not found'));
       process.exit(1);
     }
+  }
 
-    // Create systemd user directory
-    if (!fs.existsSync(systemdUserDir)) {
-      fs.mkdirSync(systemdUserDir, { recursive: true });
-      console.log(chalk.green('✓ Created systemd user directory'));
-    }
+  // The steps themselves (ADR-037): config, GPU libraries, models and service
+  // units all go through the registry postinstall uses, so this recovery path
+  // can no longer diverge from the install path — which is exactly how the
+  // ADR-034 blank-output bug got in (an inline unit generator here that
+  // omitted ORT_DYLIB_PATH).
+  const stepsOk = await runSetupSteps();
 
-    // Render the daemon unit from the shared template (ADR-034: single source of
-    // truth — the previous inline generator here omitted ORT_DYLIB_PATH and
-    // produced blank transcriptions when used as the recovery path).
-    const chalkLog = (color, message) => console.log((chalk[color] || chalk.white)(message));
-    let unit;
-    try {
-      unit = buildDaemonServiceUnit(binaryPaths, chalkLog);
-    } catch (err) {
-      console.error(chalk.red(`Error: could not generate service file: ${err.message}`));
-      process.exit(1);
-    }
-    const targetService = path.join(systemdUserDir, 'swictation-daemon.service');
-
-    fs.writeFileSync(targetService, unit.content);
-    console.log(chalk.green('✓ Installed systemd service'));
-    if (!unit.ortFound) {
-      console.log(chalk.yellow('⚠ ONNX Runtime library not found — daemon may run CPU-only.'));
-      console.log(chalk.yellow('  Re-run "npm install -g swictation --foreground-scripts" to download GPU libraries.'));
-    }
-
-    try {
-      execSync('systemctl --user daemon-reload');
-      console.log(chalk.green('✓ Reloaded systemd'));
-    } catch (err) {
-      console.error(chalk.yellow('Warning: Could not reload systemd'), err.message);
-    }
-
+  if (isLinux) {
     // Configure hotkeys based on window manager
     const wm = detectWindowManager();
     if (wm === 'sway') {
@@ -350,21 +612,9 @@ async function handleSetup() {
     }
 
   } else if (isMacOS) {
-    // macOS: launchd setup
-    console.log(chalk.cyan('\n📋 macOS launchd service setup:'));
-
-    // Check if plist files exist
-    const daemonPlist = path.join(launchAgentsDir, 'com.swictation.daemon.plist');
-    const uiPlist = path.join(launchAgentsDir, 'com.swictation.ui.plist');
-
-    if (!fs.existsSync(daemonPlist)) {
-      console.error(chalk.red('✗ LaunchAgent plist files not found'));
-      console.log(chalk.yellow('   They should have been created during installation'));
-      console.log(chalk.cyan('   Try reinstalling: npm install -g swictation'));
-      process.exit(1);
-    }
-
-    console.log(chalk.green('✓ LaunchAgent plist files found'));
+    // The services step has just generated and loaded the LaunchAgents, so
+    // this no longer dead-ends on "reinstall the package" when they are
+    // missing — that recovery hole is what ADR-037 set out to close.
 
     // Accessibility permissions check
     console.log(chalk.cyan('\n🔐 Accessibility Permissions Required:'));
@@ -453,8 +703,14 @@ async function handleSetup() {
     }
   }
 
-  console.log(chalk.green('\n✓ Setup complete!'));
-  console.log(chalk.cyan('Run "swictation start" to begin using Swictation'));
+  if (stepsOk) {
+    console.log(chalk.green('\n✓ Setup complete!'));
+    console.log(chalk.cyan('Run "swictation start" to begin using Swictation'));
+  } else {
+    console.log(chalk.yellow('\n⚠ Setup finished with failed steps (listed above).'));
+    console.log(chalk.cyan('Run "swictation doctor" for details, then "swictation setup --repair"'));
+    process.exitCode = 1;
+  }
 }
 
 async function handleToggle() {
@@ -638,9 +894,15 @@ function showHelp() {
   console.log('  stop            Stop the daemon');
   console.log('  status          Show service status');
   console.log('  toggle          Toggle recording on/off');
-  console.log('  setup           Configure systemd and hotkeys');
+  console.log('  setup           Run the install steps (config, models, services)');
+  console.log('  doctor [--json] Check every install step and print repair commands');
   console.log('  help            Show this help message');
   console.log('  --version, -V   Show version information');
+  console.log();
+  console.log('Setup Options:');
+  console.log('  --list          List the install steps and their ids');
+  console.log('  --<id>          Run one step (e.g. --models, --services, --gpu-libs)');
+  console.log('  --repair        Run only the steps that are not currently healthy');
   console.log();
   console.log('Download Options (also accepted as a positional: download-model 1.1b-gpu):');
   if (isMacOS) {
@@ -661,6 +923,9 @@ function showHelp() {
   console.log('  swictation start --ui                   # Start daemon and UI');
   console.log('  swictation toggle                       # Toggle recording');
   console.log('  swictation status                       # Check if running');
+  console.log('  swictation doctor                       # Diagnose a broken install');
+  console.log('  swictation setup --repair               # Fix only what is broken');
+  console.log('  swictation setup --services             # Re-generate service units');
   console.log('  swictation --version                    # Show version info');
   process.exit(0);
 }
@@ -709,6 +974,18 @@ async function main() {
     return;
   }
 
+  // doctor and setup must work on a broken install — that is the whole point
+  // of having them (ADR-037), so neither waits on checkBinaries()'s exit(1).
+  if (command === 'doctor') {
+    await handleDoctor();
+    return;
+  }
+
+  if (command === 'setup') {
+    await handleSetup();
+    return;
+  }
+
   checkBinaries();
 
   switch (command) {
@@ -723,9 +1000,6 @@ async function main() {
       break;
     case 'toggle':
       await handleToggle();
-      break;
-    case 'setup':
-      await handleSetup();
       break;
     default:
       console.error(chalk.red(`Unknown command: ${command}`));

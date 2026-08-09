@@ -144,6 +144,66 @@ function check() {
 }
 
 /**
+ * Side-effect-free inspection of the config on disk (ADR-037).
+ *
+ * The two registry steps (`config-reset`, `config-heal`) need to answer
+ * "is there anything left to do?" without doing it. Deriving that from the
+ * same constants and predicates run() uses is the point: a second copy of
+ * "is this path stale" is exactly the drift ADR-035 exists to prevent.
+ *
+ * @returns {{exists: boolean, parses: boolean, parseError: string|null,
+ *   healableKeys: string[], overrideResetPending: boolean, path: string}}
+ */
+function inspect() {
+  const p = configPath();
+  const result = {
+    path: p,
+    exists: fs.existsSync(p),
+    parses: false,
+    parseError: null,
+    healableKeys: [],
+    overrideResetPending: false,
+  };
+  if (!result.exists) return result;
+
+  let raw;
+  try {
+    raw = fs.readFileSync(p, 'utf8');
+  } catch (err) {
+    result.parseError = err.message;
+    return result;
+  }
+
+  const { parsed, error } = parseConfig(raw);
+  if (error) {
+    result.parseError = error.message;
+    return result;
+  }
+  result.parses = true;
+
+  for (const [key, defaultPathFn] of Object.entries(HEALABLE_PATH_KEYS)) {
+    const configured = parsed[key];
+    if (typeof configured !== 'string' || configured.length === 0) continue;
+    const defaultPath = defaultPathFn();
+    if (configured === defaultPath) continue;
+    if (!fs.existsSync(configured) && fs.existsSync(defaultPath)) {
+      // run() skips keys it cannot rewrite safely, so neither may report them.
+      if (!isSimpleKeyLine(raw, key, configured)) continue;
+      if (replaceKeyLine(raw, key, defaultPath) !== null) result.healableKeys.push(key);
+    }
+  }
+
+  const managed = readPostinstallState().managedOverride;
+  if (typeof managed === 'string' && managed !== AUTO_OVERRIDE) {
+    // A marker that no longer matches is consumed (not reset) by run(), so it
+    // is still work pending — the same condition run() acts on.
+    result.overrideResetPending = true;
+  }
+
+  return result;
+}
+
+/**
  * @param {object} ctx - { log(color,msg), generateDefaultConfig(),
  *   resetManagedOverride? } — set `resetManagedOverride` on the pre-download
  *   pass only. The post-download pass runs after postinstall has written a
@@ -250,6 +310,7 @@ function run(ctx) {
 
 module.exports = {
   check,
+  inspect,
   run,
   configPath,
   statePath,
