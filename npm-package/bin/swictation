@@ -380,16 +380,24 @@ function doctorContext(ctx) {
  */
 async function handleDoctor() {
   const wantsJson = args.includes('--json');
+  // --deep re-reads every byte of the models and GPU libraries and compares
+  // sha256 against what was recorded when they were written. Opt-in because
+  // it is minutes of I/O on a 7 GB model tree, not because it is risky:
+  // it still runs no step and writes nothing.
+  const wantsDeep = args.includes('--deep');
   let steps;
   let ctx;
   let rows;
 
   try {
     ({ steps, ctx } = buildStepContext('doctor'));
+    if (wantsDeep && !wantsJson) {
+      console.log(chalk.cyan('Deep verification: hashing model and GPU library files...'));
+    }
     // Every step, not just the applicable ones: a table that silently omits
     // gpu-libs leaves the reader unsure whether it passed or was never
     // considered. checkAll() labels it not-applicable and says why.
-    rows = await steps.checkAll(steps.STEPS, ctx);
+    rows = await steps.checkAll(steps.STEPS, ctx, { deep: wantsDeep });
   } catch (err) {
     // Exit 2 is reserved for doctor itself being broken, so a genuine
     // unhealthy install is never confused with a crashed diagnostic.
@@ -408,6 +416,9 @@ async function handleDoctor() {
       schemaVersion: 1,
       tool: 'swictation doctor',
       generatedAt: new Date().toISOString(),
+      // Part of the report, not a flag echo: a consumer comparing two runs
+      // must be able to tell a size check from a content check.
+      depth: wantsDeep ? 'deep' : 'standard',
       context,
       steps: rows.map(row => ({
         id: row.id,
@@ -426,7 +437,7 @@ async function handleDoctor() {
     ? `${context.effectiveUser} → ${context.targetUser} (${context.targetHome || 'home unknown'})`
     : `${context.effectiveUser} (${context.targetHome || 'home unknown'})`;
 
-  console.log(chalk.cyan(`\nswictation v${context.version} — doctor`));
+  console.log(chalk.cyan(`\nswictation v${context.version} — doctor${wantsDeep ? ' (deep)' : ''}`));
   console.log(chalk.gray(`  platform  ${context.platform}`));
   console.log(chalk.gray(`  user      ${userLine}`));
   console.log(chalk.gray(`  mode      ${context.mode}`));
@@ -458,7 +469,10 @@ async function handleDoctor() {
     const unknowns = rows.filter(r => r.health.state === 'unknown').length;
     console.log(unknowns > 0
       ? chalk.yellow(`No failures. ${unknowns} step(s) could not be fully verified.`)
-      : chalk.green('All checks healthy.'));
+      : chalk.green(wantsDeep ? 'All checks healthy (contents verified).' : 'All checks healthy.'));
+    if (!wantsDeep) {
+      console.log(chalk.gray('Sizes were checked, not contents — "swictation doctor --deep" hashes every file.'));
+    }
   } else {
     console.log(chalk.yellow('Run "swictation setup --repair" to fix everything above.'));
   }
@@ -475,6 +489,23 @@ async function runSetupSteps(options = {}) {
   const { steps, ctx } = buildStepContext('setup', resolveSelectedModelForSetup());
 
   let plan = steps.selectSteps({ ids, entrypoint: 'setup' });
+
+  // A step the user named that this entry point may not run is a FAILED
+  // request, not an empty one. `setup --cleanup` deletes other installations'
+  // files and is npm-lifecycle-only; without this it filtered to an empty
+  // plan, printed nothing, and exited 0 as though it had done the work.
+  if (Array.isArray(ids) && ids.length > 0) {
+    const unavailable = ids.filter(id => !plan.some(step => step.id === id));
+    if (unavailable.length > 0) {
+      for (const id of unavailable) {
+        const step = steps.getStep(id);
+        console.error(chalk.red(`Cannot run "${id}" from swictation setup.`));
+        console.error(chalk.gray(`  It runs only during: ${(step.entrypoints || []).join(', ')}`));
+      }
+      return false;
+    }
+  }
+
   if (repair) {
     plan = await steps.failingSteps(plan, ctx);
     if (plan.length === 0) {
@@ -521,7 +552,13 @@ function listSteps() {
     const gating = gates.length > 0 ? chalk.gray(`  needs: ${gates.join(', ')}`) : '';
     const after = (step.after || []).length > 0 ? chalk.gray(`  after: ${step.after.join(', ')}`) : '';
     const scope = steps.appliesTo(step, ctx) ? '' : chalk.gray('  (not applicable here)');
-    console.log(`  ${chalk.white(step.id.padEnd(14))} ${step.title}${gating}${after}${scope}`);
+    // Steps this command cannot run are listed — doctor reports them, so
+    // leaving them out would leave the reader unable to look one up — but
+    // they are labelled rather than offered.
+    const reach = (step.entrypoints || []).includes('setup')
+      ? ''
+      : chalk.yellow('  (install only — not runnable from setup)');
+    console.log(`  ${chalk.white(step.id.padEnd(14))} ${step.title}${gating}${after}${scope}${reach}`);
   }
 }
 
@@ -569,6 +606,17 @@ async function handleSetup() {
 
   console.log(chalk.cyan('Setting up Swictation...'));
   console.log(chalk.gray(isMacOS ? 'This will configure launchd services' : 'This will configure systemd services and hotkeys'));
+
+  // Sampled BEFORE the services step regenerates the plists, because that
+  // regeneration boots the agents out and the answer is gone afterwards.
+  // A user who runs `swictation setup` to fix a hotkey and then declines
+  // auto-start expects the daemon they had running to still be running —
+  // not to discover hours later that a setup they ran for something else
+  // silently stopped it. RunAtLoad is untouched: whether the agent starts at
+  // login stays whatever the generated plist says.
+  const launchdWasRunning = isMacOS
+    ? require('../postinstall.js').launchdServiceState()
+    : { daemon: false, ui: false };
 
   // Create config directory
   if (!fs.existsSync(configDir)) {
@@ -653,6 +701,20 @@ async function handleSetup() {
       }
     } catch (err) {
       console.error(chalk.yellow('Warning: Could not enable auto-start'), err.message);
+    }
+  } else if (isMacOS && (launchdWasRunning.daemon.running || launchdWasRunning.ui.running)) {
+    // Declining auto-start answers "should this start at login?" — it is not
+    // an instruction to stop what is already RUNNING. Regenerating the plists
+    // stopped these; put them back the way this command found them. A service
+    // that was loaded but stopped is deliberately not restored: the plists
+    // carry RunAtLoad, so bootstrapping it would start something the user had
+    // stopped, which is the opposite of leaving the machine as it was.
+    const restored = require('../postinstall.js').restoreLaunchdServices(launchdWasRunning);
+    if (restored.length > 0) {
+      console.log(chalk.green(`✓ Restored the service(s) that were running: ${restored.join(', ')}`));
+    } else {
+      console.log(chalk.yellow('⚠ Could not restart the services that were running before setup'));
+      console.log(chalk.cyan('  Start them with: swictation start'));
     }
   }
 
@@ -895,7 +957,9 @@ function showHelp() {
   console.log('  status          Show service status');
   console.log('  toggle          Toggle recording on/off');
   console.log('  setup           Run the install steps (config, models, services)');
-  console.log('  doctor [--json] Check every install step and print repair commands');
+  console.log('  doctor          Check every install step and print repair commands');
+  console.log('                  --json   machine-readable report');
+  console.log('                  --deep   verify file contents by hash, not just sizes');
   console.log('  help            Show this help message');
   console.log('  --version, -V   Show version information');
   console.log();
@@ -924,6 +988,7 @@ function showHelp() {
   console.log('  swictation toggle                       # Toggle recording');
   console.log('  swictation status                       # Check if running');
   console.log('  swictation doctor                       # Diagnose a broken install');
+  console.log('  swictation doctor --deep                # ...and verify every file by hash');
   console.log('  swictation setup --repair               # Fix only what is broken');
   console.log('  swictation setup --services             # Re-generate service units');
   console.log('  swictation --version                    # Show version info');

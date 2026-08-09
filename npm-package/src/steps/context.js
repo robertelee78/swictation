@@ -103,24 +103,47 @@ function resolveNvidia(platform) {
 }
 
 /**
- * The GPU library variant this machine wants, resolved ONCE.
+ * Compute capability of the installed NVIDIA card, resolved ONCE.
  *
  * `undefined` means "not probed" (not a GPU machine); `null` means "probed
- * and could not tell", which a step must report as unknown rather than
- * silently accepting whatever variant happens to be installed. The probe is
- * run with a no-op logger because contexts are built inside doctor too.
+ * and could not tell". Everything downstream — the variant below, and the
+ * receipt downloadGPULibraries() writes — reads this rather than shelling out
+ * to nvidia-smi again: a second probe can disagree with the first (a driver
+ * reload mid-install, a second card), and then the receipt describes a
+ * different GPU than the one the variant was chosen for. The probe is run
+ * with a no-op logger because contexts are built inside doctor too.
  */
-function resolveGpuVariant(platform, hasNvidiaGpu) {
+function resolveGpuCompute(platform, hasNvidiaGpu) {
   if (platform !== 'linux' || hasNvidiaGpu !== true) return undefined;
   try {
-    const postinstall = require('../../postinstall');
-    const gpu = postinstall.detectGPUComputeCapability(() => {});
-    if (!gpu || !gpu.smVersion) return null;
-    const selected = postinstall.selectGPUPackageVariant(gpu.smVersion);
+    const gpu = require('../../postinstall').detectGPUComputeCapability(() => {});
+    return gpu && gpu.smVersion ? gpu : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The library variant `gpuCompute` implies, with the same tri-state. */
+function variantFromCompute(gpuCompute) {
+  if (gpuCompute === undefined) return undefined;
+  if (!gpuCompute || !gpuCompute.smVersion) return null;
+  try {
+    const selected = require('../../postinstall').selectGPUPackageVariant(gpuCompute.smVersion);
     return (selected && selected.variant) || null;
   } catch {
     return null;
   }
+}
+
+/**
+ * The GPU library variant this machine wants, resolved ONCE.
+ *
+ * `undefined` means "not probed" (not a GPU machine); `null` means "probed
+ * and could not tell", which a step must report as unknown rather than
+ * silently accepting whatever variant happens to be installed.
+ */
+function resolveGpuVariant(platform, hasNvidiaGpu) {
+  return variantFromCompute(resolveGpuCompute(platform, hasNvidiaGpu));
 }
 
 /** The recommendation a previous install recorded, or null. */
@@ -171,6 +194,9 @@ function createContext(options = {}) {
   const gpuInfo = facts.gpuInfo !== undefined ? facts.gpuInfo : readSavedGpuInfo();
 
   const hasNvidiaGpu = facts.hasNvidiaGpu !== undefined ? facts.hasNvidiaGpu : resolveNvidia(platform);
+  const gpuCompute = facts.gpuCompute !== undefined
+    ? facts.gpuCompute
+    : resolveGpuCompute(platform, hasNvidiaGpu);
   const home = users.targetHome;
 
   const ctx = {
@@ -198,10 +224,13 @@ function createContext(options = {}) {
       ? facts.selectedModel
       : (gpuInfo && typeof gpuInfo.recommendedModel === 'string' ? gpuInfo.recommendedModel : null),
     hasNvidiaGpu,
-    // undefined = not a GPU machine; null = probed and undeterminable.
+    // undefined = not a GPU machine; null = probed and undeterminable. Both
+    // are resolved from ONE nvidia-smi probe so the variant and the receipt's
+    // sm/compute fields can never describe different hardware.
+    gpuCompute,
     gpuVariant: facts.gpuVariant !== undefined
       ? facts.gpuVariant
-      : resolveGpuVariant(platform, hasNvidiaGpu),
+      : variantFromCompute(gpuCompute),
     ortLibPath: facts.ortLibPath !== undefined ? facts.ortLibPath : null,
 
     // Artifact locations, derived from the TARGET home rather than
@@ -236,6 +265,8 @@ module.exports = {
   resolveUsers,
   resolveCapabilities,
   resolveNvidia,
+  resolveGpuCompute,
+  variantFromCompute,
   resolveGpuVariant,
   readSavedGpuInfo,
   lookupHome,

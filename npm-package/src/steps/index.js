@@ -60,13 +60,35 @@ const { createContext, deriveContext, readSavedGpuInfo } = require('./context');
 
 const { STATE } = health;
 
-/** Steps in install order. postinstall, setup and doctor all walk this list. */
+/**
+ * Steps in install order. postinstall, setup and doctor all walk this list.
+ *
+ * The order is a dependency order: nothing may be written before the platform
+ * is known to be supported and its directories exist; running services must be
+ * stopped and legacy shadows removed before new artifacts land; the binaries
+ * must resolve before a unit can name one; the config override resets before
+ * the download it re-tests hardware for; and integration and verification come
+ * last because they describe a system that is already assembled.
+ *
+ * `cleanup` precedes `binaries` — which is NOT the legacy phase order. The npm
+ * repair inside `binaries` reinstalls the platform package, overwriting the
+ * daemon executable in place; doing that while the previous daemon is still
+ * running swaps the binary underneath a live CUDA process. `cleanup` is what
+ * stops the services, so it has to have already run. The legacy install had
+ * the same hazard, but as a property of where the calls happened to sit in a
+ * 300-line function; here the order is declarative and the fix is one line.
+ */
 const STEPS = [
+  require('./platform'),
+  require('./cleanup'),
+  require('./binaries'),
   require('./config-reset'),
   require('./gpu-libs'),
   require('./models'),
   require('./config-heal'),
   require('./services'),
+  require('./integration'),
+  require('./verify'),
 ];
 
 const STATUS = {
@@ -142,6 +164,27 @@ async function checkStepAsync(step, ctx) {
 }
 
 /**
+ * The deep variant of a step's check — content verification rather than
+ * presence and size (ADR-037's deferred `doctor --deep`).
+ *
+ * A step without a `deepCheck` is not a gap: config-reset has nothing to
+ * hash. Falling back to check() keeps `--deep` a strictly stronger run of the
+ * SAME table rather than a second, shorter one that quietly omits rows.
+ */
+async function checkStepDeep(step, ctx) {
+  if (typeof step.deepCheck !== 'function') return checkStepAsync(step, ctx);
+  try {
+    return health.normalizeHealth(await step.deepCheck(ctx), `${codePrefix(step)}_NO_HEALTH`);
+  } catch (err) {
+    return health.unknown(
+      `${codePrefix(step)}_DEEP_CHECK_ERROR`,
+      `deepCheck() threw: ${err.message}`,
+      { repair: repairCommand(step) }
+    );
+  }
+}
+
+/**
  * Stable ordering that honours soft `after` edges.
  *
  * Registry order is the baseline; a step only moves later, and only past
@@ -199,6 +242,9 @@ function emptyResult(step, status, healthRecord) {
     title: step.title,
     status,
     health: healthRecord,
+    // Nothing ran, so the verdict IS the check — but the field is always
+    // present so callers never have to branch on its existence.
+    checkHealth: healthRecord,
     changed: false,
     components: [],
     warnings: [],
@@ -270,7 +316,9 @@ async function runStep(step, ctx, options = {}) {
       { evidence: before.evidence, repair }
     );
     announce(record);
-    return { ...emptyResult(step, STATUS.FAILED, record), error: err };
+    // `before` is the last thing check() actually said; the RUN_ERROR record
+    // describes the throw, not the artifacts.
+    return { ...emptyResult(step, STATUS.FAILED, record), checkHealth: before, error: err };
   }
 
   const after = await checkStepAsync(step, ctx);
@@ -279,6 +327,14 @@ async function runStep(step, ctx, options = {}) {
     id: step.id,
     title: step.title,
     health: after,
+    // What check() ACTUALLY said, kept alongside `health` because `health` is
+    // overwritten below when a component fails. The synthesized `_PARTIAL`
+    // record is the right thing to show a user — it names which component
+    // broke — but it is the wrong thing to be the only thing kept: a caller
+    // reasoning about the artifact state (postinstall's driver asking "is this
+    // machine fatally unsupported?") would see PLATFORM_PARTIAL and conclude
+    // nothing was wrong with the platform at all.
+    checkHealth: after,
     changed: ran.changed,
     components: ran.components,
     warnings: ran.warnings,
@@ -336,8 +392,14 @@ async function runSteps(steps, ctx, options = {}) {
 /**
  * Evaluate every check() without running anything — what `doctor` reports
  * and what `setup --repair` filters on.
+ *
+ * @param {object} [options]
+ * @param {boolean} [options.deep=false] - use each step's deepCheck() where
+ *   it has one: content hashing rather than presence and size. Opt-in
+ *   because it reads every byte of the models and GPU libraries.
  */
-async function checkAll(steps, ctx) {
+async function checkAll(steps, ctx, options = {}) {
+  const { deep = false } = options;
   const rows = [];
   for (const step of steps) {
     if (!appliesTo(step, ctx)) {
@@ -352,7 +414,7 @@ async function checkAll(steps, ctx) {
       });
       continue;
     }
-    const record = await checkStepAsync(step, ctx);
+    const record = deep ? await checkStepDeep(step, ctx) : await checkStepAsync(step, ctx);
     // Report a capability block only when there is work the block prevents.
     const missing = record.state === STATE.HEALTHY ? [] : unmetCapabilities(step, ctx);
     const finalRecord = missing.length > 0
@@ -402,6 +464,7 @@ module.exports = {
   unmetCapabilities,
   checkStep,
   checkStepAsync,
+  checkStepDeep,
   orderSteps,
   selectSteps,
   runStep,

@@ -237,11 +237,22 @@ module.exports = {
         // step. Bootstrapping the agents here would make answering No
         // meaningless, so generation and loading are separated and setup
         // loads only on consent. postinstall keeps loading inline.
+        //
+        // binaryPaths and targetHome are handed down rather than re-resolved
+        // (ADR-037 amendment 4): the generator used to call resolveBinaryPaths()
+        // and os.homedir() itself, so under sudo it wrote a plist into one home
+        // while checkDarwin() above read another — and the install reported
+        // healthy over a service that did not exist where it mattered.
         postinstall.generateLaunchdServices(ctx.ortLibPath || null, {
           load: ctx.mode !== 'setup',
+          binaryPaths: ctx.binaryPaths || undefined,
+          targetHome: ctx.targetHome || undefined,
         });
       } else {
-        postinstall.generateSystemdService(ctx.ortLibPath || null);
+        postinstall.generateSystemdService(ctx.ortLibPath || null, {
+          binaryPaths: ctx.binaryPaths || undefined,
+          targetHome: ctx.targetHome || undefined,
+        });
       }
     } catch (err) {
       return {

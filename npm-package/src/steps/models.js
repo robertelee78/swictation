@@ -118,7 +118,67 @@ module.exports = {
 
     return healthy('MODELS_SIZE_VERIFIED',
       `${required.join(' + ')} present (size-verified against models.manifest.json)`, {
-        evidence: [`selected: ${recommendation}`],
+        evidence: [
+          `selected: ${recommendation}`,
+          'sizes only — run "swictation doctor --deep" to verify contents',
+        ],
+      });
+  },
+
+  /**
+   * Full content verification — `doctor --deep` only (ADR-037 deferred item).
+   *
+   * check() compares sizes because re-hashing 7 GB on every install is not a
+   * check anyone would keep. This rung streams the real sha256 through
+   * ADR-036's verifyFile(), the same predicate the download path already
+   * enforces, so "verified at download time" can be re-established on demand
+   * years later — after the disk, an antivirus, or a well-meaning sync tool
+   * has had a chance to touch those files.
+   */
+  async deepCheck(ctx) {
+    const shallow = module.exports.check(ctx);
+    if (shallow.code !== 'MODELS_SIZE_VERIFIED') return shallow;
+
+    const required = requiredKeys(ctx.selectedModel);
+    const downloader = downloaderFor();
+    const modelsDir = require('../paths').getModelsDir();
+
+    const failures = [];
+    const unverified = [];
+    let verified = 0;
+
+    for (const key of required) {
+      const entry = downloader.manifestEntry(key);
+      if (!entry) {
+        unverified.push(key);
+        continue;
+      }
+      const report = await downloader.verifyModelFiles(
+        key,
+        require('path').join(modelsDir, entry.targetDir),
+        entry.files.map(f => f.path)
+      );
+      verified += report.verified.length;
+      for (const failure of report.failures) {
+        failures.push(`${key}/${failure.path}: ${failure.reason}`);
+      }
+    }
+
+    if (failures.length > 0) {
+      return unhealthy('MODELS_CORRUPT',
+        `${failures.length} model file(s) failed sha256 verification`, {
+          evidence: failures.slice(0, 10),
+        });
+    }
+    if (verified === 0) {
+      return unknown('MODELS_NOT_IN_MANIFEST',
+        'models.manifest.json describes none of the required models', {
+          evidence: unverified.map(key => `${key}: no manifest entry`),
+        });
+    }
+    return healthy('MODELS_HASH_VERIFIED',
+      `${verified} model file(s) match models.manifest.json by content`, {
+        evidence: [`selected: ${ctx.selectedModel}`],
       });
   },
 

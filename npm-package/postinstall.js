@@ -148,81 +148,6 @@ const _installStart = Date.now();
 // receipt against the version this package actually ships (ADR-037).
 const GPU_LIBS_VERSION = '1.2.0';
 
-function checkPlatform() {
-  const platform = process.platform;
-  const arch = process.arch;
-
-  // Support both Linux and macOS
-  if (platform === 'linux') {
-    // Linux-specific checks
-    if (arch !== 'x64') {
-      log('yellow', 'Note: Swictation on Linux currently only supports x64 architecture');
-      process.exit(0);
-    }
-
-    // Check GLIBC version
-    try {
-      const glibcVersion = execSync('ldd --version 2>&1 | head -1', { encoding: 'utf8' });
-      const versionMatch = glibcVersion.match(/GLIBC\s+(\d+)\.(\d+)/i);
-      if (versionMatch) {
-        const major = parseInt(versionMatch[1]);
-        const minor = parseInt(versionMatch[2]);
-
-        if (major < 2 || (major === 2 && minor < 39)) {
-          log('red', '\n⚠ INCOMPATIBLE GLIBC VERSION');
-          log('yellow', `Detected GLIBC ${major}.${minor} (need 2.39+)`);
-          log('yellow', 'Swictation requires Ubuntu 24.04 LTS or newer');
-          log('yellow', 'Ubuntu 22.04 is NOT supported due to GLIBC 2.35');
-          log('yellow', '\nSupported distributions:');
-          log('cyan', '  - Ubuntu 24.04 LTS (Noble Numbat) or newer');
-          log('cyan', '  - Debian 13+ (Trixie)');
-          log('cyan', '  - Fedora 39+');
-          log('yellow', '\nInstallation will continue but binaries may not work.');
-        }
-      }
-    } catch (err) {
-      log('yellow', 'Warning: Could not check GLIBC version');
-    }
-  } else if (platform === 'darwin') {
-    // macOS-specific checks
-    if (arch !== 'arm64') {
-      log('red', '\n⚠ UNSUPPORTED ARCHITECTURE');
-      log('yellow', `Detected architecture: ${arch}`);
-      log('yellow', 'Swictation on macOS requires Apple Silicon (M1 or later)');
-      log('yellow', 'Intel Macs are not supported');
-      process.exit(1);
-    }
-
-    // Check macOS version (require Sonoma 14.0+ or Sequoia 15.0+)
-    try {
-      const osVersion = execSync('sw_vers -productVersion', { encoding: 'utf8' }).trim();
-      const versionMatch = osVersion.match(/(\d+)\.(\d+)/);
-      if (versionMatch) {
-        const major = parseInt(versionMatch[1]);
-
-        if (major < 14) {
-          log('red', '\n⚠ UNSUPPORTED MACOS VERSION');
-          log('yellow', `Detected macOS ${osVersion}`);
-          log('yellow', 'Swictation requires macOS 14.0 (Sonoma) or newer');
-          log('yellow', '\nSupported versions:');
-          log('cyan', '  - macOS 14.x (Sonoma)');
-          log('cyan', '  - macOS 15.x (Sequoia)');
-          log('yellow', '\nInstallation will continue but may not work correctly.');
-        } else {
-          log('green', `✓ macOS ${osVersion} (Apple Silicon)`);
-        }
-      }
-    } catch (err) {
-      log('yellow', 'Warning: Could not check macOS version');
-    }
-  } else {
-    log('yellow', `Note: Swictation currently only supports Linux and macOS`);
-    log('yellow', `Detected platform: ${platform}`);
-    log('yellow', 'Skipping postinstall for unsupported platform');
-    process.exit(0);
-  }
-}
-
 /**
  * Phase 1: Clean up old/conflicting service files from previous installations
  * This prevents conflicts between old Python-based services and new Node.js services
@@ -291,55 +216,33 @@ function cleanupOldOnnxRuntime() {
   log('cyan', '\n🧹 Checking for old ONNX Runtime libraries...');
 
   try {
+    // The candidate directories and the conflict predicate both come from the
+    // cleanup STEP, so the check and this repair can never disagree about what
+    // counts as a conflict. They used to carry separate copies: this one
+    // hardcoded python3.10–3.13 (blind the day 3.14 shipped) and treated an
+    // unparseable version as "leave it alone", which is how a library of
+    // unknown vintage kept its place ahead of ours on the linker path.
+    const cleanupStep = require('./src/steps/cleanup');
     const homeDir = os.homedir();
-    const isMacOS = process.platform === 'darwin';
-    const ortExtension = isMacOS ? 'libonnxruntime' : 'libonnxruntime.so';
-    const pythonLibDirs = [
-      path.join(homeDir, '.local', 'lib', 'python3.13', 'site-packages', 'onnxruntime'),
-      path.join(homeDir, '.local', 'lib', 'python3.12', 'site-packages', 'onnxruntime'),
-      path.join(homeDir, '.local', 'lib', 'python3.11', 'site-packages', 'onnxruntime'),
-      path.join(homeDir, '.local', 'lib', 'python3.10', 'site-packages', 'onnxruntime'),
-    ];
-    // Add macOS pip paths
-    if (isMacOS) {
-      for (const pyVer of ['3.13', '3.12', '3.11', '3.10']) {
-        pythonLibDirs.push(path.join(homeDir, 'Library', 'Python', pyVer, 'lib', 'python', 'site-packages', 'onnxruntime'));
-      }
-    }
+    const platform = process.platform;
+    const pythonLibDirs = cleanupStep._internals.pythonOrtDirs(homeDir, platform);
 
     let removedAny = false;
 
     for (const ortDir of pythonLibDirs) {
-      if (fs.existsSync(ortDir)) {
+      if (!cleanupStep._internals.hasConflictingOrt(ortDir, platform)) continue;
+      log('yellow', `⚠️  Found conflicting ONNX Runtime at ${ortDir}`);
+      log('cyan', `   Removing to prevent version conflicts...`);
+      try {
         try {
-          // Check if it's an old version that conflicts
-          const capiDir = path.join(ortDir, 'capi');
-          if (fs.existsSync(capiDir)) {
-            const ortFiles = fs.readdirSync(capiDir).filter(f => f.includes(ortExtension));
-            // Check all files for versions older than 1.22
-            const hasOldVersion = ortFiles.some(f => {
-              const m = f.match(/(\d+)\.(\d+)/);
-              if (m) {
-                const ver = parseInt(m[1]) * 100 + parseInt(m[2]);
-                return ver < 122; // anything older than 1.22
-              }
-              return false;
-            });
-            if (hasOldVersion) {
-              log('yellow', `⚠️  Found old ONNX Runtime (<1.22) at ${ortDir}`);
-              log('cyan', `   Removing to prevent version conflicts...`);
-              try {
-                fs.rmSync(ortDir, { recursive: true, force: true });
-              } catch (rmErr) {
-                execSync(`rm -rf "${ortDir}"`, { stdio: 'ignore' });
-              }
-              log('green', `✓ Removed old ONNX Runtime installation`);
-              removedAny = true;
-            }
-          }
-        } catch (err) {
-          // Can't determine version, leave it alone
+          fs.rmSync(ortDir, { recursive: true, force: true });
+        } catch (rmErr) {
+          execFileSync('rm', ['-rf', ortDir], { stdio: 'ignore' });
         }
+        log('green', `✓ Removed old ONNX Runtime installation`);
+        removedAny = true;
+      } catch (err) {
+        log('yellow', `⚠️  Could not remove ${ortDir}: ${err.message}`);
       }
     }
 
@@ -1017,8 +920,20 @@ function cleanupSupersededGpuLibs(gpuLibsDir) {
   }
 }
 
-async function downloadGPULibraries() {
-  const hasGPU = detectNvidiaGPU();
+/**
+ * Download and extract the CUDA/ONNX-Runtime set for this GPU.
+ *
+ * @param {object} [facts] - resolved context facts (ADR-037 amendment 4).
+ *   The caller has already probed the hardware once; re-probing here can
+ *   disagree with that probe (driver reload mid-install, a second card) and
+ *   then the receipt describes different hardware than the variant was chosen
+ *   for. Absent facts fall back to probing so the function stays usable
+ *   standalone.
+ * @param {boolean} [facts.hasNvidiaGpu]
+ * @param {object}  [facts.gpuCompute] - {smVersion, computeCap, gpuName}
+ */
+async function downloadGPULibraries(facts = {}) {
+  const hasGPU = facts.hasNvidiaGpu !== undefined ? facts.hasNvidiaGpu : detectNvidiaGPU();
 
   if (!hasGPU) {
     log('cyan', '\nℹ No NVIDIA GPU detected - skipping GPU library download');
@@ -1039,8 +954,12 @@ async function downloadGPULibraries() {
   const gpuLibsDir = getGpuLibsDir();
   log('cyan', `   GPU libraries will be installed to: ${gpuLibsDir}\n`);
 
-  // Detect GPU compute capability
-  const gpuInfo = detectGPUComputeCapability();
+  // Compute capability: the caller's resolved fact when it has one, otherwise
+  // a fresh probe. `null` from the context means "probed and could not tell",
+  // which must fall through to the same guidance as a failed probe here.
+  const gpuInfo = facts.gpuCompute !== undefined
+    ? (facts.gpuCompute || { hasGPU: true, smVersion: null, computeCap: null, gpuName: null })
+    : detectGPUComputeCapability();
 
   if (!gpuInfo.smVersion) {
     log('yellow', '⚠️  Could not detect GPU compute capability');
@@ -1095,22 +1014,38 @@ async function downloadGPULibraries() {
     if (fs.existsSync(gpuPackageInfoPath)) {
       try {
         const existingMetadata = JSON.parse(fs.readFileSync(gpuPackageInfoPath, 'utf8'));
-        // Skip only when the metadata matches AND the artifacts actually
-        // exist (ADR-035): the metadata is a receipt in the config dir that
-        // survives upgrades; the goods must be verified independently.
-        const sentinelLib = path.join(gpuLibsDir, 'libonnxruntime.so');
-        if (
-          existingMetadata.version === GPU_LIBS_VERSION &&
-          existingMetadata.variant === variant &&
-          fs.existsSync(sentinelLib)
-        ) {
+        // Skip only when the metadata matches AND the artifacts are verifiable
+        // (ADR-035 + ADR-037 Phase B): the metadata is a receipt in the config
+        // dir that survives upgrades; the goods must vouch for themselves.
+        // "Verifiable" now means the per-file manifest describes every library
+        // and every one of them still matches its recorded size. A directory
+        // with no manifest is a pre-Phase-B install: nothing on disk can prove
+        // those files are intact, so it is re-downloaded once rather than
+        // blessed on the strength of a receipt and one sentinel — which is the
+        // exact shape of the bug this skip check exists to prevent.
+        const existing = require('./src/gpu-libs-manifest').readManifest(gpuLibsDir);
+        const inventory = existing
+          ? require('./src/gpu-libs-manifest').verifyInventory(existing, gpuLibsDir)
+          : null;
+        const receiptMatches = existingMetadata.version === GPU_LIBS_VERSION
+          && existingMetadata.variant === variant;
+
+        if (receiptMatches && existing && existing.variant === variant
+          && existing.version === GPU_LIBS_VERSION && inventory.ok) {
           skipDownload = true;
           log('green', `  ✓ GPU libraries v${GPU_LIBS_VERSION} (${variant}) already installed`);
           log('cyan', `    Location: ${gpuLibsDir}`);
           log('cyan', `    Installed: ${existingMetadata.installedAt}`);
+          log('cyan', `    Verified: ${inventory.checked} files match the recorded manifest`);
           log('cyan', `    Skipping download to save time and bandwidth`);
-        } else if (existingMetadata.version === GPU_LIBS_VERSION && existingMetadata.variant === variant) {
-          log('yellow', '  ⚠️  GPU library metadata found but artifacts are missing — re-downloading');
+        } else if (receiptMatches && !existing) {
+          log('yellow', '  ⚠️  GPU libraries present but not described by a per-file manifest');
+          log('cyan', '     Re-downloading once so their integrity can be verified from now on');
+        } else if (receiptMatches) {
+          log('yellow', '  ⚠️  GPU library manifest does not match what is on disk — re-downloading');
+          for (const item of [...inventory.missing, ...inventory.mismatched].slice(0, 5)) {
+            log('cyan', `     ${item}`);
+          }
         }
       } catch (err) {
         log('yellow', `    Warning: Could not read GPU package metadata: ${err.message}`);
@@ -1118,14 +1053,19 @@ async function downloadGPULibraries() {
     }
 
     if (!skipDownload) {
-      // Invalidate the metadata receipt BEFORE downloading: if this run is
-      // interrupted after a partial extraction, a surviving receipt plus one
-      // sentinel .so would bless the incomplete set forever (ADR-035). The
-      // receipt is rewritten only after full extraction succeeds.
+      // Invalidate the receipt AND the manifest BEFORE downloading: if this
+      // run is interrupted after a partial extraction, a surviving pair would
+      // bless the incomplete set forever (ADR-035). Both are rewritten only
+      // after full extraction succeeds.
       try {
         fs.unlinkSync(gpuPackageInfoPath);
       } catch {
         /* no receipt to invalidate */
+      }
+      try {
+        fs.unlinkSync(require('./src/gpu-libs-manifest').manifestPath(gpuLibsDir));
+      } catch {
+        /* no manifest to invalidate */
       }
       // Download tarball with retry, resume, and progress
       log('cyan', `  Downloading ${variant} package...`);
@@ -1151,16 +1091,40 @@ async function downloadGPULibraries() {
       log('cyan', '  Extracting libraries...');
       execSync(`tar -xzf "${tarPath}" -C "${tmpDir}"`, { stdio: 'inherit' });
 
-      // Move libraries from extracted ${variant}/libs/ to gpu-libs directory
+      // Move libraries from extracted ${variant}/libs/ to gpu-libs directory,
+      // hashing each file as it streams through (ADR-037 Phase B). The digest
+      // is of the bytes that were actually written, in the same pass — not of
+      // a later re-read, and not copied from the archive's own metadata. That
+      // is what lets gpu-libs' check() finally say `healthy` instead of
+      // `unknown`: forty files described by their own contents rather than one
+      // sentinel standing in for the set.
+      const gpuManifest = require('./src/gpu-libs-manifest');
       const extractedLibsDir = path.join(tmpDir, variant, 'libs');
       if (fs.existsSync(extractedLibsDir)) {
         const libFiles = fs.readdirSync(extractedLibsDir);
+        const manifestFiles = [];
         for (const file of libFiles) {
           const srcPath = path.join(extractedLibsDir, file);
-          const destPath = path.join(gpuLibsDir, file);
-          fs.copyFileSync(srcPath, destPath);
+          if (!fs.statSync(srcPath).isFile()) continue;
+          manifestFiles.push(
+            await gpuManifest.copyAndHash(srcPath, path.join(gpuLibsDir, file), file)
+          );
         }
-        log('green', `  ✓ Extracted ${libFiles.length} libraries to ${gpuLibsDir}`);
+        log('green', `  ✓ Extracted ${manifestFiles.length} libraries to ${gpuLibsDir}`);
+
+        // Written BEFORE the receipt, and only from files that fully streamed:
+        // an interruption between the two leaves a manifest with no receipt,
+        // which reads as "not installed" rather than as a verified set.
+        if (gpuManifest.writeManifest(gpuLibsDir, {
+          variant,
+          version: GPU_LIBS_VERSION,
+          files: manifestFiles,
+        })) {
+          log('green', `  ✓ Recorded per-file integrity manifest (${manifestFiles.length} files)`);
+        } else {
+          log('yellow', '  ⚠️  Could not write the GPU library manifest');
+          log('cyan', '     Integrity will report as unverified until the next install');
+        }
       } else {
         throw new Error(`Expected directory not found: ${extractedLibsDir}`);
       }
@@ -1569,7 +1533,15 @@ function detectOrtLibrary() {
   }
 }
 
-function generateSystemdService(ortLibPath) {
+/**
+ * @param {string} ortLibPath
+ * @param {object} [facts] - resolved context facts (ADR-037 amendment 4).
+ *   `binaryPaths` and `targetHome` come from the ONE context the install
+ *   resolved: re-resolving here can pick a different platform package than
+ *   the one just verified, and os.homedir() under sudo is not the home the
+ *   check() that "verified" this unit reads from.
+ */
+function generateSystemdService(ortLibPath, facts = {}) {
   log('cyan', '\n⚙️  Generating systemd service files...');
 
   try {
@@ -1577,7 +1549,7 @@ function generateSystemdService(ortLibPath) {
     const { resolveBinaryPaths } = require('./src/resolve-binary');
     let binaryPaths;
     try {
-      binaryPaths = resolveBinaryPaths();
+      binaryPaths = facts.binaryPaths || resolveBinaryPaths();
       log('cyan', `  Using platform package: ${binaryPaths.packageName}`);
       log('cyan', `  Daemon binary: ${binaryPaths.daemon}`);
       log('cyan', `  Platform lib directory: ${binaryPaths.libDir}`);
@@ -1587,7 +1559,8 @@ function generateSystemdService(ortLibPath) {
       return;
     }
 
-    const systemdDir = path.join(os.homedir(), '.config', 'systemd', 'user');
+    const homeDir = facts.targetHome || os.homedir();
+    const systemdDir = path.join(homeDir, '.config', 'systemd', 'user');
 
     // Create systemd directory if it doesn't exist
     if (!fs.existsSync(systemdDir)) {
@@ -1771,11 +1744,116 @@ WantedBy=default.target
     }
 
   } catch (err) {
-    const wrapped = InstallError.fromSystemError(err, 'SW-E006', 'Failed to generate systemd services', { path: path.join(os.homedir(), '.config', 'systemd', 'user') });
+    const wrapped = InstallError.fromSystemError(err, 'SW-E006', 'Failed to generate systemd services', { path: path.join(facts.targetHome || os.homedir(), '.config', 'systemd', 'user') });
     console.log(wrapped.format());
     log('cyan', '  You can manually create them later using: swictation setup');
     _installWarnings.push('Systemd service generation failed');
   }
+}
+
+const LAUNCHD_LABELS = { daemon: 'com.swictation.daemon', ui: 'com.swictation.ui' };
+
+/**
+ * LOADED and RUNNING, from one `launchctl print` block.
+ *
+ * `launchctl print` exiting 0 means the job is BOOTSTRAPPED — it exists in the
+ * domain. It says nothing about whether it has a process. A job that is loaded
+ * and stopped prints `state = not running` and carries no top-level `pid`, and
+ * conflating that with "running" is what made restore-after-decline start a
+ * service the user had deliberately stopped.
+ *
+ * Only TOP-LEVEL keys count (one tab of indentation): the block nests
+ * `endpoints` and `spawn statistics` sub-dictionaries that carry their own
+ * `state = active` lines, and a looser match reads an endpoint's liveness as
+ * the job's.
+ *
+ * @param {string} output
+ * @returns {{loaded: boolean, running: boolean}}
+ */
+function parseLaunchctlPrint(output) {
+  const pid = /^\tpid = (\d+)$/m.exec(output);
+  const state = /^\tstate = (.+)$/m.exec(output);
+  return {
+    loaded: true,
+    running: !!pid || (!!state && state[1].trim() === 'running'),
+  };
+}
+
+/**
+ * What each LaunchAgent is doing in this user's GUI domain, right now.
+ *
+ * Read-only, and the only honest way to answer "was this running before I
+ * touched it": regenerating plists boots the agents out, so a caller that
+ * wants to leave the machine as it found it has to ask BEFORE that happens.
+ * A user who declines auto-start expects their already-running daemon to keep
+ * running, not to be silently stopped by a setup they ran for another reason.
+ *
+ * @returns {{daemon: {loaded: boolean, running: boolean}, ui: {loaded: boolean, running: boolean}}}
+ */
+function launchdServiceState() {
+  const absent = () => ({ loaded: false, running: false });
+  const state = { daemon: absent(), ui: absent() };
+  if (process.platform !== 'darwin') return state;
+  let uid;
+  try {
+    uid = execFileSync('id', ['-u'], { encoding: 'utf8' }).trim();
+  } catch {
+    return state;
+  }
+  for (const [key, label] of Object.entries(LAUNCHD_LABELS)) {
+    try {
+      const out = execFileSync('launchctl', ['print', `gui/${uid}/${label}`], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      state[key] = parseLaunchctlPrint(out);
+    } catch {
+      state[key] = absent();
+    }
+  }
+  return state;
+}
+
+/**
+ * Bootstrap the LaunchAgents that were RUNNING before this install touched
+ * them. Used to undo the bootout that plist regeneration performs when the
+ * caller is NOT going to load them itself.
+ *
+ * Running, not merely loaded, and the distinction decides behaviour: the
+ * generated plists carry RunAtLoad, so bootstrapping a job that was loaded and
+ * STOPPED would start it — turning "put the machine back as I found it" into
+ * "start a service the user had stopped". Those jobs are left alone.
+ *
+ * @param {{daemon: {running: boolean}, ui: {running: boolean}}} wasRunning
+ * @param {string} [homeDir]
+ * @returns {string[]} labels that were restored
+ */
+function restoreLaunchdServices(wasRunning = {}, homeDir = os.homedir()) {
+  if (process.platform !== 'darwin') return [];
+  const restored = [];
+  let uid;
+  try {
+    uid = execFileSync('id', ['-u'], { encoding: 'utf8' }).trim();
+  } catch {
+    return restored;
+  }
+  for (const [key, label] of Object.entries(LAUNCHD_LABELS)) {
+    const previous = wasRunning[key];
+    if (!previous || previous.running !== true) continue;
+    const plist = path.join(homeDir, 'Library', 'LaunchAgents', `${label}.plist`);
+    if (!fs.existsSync(plist)) continue;
+    try {
+      execFileSync('launchctl', ['bootstrap', `gui/${uid}`, plist], {
+        stdio: ['ignore', 'ignore', 'ignore'],
+      });
+      restored.push(label);
+    } catch {
+      // Already bootstrapped, or launchd refused: either way the caller's
+      // report below is what the user sees, and a failure here is not worth
+      // failing a setup over.
+    }
+  }
+  return restored;
 }
 
 /**
@@ -1788,17 +1866,29 @@ WantedBy=default.target
  *   written. `swictation setup` passes false: it asks the user about
  *   auto-start AFTER generating, and loading here would make answering "No"
  *   meaningless (ADR-037 amendment, P1).
+ * @param {object} [options.binaryPaths] - resolved context fact; re-resolving
+ *   here can pick a different platform package than the install just verified.
+ * @param {string} [options.targetHome] - resolved context fact; os.homedir()
+ *   under sudo is not the home whose plist the check() reads.
+ * @returns {{wasRunning: {daemon: boolean, ui: boolean}, loaded: boolean}}
+ *   `wasRunning` is the state observed BEFORE the bootout, so a caller that
+ *   passed `load:false` can put the machine back the way it found it.
  */
 function generateLaunchdServices(ortLibPath, options = {}) {
   const { load = true } = options;
   log('cyan', '\n⚙️  Generating launchd service files...');
+
+  // Sampled before anything is booted out — afterwards the answer is always
+  // "not running" and the information is gone for good.
+  const wasRunning = launchdServiceState();
+  const result = { wasRunning, loaded: load };
 
   try {
     // Get platform package binary paths
     const { resolveBinaryPaths } = require('./src/resolve-binary');
     let binaryPaths;
     try {
-      binaryPaths = resolveBinaryPaths();
+      binaryPaths = options.binaryPaths || resolveBinaryPaths();
       log('cyan', `  Using platform package: ${binaryPaths.packageName}`);
       log('cyan', `  Daemon binary: ${binaryPaths.daemon}`);
       log('cyan', `  UI binary: ${binaryPaths.ui}`);
@@ -1806,11 +1896,12 @@ function generateLaunchdServices(ortLibPath, options = {}) {
     } catch (err) {
       log('red', `  ✗ Could not resolve platform package binaries: ${err.message}`);
       log('yellow', '  Service generation cannot proceed without platform package');
-      return;
+      return result;
     }
 
-    const launchAgentsDir = path.join(os.homedir(), 'Library', 'LaunchAgents');
-    const logDir = path.join(os.homedir(), 'Library', 'Logs', 'swictation');
+    const targetHome = options.targetHome || os.homedir();
+    const launchAgentsDir = path.join(targetHome, 'Library', 'LaunchAgents');
+    const logDir = path.join(targetHome, 'Library', 'Logs', 'swictation');
     const daemonPlistPath = path.join(launchAgentsDir, 'com.swictation.daemon.plist');
     const uiPlistPath = path.join(launchAgentsDir, 'com.swictation.ui.plist');
 
@@ -1875,7 +1966,7 @@ function generateLaunchdServices(ortLibPath, options = {}) {
       // Replace template variables
       // Use platform package binary paths instead of __dirname
       const daemonBinaryPath = binaryPaths.daemon;
-      const homeDir = os.homedir();
+      const homeDir = targetHome;
 
       // DYLD_LIBRARY_PATH: CoreML runtime + ONNX Runtime providers
       // ORT_DYLIB_PATH: Points to CoreML-enabled ONNX Runtime
@@ -2031,7 +2122,7 @@ function generateLaunchdServices(ortLibPath, options = {}) {
         let uiTemplate = fs.readFileSync(uiTemplatePath, 'utf8');
 
         // Replace template variables
-        const homeDir = os.homedir();
+        const homeDir = targetHome;
         uiTemplate = uiTemplate.replace(/\{\{UI_PATH\}\}/g, uiPath);
         uiTemplate = uiTemplate.replace(/\{\{LOG_DIR\}\}/g, logDir);
         uiTemplate = uiTemplate.replace(/\{\{HOME\}\}/g, homeDir);
@@ -2059,7 +2150,16 @@ function generateLaunchdServices(ortLibPath, options = {}) {
     if (!load) {
       log('cyan', '\n  Plists written; not loading them here.');
       log('cyan', '  (auto-start is a separate, explicit choice)');
-      return;
+      // Regenerating the plists booted these out. Whoever passed load:false
+      // owns the decision to bring them back — `wasRunning` is how they know
+      // which ones to restore, and it is the only record left.
+      const stopped = Object.entries(wasRunning)
+        .filter(([, previous]) => previous && previous.running)
+        .map(([key]) => key);
+      if (stopped.length > 0) {
+        log('cyan', `  (${stopped.join(' and ')} was running and is now stopped)`);
+      }
+      return result;
     }
     log('cyan', '\n  Loading services with launchd...');
 
@@ -2109,11 +2209,13 @@ function generateLaunchdServices(ortLibPath, options = {}) {
     log('cyan', '  swictation start     - Start services');
     log('cyan', '  swictation stop      - Stop services');
 
+    return result;
   } catch (err) {
-    const wrapped = InstallError.fromSystemError(err, 'SW-E006', 'Failed to generate launchd services', { path: path.join(os.homedir(), 'Library', 'LaunchAgents') });
+    const wrapped = InstallError.fromSystemError(err, 'SW-E006', 'Failed to generate launchd services', { path: path.join(options.targetHome || os.homedir(), 'Library', 'LaunchAgents') });
     console.log(wrapped.format());
     log('cyan', '  You can manually create them later using: swictation setup');
     _installWarnings.push('LaunchAgent service generation failed');
+    return result;
   }
 }
 
@@ -3148,6 +3250,262 @@ function updateConfigWithTestedModel(testedModel) {
   }
 }
 
+// ── Postinstall driver (ADR-037 Phase B) ────────────────────────────────
+//
+// main() no longer knows how to install anything. It builds ONE frozen
+// context, walks the registry's postinstall plan, and renders what happened.
+// Everything a phase used to do inline now lives in a step that
+// `swictation setup`, `setup --repair` and `doctor` run identically — which
+// is the whole point: the recovery path cannot drift from the install path
+// if there is only one path.
+//
+// Two seams remain, and both are genuinely the driver's job rather than any
+// step's. Hardware detection (which GPU, which model, which ONNX Runtime)
+// produces the FACTS the later steps consume, and facts are what a context
+// carries; a step that resolved them would be resolving them for everybody
+// else. Model verification test-loads the daemon against the model that was
+// just downloaded, which is a cross-step judgement — it can only happen
+// between `models` and everything downstream of it. They are expressed as
+// prepare/follow-up hooks keyed by step id, so the loop below stays a loop.
+
+/** Where the tee'd install log lives on this platform. */
+function installLogPath() {
+  return process.platform === 'darwin'
+    ? path.join(os.homedir(), 'Library', 'Logs', 'swictation', 'install.log')
+    : path.join(os.homedir(), '.local', 'share', 'swictation', 'install.log');
+}
+
+/**
+ * Detect the hardware and decide which model this machine gets.
+ *
+ * Runs before the GPU slot because everything after it — which libraries to
+ * fetch, which model to download, which runtime the unit points at — is
+ * derived from the answer. On macOS this is also where the CoreML ONNX
+ * Runtime is fetched: the gpu-libs STEP is CUDA-only and reports
+ * not-applicable there, but the slot still owns "get this machine its
+ * accelerated runtime".
+ *
+ * @returns {object} a NEW frozen context; the original is never mutated.
+ */
+async function resolveHardwareFacts(ctx) {
+  const steps = require('./src/steps');
+
+  if (ctx.platform === 'linux') {
+    const gpuInfo = detectGPUVRAM();
+    const hasNvidiaGpu = gpuInfo.hasGPU === true;
+    const patch = { gpuInfo, selectedModel: gpuInfo.recommendedModel, hasNvidiaGpu };
+
+    // The context probed compute capability when it was built. It only needs
+    // re-resolving if that probe said "no GPU" and this one disagrees —
+    // otherwise the variant and the receipt would describe different cards.
+    if (hasNvidiaGpu && ctx.gpuCompute === undefined) {
+      const { resolveGpuCompute, variantFromCompute } = require('./src/steps/context');
+      patch.gpuCompute = resolveGpuCompute('linux', true);
+      patch.gpuVariant = variantFromCompute(patch.gpuCompute);
+    }
+    if (!hasNvidiaGpu) {
+      log('cyan', '\nℹ No NVIDIA GPU detected - skipping GPU library download');
+      log('cyan', '  CPU-only mode will be used');
+    }
+    return steps.deriveContext(ctx, patch);
+  }
+
+  const gpuInfo = detectUnifiedMemoryMacOS();
+  if (gpuInfo.recommendedModel !== 'cpu-only') {
+    await downloadONNXRuntimeCoreML();
+  }
+  log('green', `  ✓ Using binaries from platform package: ${ctx.binaryPaths ? ctx.binaryPaths.packageName : 'unresolved'}`);
+  return steps.deriveContext(ctx, {
+    gpuInfo,
+    selectedModel: gpuInfo.recommendedModel,
+    ortLibPath: path.join(__dirname, 'lib', 'native', 'libonnxruntime.dylib'),
+  });
+}
+
+/**
+ * Point the context at the ONNX Runtime the service will actually load.
+ *
+ * Linux only, and only AFTER gpu-libs: detectOrtLibrary() prefers the
+ * downloaded gpu-libs directory, so asking before the download resolves to
+ * the CPU fallback and the generated unit would then verify the wrong file.
+ */
+function resolveRuntimePath(ctx) {
+  if (ctx.platform !== 'linux') return ctx;
+  return require('./src/steps').deriveContext(ctx, { ortLibPath: detectOrtLibrary() });
+}
+
+/**
+ * Test-load the downloaded model and record what actually worked.
+ *
+ * VRAM arithmetic says a 1.1B model fits; only loading it proves it does.
+ * The verdict replaces the heuristic recommendation for every later step,
+ * which is why this is a follow-up on `models` rather than part of it: the
+ * step's job is that the files are on disk, and this decides what they mean.
+ */
+async function verifySelectedModel(ctx, modelResult) {
+  const steps = require('./src/steps');
+  const gpuInfo = ctx.gpuInfo || {};
+  const ready = modelResult.status === 'ok' || modelResult.status === 'already';
+
+  if (modelResult.status === 'failed') {
+    log('yellow', '  ⚠️  Model download failed — skipping verification test');
+    return ctx;
+  }
+  if (SKIP_MODEL_TEST) {
+    log('yellow', '  Model test-loading skipped (SKIP_MODEL_TEST=1)');
+    log('cyan', '     Using memory-based heuristics only');
+    return ctx;
+  }
+  if (!ready || !gpuInfo.hasGPU || gpuInfo.recommendedModel === 'cpu-only') return ctx;
+
+  log('cyan', '\n  Model Verification:');
+  const daemonBin = ctx.binaryPaths && ctx.binaryPaths.daemon;
+  if (!daemonBin) {
+    log('yellow', '  ⚠️  No daemon binary resolved — skipping verification test');
+    return ctx;
+  }
+  log('cyan', `  Using daemon: ${daemonBin}`);
+
+  const tested = await testModelsInOrder(gpuInfo, daemonBin, ctx.ortLibPath);
+  const verified = {
+    ...gpuInfo,
+    recommendedModel: tested.recommendedModel,
+    tested: tested.tested,
+    vramVerified: tested.vramVerified || false,
+    fallbackToCpu: tested.fallbackToCpu || false,
+  };
+
+  const gpuInfoPath = path.join(getConfigDir(), 'gpu-info.json');
+  try {
+    fs.writeFileSync(gpuInfoPath, JSON.stringify(verified, null, 2));
+    log('green', `  ✓ Saved verified GPU info to ${gpuInfoPath}`);
+  } catch (err) {
+    log('yellow', `  ⚠️  Could not save GPU info: ${err.message}`);
+  }
+
+  return steps.deriveContext(ctx, { gpuInfo: verified, selectedModel: verified.recommendedModel });
+}
+
+/** Adopt the platform package the binaries step may have just installed. */
+function adoptBinaryPaths(ctx) {
+  const resolved = require('./src/steps/binaries')._internals.resolveFromDisk();
+  return resolved ? require('./src/steps').deriveContext(ctx, { binaryPaths: resolved }) : ctx;
+}
+
+// Keyed by step id so the loop in main() has no per-phase branching left.
+const PREPARE = { 'gpu-libs': resolveHardwareFacts };
+const FOLLOW_UP = {
+  binaries: (ctx) => adoptBinaryPaths(ctx),
+  'gpu-libs': (ctx) => resolveRuntimePath(ctx),
+  models: verifySelectedModel,
+};
+
+/**
+ * Process exit code for a fatal platform verdict, or null when the plan may
+ * continue. Preserves the legacy codes exactly: an Intel Mac failed the whole
+ * `npm install` and still does; every other unsupported machine exited 0 and
+ * still does.
+ */
+function fatalPlatformExit(ctx, result) {
+  const { FATAL_CODES } = require('./src/steps/platform')._internals;
+  if (!result) return null;
+  // BOTH records, and the second one is the load-bearing half. When a step's
+  // run() reports a failed component the runner replaces `health` with a
+  // synthesized `PLATFORM_PARTIAL` — and a fatal platform step ALWAYS fails a
+  // component, because run() refuses to create directories on a machine the
+  // binaries cannot run on. Reading only `health` therefore saw PARTIAL, found
+  // it non-fatal, and shipped an Intel Mac a full 10-phase install and an exit
+  // code of 0. `checkHealth` is what check() actually said.
+  const codes = [result.health && result.health.code, result.checkHealth && result.checkHealth.code];
+  if (!codes.some(code => FATAL_CODES.has(code))) return null;
+  return ctx.platform === 'darwin' ? 1 : 0;
+}
+
+/**
+ * Walk the plan. Extracted from main() so the loop itself is reachable by a
+ * test: the interesting behaviour is not in any one step but BETWEEN them —
+ * the hooks that carry hardware facts forward, and the single early stop.
+ *
+ * @returns {Promise<{ctx: object, exitCode: number|null}>} exitCode is null
+ *   when the plan ran to completion.
+ */
+async function runPlan(ctx, plan, stepResults) {
+  const steps = require('./src/steps');
+  _totalPhases = plan.length;
+
+  for (const step of plan) {
+    phaseLog(step.title);
+    if (PREPARE[step.id]) ctx = await PREPARE[step.id](ctx);
+
+    const result = await steps.runStep(step, ctx);
+    stepResults.push(result);
+
+    if (FOLLOW_UP[step.id]) ctx = await FOLLOW_UP[step.id](ctx, result);
+
+    // The single reason the loop ever stops early: on an unsupported OS or
+    // architecture nothing downstream can succeed, and running it anyway
+    // would download gigabytes onto a machine that cannot use them.
+    if (step.id === 'platform') {
+      const fatal = fatalPlatformExit(ctx, result);
+      if (fatal !== null) {
+        const verdict = result.checkHealth || result.health;
+        log('red', `\n${verdict.summary}`);
+        for (const line of verdict.evidence) log('yellow', `  ${line}`);
+        return { ctx, exitCode: fatal };
+      }
+    }
+  }
+
+  return { ctx, exitCode: null };
+}
+
+/**
+ * The per-step ledger (ADR-037 decision 5). A failed phase is named, with the
+ * command that repairs it, instead of implying a full reinstall.
+ */
+function renderLedger(pkgVersion, stepResults) {
+  const steps = require('./src/steps');
+  const duration = ((Date.now() - _installStart) / 1000).toFixed(0);
+  const mins = Math.floor(duration / 60);
+  const secs = duration % 60;
+  const durationStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+
+  const MARKS = {
+    ok: ['✓', 'green'],
+    already: ['✓', 'green'],
+    failed: ['✗', 'red'],
+    blocked: ['⊘', 'yellow'],
+    'not-applicable': ['–', 'cyan'],
+  };
+
+  const boxW = 54;
+  const boxLine = (text) => `║${text}${''.padEnd(Math.max(0, boxW - text.length))}║`;
+  log('green', `\n╔${'═'.repeat(boxW)}╗`);
+  log('green', boxLine(`  swictation v${pkgVersion} installed successfully`));
+  log('green', boxLine(`  Platform:  ${process.platform} ${process.arch}`));
+  log('green', boxLine(`  Duration:  ${durationStr}`));
+
+  if (stepResults.length > 0) {
+    log('green', boxLine(''));
+    log('green', boxLine('  Steps:'));
+    for (const r of stepResults) {
+      const [mark, color] = MARKS[r.status] || ['?', 'yellow'];
+      log(color, boxLine(`    ${mark} ${r.id.padEnd(13)} ${r.status}`));
+      if (r.status === 'failed' || r.status === 'blocked') {
+        log('yellow', boxLine(`      ${r.health.code}`));
+        log('yellow', boxLine(`      repair: ${r.health.repair || steps.repairCommand(steps.getStep(r.id))}`));
+      }
+    }
+  }
+  if (_installWarnings.length > 0) {
+    log('yellow', boxLine(''));
+    log('yellow', boxLine(`  Warnings (${_installWarnings.length}):`));
+    for (const w of _installWarnings) log('yellow', boxLine(`    - ${w}`));
+  }
+  log('green', `╚${'═'.repeat(boxW)}╝`);
+  log('cyan', `\n  Full log: ${installLogPath()}`);
+}
+
 // Main postinstall process
 async function main() {
   _initInstallLog();
@@ -3157,341 +3515,23 @@ async function main() {
   log('cyan', 'This may take 5-10 minutes (downloads GPU libraries and speech models)');
   log('cyan', '');
 
-  // ── Step registry (ADR-037) ───────────────────────────────────────────
-  // ONE execution plan with nine slots, in the original phase order: four
-  // registry steps and five legacy adapters. The registry slots run the
-  // exact code `swictation setup`, `setup --repair` and `doctor` run, so
-  // the recovery path can no longer diverge from the install path. Legacy
-  // slots migrate in Phase B; until then they are ordinary plan entries so
-  // the phase counter is derived from one list rather than guessed.
   const steps = require('./src/steps');
   const stepResults = [];
-  let stepCtx = steps.createContext({ mode: 'postinstall', log, generateDefaultConfig });
-
-  const runRegistryStep = async (id) => {
-    const result = await steps.runStep(steps.getStep(id), stepCtx);
-    stepResults.push(result);
-    return result;
-  };
+  let ctx = steps.createContext({ mode: 'postinstall', log, generateDefaultConfig });
+  let exitCode = null;
 
   try {
-    // Platform and basic checks
-    checkPlatform();
+    // The plan IS the registry, filtered to what an npm lifecycle may run.
+    // The phase counter is derived from it, which is what fixed the static
+    // `_totalPhases = 9` promising phases that never printed.
+    const plan = steps.selectSteps({ entrypoint: 'postinstall' });
+    ({ ctx, exitCode } = await runPlan(ctx, plan, stepResults));
 
-    // Verify platform package installation - auto-install if missing
-    const { resolveBinaryPaths, isPlatformPackageInstalled, detectPlatform } = require('./src/resolve-binary');
-
-    if (!isPlatformPackageInstalled()) {
-      log('yellow', '\n⚠ Platform package not installed automatically');
-      log('cyan', '   Installing platform-specific binaries...');
-
-      // Determine the correct platform package
-      const platformInfo = detectPlatform();
-      if (platformInfo.supported === false) {
-        log('red', `\n❌ Unsupported platform: ${platformInfo.platform}-${platformInfo.arch}`);
-        log('yellow', '   Swictation supports linux-x64 and darwin-arm64 only');
-        throw new Error(platformInfo.error);
-      }
-
-      const packageName = platformInfo.packageName;
-      const packageVersion = require('./package.json').version;
-
-      log('cyan', `   Package: ${packageName}@${packageVersion}`);
-
-      try {
-        // Install the platform package globally
-        // Use --global-style to install as sibling in global node_modules
-        execSync(`npm install -g ${packageName}@${packageVersion}`, {
-          stdio: 'inherit',
-          encoding: 'utf8'
-        });
-        log('green', `✓ Successfully installed ${packageName}`);
-
-        // Clear require cache and re-check
-        delete require.cache[require.resolve('./src/resolve-binary')];
-        const { isPlatformPackageInstalled: recheckInstalled } = require('./src/resolve-binary');
-
-        if (!recheckInstalled()) {
-          log('red', '\n❌ Platform package installation completed but still not detected');
-          log('yellow', '   This may be a path issue. Try running: npm install -g swictation --force');
-          throw new Error('Platform package not found after installation');
-        }
-      } catch (installErr) {
-        throw new InstallError('SW-E009', 'Failed to install platform package', {
-          cause: installErr.message,
-          fix: `Try manually: npm install -g ${packageName}`,
-          original: installErr,
-          context: { packageName },
-        });
-      }
-    }
-
-    const binaryPaths = resolveBinaryPaths();
-    log('green', `✓ Platform package: ${binaryPaths.packageName}`);
-    log('cyan', `  Location: ${binaryPaths.packageDir}`);
-    log('cyan', `  Binaries: ${binaryPaths.binDir}`);
-    log('cyan', `  Libraries: ${binaryPaths.libDir}`);
-
-    ensureBinaryPermissions();
-    createDirectories();
-
-    // Resolved facts the steps must never rediscover (ADR-037 amendment 4).
-    // Under sudo, recomputing these picks a different user home and a
-    // different platform package than the one this install just verified.
-    stepCtx = steps.deriveContext(stepCtx, { binaryPaths });
-
-    let gpuInfo = { hasGPU: false, recommendedModel: 'cpu-only' };
-    let ortLibPath = null;
-
-    // ── The nine-slot execution plan (ADR-037 amendment 6) ───────────────
-    // Four registry steps and five legacy adapters, in the original phase
-    // order. The phase counter is derived from this one list, which fixes
-    // the static `_totalPhases = 9`: the models phase used to be conditional,
-    // so a cpu-only install promised a ninth phase that never printed.
-    const plan = [
-      {
-        title: 'Checking platform compatibility...',
-        run: async () => {
-          // Stop running services BEFORE any modifications
-          await stopExistingServices();
-        },
-      },
-      {
-        title: 'Cleaning up previous installations...',
-        run: async () => {
-          await cleanOldServices();
-          cleanupOldOnnxRuntime();
-          cleanupOldNpmInstallations();
-        },
-      },
-      {
-        title: steps.getStep('config-reset').title,
-        run: async () => {
-          log('cyan', '\n📝 Checking configuration files...');
-          await runRegistryStep('config-reset');
-        },
-      },
-      {
-        title: 'Downloading GPU libraries...',
-        run: async () => {
-          if (process.platform === 'linux') {
-            // Linux: NVIDIA GPU with CUDA
-            gpuInfo = detectGPUVRAM();
-            stepCtx = steps.deriveContext(stepCtx, {
-              gpuInfo,
-              selectedModel: gpuInfo.recommendedModel,
-              hasNvidiaGpu: gpuInfo.hasGPU === true,
-            });
-
-            // Download GPU libraries if needed
-            if (gpuInfo.hasGPU && gpuInfo.recommendedModel !== 'cpu-only') {
-              await runRegistryStep('gpu-libs');
-            } else if (!gpuInfo.hasGPU) {
-              log('cyan', '\nℹ No NVIDIA GPU detected - skipping GPU library download');
-              log('cyan', '  CPU-only mode will be used');
-            }
-
-            // Detect ONNX Runtime library
-            ortLibPath = detectOrtLibrary();
-          } else if (process.platform === 'darwin') {
-            // macOS: Unified memory with CoreML
-            gpuInfo = detectUnifiedMemoryMacOS();
-            stepCtx = steps.deriveContext(stepCtx, {
-              gpuInfo,
-              selectedModel: gpuInfo.recommendedModel,
-            });
-
-            // Download CoreML-enabled ONNX Runtime
-            if (gpuInfo.recommendedModel !== 'cpu-only') {
-              await downloadONNXRuntimeCoreML();
-            }
-
-            // macOS binaries come from @agidreams/darwin-arm64 platform package
-            // (installed via npm optionalDependencies)
-            log('green', `  ✓ Using binaries from platform package: ${binaryPaths.packageName}`);
-
-            // macOS ONNX Runtime path
-            ortLibPath = path.join(__dirname, 'lib', 'native', 'libonnxruntime.dylib');
-          } else {
-            throw new Error(`Unsupported platform: ${process.platform} (should have been caught by checkPlatform)`);
-          }
-          stepCtx = steps.deriveContext(stepCtx, { ortLibPath });
-        },
-      },
-      {
-        title: steps.getStep('models').title,
-        run: async () => {
-          // Download the recommended model BEFORE testing it (fixes the
-          // chicken-and-egg on fresh installs). This step now owns every
-          // model download: the second, hidden autoDownloadModel() call in
-          // showNextSteps() is gone (ADR-037 amendment 6), which is what
-          // made a cpu-only install look like it downloaded nothing here.
-          const modelResult = await runRegistryStep('models');
-          const modelReady = modelResult.status === 'ok' || modelResult.status === 'already';
-          if (modelResult.status === 'failed') {
-            log('yellow', '  ⚠️  Model download failed — skipping verification test');
-          }
-
-          // Model test-loading (actual verification)
-          if (!SKIP_MODEL_TEST && modelReady && gpuInfo.hasGPU && gpuInfo.recommendedModel !== 'cpu-only') {
-            log('cyan', '\n  Model Verification:');
-            // Use daemon binary from platform package
-            const daemonBin = binaryPaths.daemon;
-            log('cyan', `  Using daemon: ${daemonBin}`);
-
-            const testResult = await testModelsInOrder(gpuInfo, daemonBin, ortLibPath);
-
-            // Update gpuInfo with test results
-            gpuInfo.recommendedModel = testResult.recommendedModel;
-            gpuInfo.tested = testResult.tested;
-            gpuInfo.vramVerified = testResult.vramVerified || false;
-            gpuInfo.fallbackToCpu = testResult.fallbackToCpu || false;
-
-            // Save updated GPU info with test results
-            const configDir = getConfigDir();
-            const gpuInfoPath = path.join(configDir, 'gpu-info.json');
-
-            try {
-              fs.writeFileSync(gpuInfoPath, JSON.stringify(gpuInfo, null, 2));
-              log('green', `  ✓ Saved verified GPU info to ${gpuInfoPath}`);
-            } catch (err) {
-              log('yellow', `  ⚠️  Could not save GPU info: ${err.message}`);
-            }
-
-            // The tested model is now the selected one for every later step.
-            stepCtx = steps.deriveContext(stepCtx, {
-              gpuInfo,
-              selectedModel: gpuInfo.recommendedModel,
-            });
-          } else if (SKIP_MODEL_TEST) {
-            log('yellow', '  Model test-loading skipped (SKIP_MODEL_TEST=1)');
-            log('cyan', '     Using memory-based heuristics only');
-          }
-
-          // Heal stale model paths now that models exist on disk (ADR-033's
-          // crash loop). Healing requires the platform-default target to
-          // exist, which it could not before this phase — that two-pass
-          // requirement is why config is two step ids, not one.
-          await runRegistryStep('config-heal');
-        },
-      },
-      {
-        title: steps.getStep('services').title,
-        run: async () => {
-          await runRegistryStep('services');
-        },
-      },
-      {
-        title: 'Platform integration...',
-        run: async () => {
-          if (process.platform === 'linux') {
-            await setupWaylandIntegration();
-          } else if (process.platform === 'darwin') {
-            log('cyan', '');
-            log('cyan', 'Accessibility Permission:');
-            log('cyan', '  macOS will prompt you to grant Accessibility permission when the');
-            log('cyan', '  daemon first attempts to inject text. Click "Open System Settings"');
-            log('cyan', '  and enable the permission for swictation-daemon.');
-            log('cyan', '');
-            log('cyan', '  If text injection does not work, check:');
-            log('cyan', '    System Settings > Privacy & Security > Accessibility');
-            log('cyan', '');
-          }
-        },
-      },
-      {
-        title: 'Verifying installation...',
-        run: async () => {
-          if (process.platform === 'linux') {
-            await enableAndStartService();
-          } else if (process.platform === 'darwin') {
-            try {
-              execSync('launchctl print gui/$(id -u)/com.swictation.daemon 2>/dev/null', { stdio: 'ignore', shell: '/bin/bash' });
-              log('green', '  Daemon service: loaded and auto-start enabled');
-            } catch {
-              log('yellow', '  Daemon service: not loaded (will start on next login)');
-            }
-            try {
-              execSync('launchctl print gui/$(id -u)/com.swictation.ui 2>/dev/null', { stdio: 'ignore', shell: '/bin/bash' });
-              log('green', '  UI service: loaded and auto-start enabled');
-            } catch {
-              log('cyan', '  UI service: not loaded (optional)');
-            }
-          }
-
-          // Platform-specific final checks
-          if (process.platform === 'linux') {
-            await checkNvidiaHibernation();
-          } else if (process.platform === 'darwin') {
-            log('green', '✓ macOS system configuration complete');
-          }
-
-          // Final checks and next steps
-          checkDependencies();
-        },
-      },
-      {
-        title: 'Finalizing installation...',
-        run: async () => {
-          await showNextSteps();
-        },
-      },
-    ];
-
-    _totalPhases = plan.length;
-    for (const slot of plan) {
-      phaseLog(slot.title);
-      await slot.run();
-    }
-
-    // ── Install Summary ──
-    const duration = ((Date.now() - _installStart) / 1000).toFixed(0);
-    const mins = Math.floor(duration / 60);
-    const secs = duration % 60;
-    const durationStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
-
-    const boxW = 54;
-    const boxLine = (text) => `║${text}${''.padEnd(Math.max(0, boxW - text.length))}║`;
-    log('green', `\n╔${'═'.repeat(boxW)}╗`);
-    log('green', boxLine(`  swictation v${pkgVersion} installed successfully`));
-    log('green', boxLine(`  Platform:  ${process.platform} ${process.arch}`));
-    log('green', boxLine(`  Duration:  ${durationStr}`));
-    if (stepResults.length > 0) {
-      // Per-step ledger (ADR-037 decision 5): a failed phase is named, with
-      // the command that repairs it, instead of implying a full reinstall.
-      const MARKS = {
-        ok: ['✓', 'green'],
-        already: ['✓', 'green'],
-        failed: ['✗', 'red'],
-        blocked: ['⊘', 'yellow'],
-        'not-applicable': ['–', 'cyan'],
-      };
-
-      log('green', boxLine(''));
-      log('green', boxLine('  Steps:'));
-      for (const r of stepResults) {
-        const [mark, color] = MARKS[r.status] || ['?', 'yellow'];
-        log(color, boxLine(`    ${mark} ${r.id.padEnd(13)} ${r.status}`));
-        if (r.status === 'failed' || r.status === 'blocked') {
-          log('yellow', boxLine(`      ${r.health.code}`));
-          log('yellow', boxLine(`      repair: ${r.health.repair || steps.repairCommand(steps.getStep(r.id))}`));
-        }
-      }
-    }
-    if (_installWarnings.length > 0) {
-      log('yellow', boxLine(''));
-      log('yellow', boxLine(`  Warnings (${_installWarnings.length}):`));
-      for (const w of _installWarnings) {
-        log('yellow', boxLine(`    - ${w}`));
-      }
-    }
-    log('green', `╚${'═'.repeat(boxW)}╝`);
-
-    const logPath = process.platform === 'darwin'
-      ? path.join(os.homedir(), 'Library', 'Logs', 'swictation', 'install.log')
-      : path.join(os.homedir(), '.local', 'share', 'swictation', 'install.log');
-    log('cyan', `\n  Full log: ${logPath}`);
-
+    // Presentation only (ADR-037 amendment 6): the second, hidden
+    // autoDownloadModel() call that used to live here is gone, so this
+    // reports the install rather than quietly continuing it.
+    if (exitCode === null) await showNextSteps();
+    renderLedger(pkgVersion, stepResults);
   } catch (err) {
     if (err instanceof InstallError) {
       console.log('\n' + err.format());
@@ -3502,10 +3542,7 @@ async function main() {
       log('green', `  Fix:   Run "swictation setup" to complete configuration manually`);
       _logToFile(`FATAL: ${err.message}\n${err.stack}`);
     }
-    const logPath = process.platform === 'darwin'
-      ? path.join(os.homedir(), 'Library', 'Logs', 'swictation', 'install.log')
-      : path.join(os.homedir(), '.local', 'share', 'swictation', 'install.log');
-    log('cyan', `\n  Full log: ${logPath}`);
+    log('cyan', `\n  Full log: ${installLogPath()}`);
     log('yellow', '\nSome steps may have failed, but installation can continue.');
     log('cyan', 'Run "swictation setup" to complete configuration manually.');
     // Don't exit with error - npm install should succeed even if postinstall has issues
@@ -3514,6 +3551,11 @@ async function main() {
       try { _installLogStream.end(); } catch { /* ignore */ }
     }
   }
+
+  // Exit-zero is the policy (ADR-037 decision 5); the one exception predates
+  // it and is preserved deliberately — an Intel Mac has always failed the
+  // whole `npm install` rather than leaving an unusable package behind.
+  if (exitCode) process.exit(exitCode);
 }
 
 // Run postinstall. Guarded so tests can require this file for its helpers
@@ -3552,4 +3594,36 @@ module.exports = {
   autoDownloadModel,
   generateSystemdService,
   generateLaunchdServices,
+
+  // Phase-B step wrappers. Same rule as above: src/steps/* CALLS these, and
+  // is the only intended consumer — a second implementation of any of them
+  // is the divergence ADR-037 exists to make structurally impossible.
+  // Exported so a test can drive the launchctl-print parser without a Mac in
+  // a particular service state — loaded-but-stopped is not something a test
+  // can reliably arrange, and it is the case that matters.
+  _launchd: { parseLaunchctlPrint, LAUNCHD_LABELS },
+
+  createDirectories,
+  ensureBinaryPermissions,
+  stopExistingServices,
+  cleanOldServices,
+  cleanupOldOnnxRuntime,
+  cleanupOldNpmInstallations,
+  setupWaylandIntegration,
+  enableAndStartService,
+  checkNvidiaHibernation,
+  checkDependencies,
+  launchdServiceState,
+  restoreLaunchdServices,
+
+  // Exported so a test can assert that cleanupOldOnnxRuntime() and the cleanup
+  // step's check() are literally the same predicate, not two that agree today.
+  get _ortConflictPredicate() {
+    return require('./src/steps/cleanup')._internals.hasConflictingOrt;
+  },
+
+  // The driver's own wiring, exported so tests can assert the two things
+  // about it that are not visible from its output: that every hook is keyed
+  // to a step that exists, and that the legacy exit codes are preserved.
+  _driver: { PREPARE, FOLLOW_UP, fatalPlatformExit, runPlan, installLogPath },
 };
