@@ -116,6 +116,33 @@ class PortalCleanupTests(unittest.TestCase):
 
 
 class ProcessCleanupTests(unittest.TestCase):
+    def test_macos_stops_only_its_app_process(self):
+        process = Mock()
+        with patch.object(smoke_ui.os, "killpg") as kill_group:
+            smoke_ui._stop_macos_app(process)
+        process.terminate.assert_called_once_with()
+        process.wait.assert_called_once_with(timeout=3)
+        process.kill.assert_not_called()
+        kill_group.assert_not_called()
+
+    def test_macos_reaps_an_already_exited_app(self):
+        process = Mock()
+        process.terminate.side_effect = ProcessLookupError
+        process.wait.return_value = 0
+        smoke_ui._stop_macos_app(process)
+        process.wait.assert_called_once_with(timeout=3)
+        process.kill.assert_not_called()
+
+    def test_macos_escalates_only_an_unresponsive_app(self):
+        process = Mock()
+        process.wait.side_effect = [subprocess.TimeoutExpired("UI", 3), -9]
+        with patch.object(smoke_ui.os, "killpg") as kill_group:
+            smoke_ui._stop_macos_app(process)
+        process.terminate.assert_called_once_with()
+        process.kill.assert_called_once_with()
+        self.assertEqual(process.wait.call_count, 2)
+        kill_group.assert_not_called()
+
     def test_wrapper_exit_still_allows_children_graceful_cleanup(self):
         process = Mock(pid=12345)
         process.poll.return_value = 0
@@ -141,6 +168,31 @@ class ProcessCleanupTests(unittest.TestCase):
 
 
 class StartupCleanupTests(unittest.TestCase):
+    def test_macos_cleanup_never_manages_groups_or_portals(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory).resolve()
+            env = dict(os.environ, HOME=str(home))
+            database = home / "Library/Application Support/swictation/metrics.db"
+            process = Mock(pid=12345)
+            process.wait.side_effect = subprocess.TimeoutExpired("UI", 8)
+
+            def start(command, **kwargs):
+                kwargs["stdout"].write(f'Metrics database path: "{database}"\n'.encode())
+                kwargs["stdout"].flush()
+                return process
+
+            with patch.object(smoke_ui.subprocess, "Popen", side_effect=start), \
+                    patch.object(smoke_ui, "_stop_macos_app") as stop, \
+                    patch.object(smoke_ui, "_stop_process_group") as group, \
+                    patch.object(smoke_ui, "_cleanup_portal_mount") as portal, \
+                    redirect_stdout(io.StringIO()):
+                errors = smoke_ui.check_ui_startup(home / "release", home, env,
+                                                   "aarch64-apple-darwin")
+            self.assertEqual(errors, [])
+            stop.assert_called_once_with(process)
+            group.assert_not_called()
+            portal.assert_not_called()
+
     def test_success_and_failure_clean_only_helper_created_runtime(self):
         for alive in (True, False):
             with self.subTest(alive=alive), tempfile.TemporaryDirectory() as directory:

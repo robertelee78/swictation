@@ -9,6 +9,22 @@ import subprocess
 import time
 
 
+def _stop_macos_app(process):
+    """Stop the direct app process without signaling OS-managed helpers."""
+    try:
+        process.terminate()
+    except ProcessLookupError:
+        pass
+    try:
+        process.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        try:
+            process.kill()
+        except ProcessLookupError:
+            pass
+        process.wait(timeout=3)
+
+
 def _stop_process_group(process):
     """Give every test-owned child time to clean up, even if its wrapper exits."""
     try:
@@ -125,7 +141,10 @@ def check_ui_startup(release, home, env, target):
             return []
         finally:
             try:
-                _stop_process_group(process)
+                if target == "aarch64-apple-darwin":
+                    _stop_macos_app(process)
+                else:
+                    _stop_process_group(process)
             finally:
                 if runtime is not None:
                     _cleanup_portal_mount(runtime)
