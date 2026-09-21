@@ -38,6 +38,7 @@ jobs:
           python-version: '3.12'
       - uses: Swatinem/rust-cache@v2
         with:
+          cache-on-failure: true
           workspaces: |
             rust-crates -> target
             tauri-ui/src-tauri -> ${{ runner.temp }}/ui-target
