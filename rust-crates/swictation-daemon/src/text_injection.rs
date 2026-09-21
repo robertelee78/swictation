@@ -52,6 +52,12 @@ pub struct TextInjector {
 impl TextInjector {
     /// Create a new text injector with auto-detection
     pub fn new() -> Result<Self> {
+        // Check macOS permission first. The recovery worker retries this
+        // non-prompting check; denied attempts must not repeat detection logs.
+        #[cfg(target_os = "macos")]
+        let macos_injector =
+            MacOSTextInjector::new().context("Failed to create macOS text injector")?;
+
         // Detect display server
         let display_server_info = detect_display_server();
 
@@ -76,11 +82,6 @@ impl TextInjector {
         if display_server_info.is_gnome_wayland {
             info!("GNOME Wayland detected - using ydotool (wtype not compatible)");
         }
-
-        // Create macOS injector if on macOS
-        #[cfg(target_os = "macos")]
-        let macos_injector =
-            MacOSTextInjector::new().context("Failed to create macOS text injector")?;
 
         Ok(Self {
             display_server_info,

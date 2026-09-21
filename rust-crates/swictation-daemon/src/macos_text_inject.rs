@@ -40,6 +40,9 @@ extern "C" {
         stringLength: c_long,
         unicodeString: *const u16,
     );
+
+    /// Non-prompting event-synthesis permission check, available since macOS 10.15.
+    fn CGPreflightPostEventAccess() -> bool;
 }
 
 // FFI declarations for Accessibility permission APIs
@@ -140,6 +143,31 @@ fn utf16_chunks(text: &str) -> Vec<Vec<u16>> {
     chunks
 }
 
+fn require_posting_access(allowed: bool) -> Result<()> {
+    if !allowed {
+        anyhow::bail!(
+            "Accessibility event-posting permission required; enable Swictation in \
+             System Settings → Privacy & Security → Accessibility"
+        );
+    }
+    Ok(())
+}
+
+/// Stop on permission loss, including between batches; never replay posted text.
+/// CGEventPost has no delivery acknowledgement, so this verifies permission,
+/// not whether the focused application accepted the dispatched events.
+fn post_text_batches(
+    text: &str,
+    mut allowed: impl FnMut() -> bool,
+    mut post: impl FnMut(&[u16]) -> Result<()>,
+) -> Result<()> {
+    for chunk in utf16_chunks(text) {
+        require_posting_access(allowed())?;
+        post(&chunk)?;
+    }
+    Ok(())
+}
+
 /// No-op callback for CGEventTap validation
 /// This callback does nothing — it simply returns the event unchanged.
 /// Required because CGEventTapCreate does not accept NULL callbacks.
@@ -167,16 +195,9 @@ impl MacOSTextInjector {
     /// - Accessibility permissions are not granted
     /// - CGEventSource creation fails
     pub fn new() -> Result<Self> {
-        // Check Accessibility permissions
-        if !Self::check_accessibility_permissions() {
-            anyhow::bail!(
-                "Accessibility permission required!\n\
-                 Go to: System Settings → Privacy & Security → Accessibility\n\
-                 Enable: swictation-daemon\n\n\
-                 Note: On macOS Ventura 13.0+, you may need to toggle the permission \
-                 off and back on if you recently granted it."
-            );
-        }
+        // Check the operation we actually need on every recovery attempt.
+        // This does not prompt and does not rely on a cached AX-only decision.
+        require_posting_access(Self::check_event_posting_access())?;
 
         // Create event source (wrapped in Rc for efficient sharing - single-threaded)
         let event_source = CGEventSource::new(CGEventSourceStateID::CombinedSessionState)
@@ -197,6 +218,10 @@ impl MacOSTextInjector {
     /// 4. Restart the application
     pub fn check_accessibility_permissions() -> bool {
         unsafe { AXIsProcessTrusted() }
+    }
+
+    fn check_event_posting_access() -> bool {
+        unsafe { CGPreflightPostEventAccess() }
     }
 
     /// Validate that accessibility permission is ACTUALLY working
@@ -372,7 +397,7 @@ impl MacOSTextInjector {
         let char_count = text.chars().count();
         debug!("Injecting {} characters (batched)", char_count);
 
-        for chunk in utf16_chunks(text) {
+        post_text_batches(text, Self::check_event_posting_access, |chunk| {
             // Key down event carrying the chunk's Unicode content
             let event = CGEvent::new_keyboard_event((*self.event_source).clone(), 0, true)
                 .map_err(|_| anyhow::anyhow!("Failed to create key down event"))?;
@@ -397,122 +422,11 @@ impl MacOSTextInjector {
             // Each chunk is processed atomically, so we only need to wait
             // once per chunk rather than once per character.
             std::thread::sleep(std::time::Duration::from_millis(BATCH_DELAY_MS));
-        }
-
-        Ok(())
+            Ok(())
+        })
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_permission_check() {
-        // This test just verifies the function can be called
-        // Actual permission state depends on system configuration
-        let has_permission = MacOSTextInjector::check_accessibility_permissions();
-        println!("Accessibility permission (API): {}", has_permission);
-    }
-
-    #[test]
-    fn test_permission_validation() {
-        // Test that the validation function works
-        // This actually validates permission via CGEventTap
-        let validated = MacOSTextInjector::validate_accessibility_permission();
-        let api_says = MacOSTextInjector::check_accessibility_permissions();
-        println!(
-            "Accessibility permission - API: {}, Validated: {}",
-            api_says, validated
-        );
-
-        // If API says yes but validation says no, we have stale permissions
-        if api_says && !validated {
-            println!("⚠️  STALE PERMISSION DETECTED: API reports granted but validation failed");
-            println!("    This means the binary has changed and needs re-authorization");
-        }
-    }
-
-    #[test]
-    fn test_injector_creation() {
-        // Only test creation if permissions are granted
-        match MacOSTextInjector::new() {
-            Ok(_injector) => {
-                println!("✅ Text injector created successfully");
-            }
-            Err(e) => {
-                println!(
-                    "⚠️  Text injector creation failed (expected if no permissions): {}",
-                    e
-                );
-            }
-        }
-    }
-
-    /// Regression: what is typed is exactly what was passed in.
-    ///
-    /// This injector used to parse `<KEY:Cmd+C>` out of its input and post the
-    /// real key events, so dictating that phrase pressed Cmd+C in the focused
-    /// window. Every code unit must now survive to the keyboard as a character.
-    #[test]
-    fn test_typed_payload_is_the_input_verbatim() {
-        for text in [
-            "Copy this <KEY:Cmd+C>",
-            "<KEY:Cmd+Shift+V>",
-            "unterminated <KEY:Cmd+C",
-            "plain text",
-            // Longer than one CGEvent payload, so it spans several chunks
-            "a marker <KEY:Cmd+A> buried in a sentence long enough to be split",
-            // Non-BMP characters exercise the surrogate-pair boundary
-            "emoji 🎤 and <KEY:Cmd+V> 👍🏽 mixed",
-        ] {
-            let typed = String::from_utf16(&utf16_chunks(text).concat())
-                .expect("chunks must recombine into valid UTF-16");
-            assert_eq!(typed, text, "injected payload must equal the input");
-        }
-    }
-
-    #[test]
-    fn test_chunks_respect_cgevent_limits() {
-        let text = "🎤".repeat(40) + &"x".repeat(100);
-        let chunks = utf16_chunks(&text);
-
-        for (i, chunk) in chunks.iter().enumerate() {
-            assert!(
-                chunk.len() <= BATCH_UTF16_LIMIT,
-                "chunk {i} carries {} code units, over Apple's limit",
-                chunk.len()
-            );
-            let is_last = i + 1 == chunks.len();
-            if !is_last {
-                assert!(
-                    !is_high_surrogate(*chunk.last().unwrap()),
-                    "chunk {i} ends on a high surrogate, splitting a character"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn test_key_markers_are_typed_not_pressed() {
-        let injector = match MacOSTextInjector::new() {
-            Ok(inj) => inj,
-            Err(_) => {
-                println!("⚠️  Skipping test (no permissions)");
-                return;
-            }
-        };
-
-        for text in [
-            "Copy this <KEY:Cmd+C>",
-            "<KEY:Cmd+Shift+V>",
-            // Previously aborted injection with "Malformed KEY marker"
-            "unterminated <KEY:Cmd+C",
-        ] {
-            assert!(
-                injector.inject_text(text).is_ok(),
-                "literal injection should succeed for {text:?}"
-            );
-        }
-    }
-}
+#[path = "macos_text_inject_tests.rs"]
+mod tests;

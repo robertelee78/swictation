@@ -7,6 +7,15 @@
 - **Release:** v0.7.36 (planned)
 
 
+## Amendment — 2026-09-21: text-insertion recovery
+
+Version 0.8.2 keeps the dedicated text-insertion worker alive when its backend is
+unavailable (including macOS Accessibility permission not yet granted). Bounded
+retries recover automatically; text queued before recovery is discarded rather
+than inserted later into a different focused application. Injection failures do
+not permanently terminate the transcription consumer. Transcript content is not
+logged by the recovery worker.
+
 ## Amendment — 2026-09-21: native distribution
 
 The true-length decoding, stop-drain, panic/IPC hardening and preservation requirements

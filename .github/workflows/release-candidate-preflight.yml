@@ -114,6 +114,7 @@ jobs:
               f'repos/{repository}/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100'], text=True))
           jobs = [job for page in pages for job in page['jobs']]
           required_steps = {'Test native lifecycle': 2, 'Test bootstrap and archive contracts': 2,
+              'Test UI database and protocol regressions': 2,
               'Smoke-test the exact packaged native lifecycle': 1,
               'Smoke-test the signed package in an isolated home': 1}
           evidence = []
@@ -158,7 +159,7 @@ jobs:
                   'run_id': run_id, 'run_attempt': attempt, 'artifact_name': f'release-candidate-{source}'},
               'validation': {'dependencies': results, 'executed_steps': evidence,
                   'release_blockers': {'label': 'release-blocker', 'open_count': len(blockers), 'checked_at': now},
-                  'scope': 'Native CLI and installer contracts; packaged install/version/uninstall smoke; macOS signing and notarization.',
+                  'scope': 'Native CLI and installer contracts; packaged install/version/daemon-selection/empty-profile UI/uninstall smoke; macOS signing and notarization.',
                   'not_tested': ['microphone capture', 'desktop permission prompts', 'GPU hardware inference', 'interactive UI behavior']},
               'assets': assets}
           (directory / 'candidate-receipt.json').write_text(json.dumps(receipt, indent=2, sort_keys=True) + '\n')

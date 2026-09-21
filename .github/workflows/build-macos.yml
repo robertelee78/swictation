@@ -67,6 +67,11 @@ jobs:
         run: |
           npm ci --ignore-scripts
           npm run tauri -- build --target "$TARGET" --bundles app -- --locked
+      - name: Test UI database and protocol regressions
+        working-directory: tauri-ui/src-tauri
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/ui-target
+        run: cargo test --locked --target "$TARGET"
       - name: Fetch ONNX Runtime with CoreML support
         run: bash scripts/distribution/download-onnx.sh "$TARGET" "$RUNNER_TEMP/onnxruntime"
       - name: Stage standalone payload

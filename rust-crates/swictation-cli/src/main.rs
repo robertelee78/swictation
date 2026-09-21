@@ -89,9 +89,14 @@ enum Command {
         #[arg(long)]
         purge_cache: bool,
     },
+    /// Start the dictation daemon and desktop app.
     Start {
-        #[arg(long)]
+        /// Start the desktop app (retained for compatibility; already the default).
+        #[arg(long, conflicts_with = "daemon_only")]
         ui: bool,
+        /// Start only the daemon, without launching the desktop app.
+        #[arg(long)]
+        daemon_only: bool,
     },
     Stop,
     Status,
@@ -200,7 +205,7 @@ fn run() -> Result<()> {
             lifecycle::require_current_executable(&paths)?;
             lifecycle::uninstall(&paths, yes, purge_config, purge_cache)?;
         }
-        Command::Start { ui } => services::start(&paths, ui)?,
+        Command::Start { daemon_only, .. } => services::start(&paths, !daemon_only)?,
         Command::Stop => services::stop(&paths)?,
         Command::Status => services::status(&paths)?,
         Command::Toggle => operations::toggle(&paths)?,

@@ -13,10 +13,12 @@ Follow any PATH instructions printed by the installer, then set up and start:
 
 ```sh
 swictation setup
-swictation start --ui
+swictation start
 ```
 
 Setup downloads the speech models and configures the background services.
+`start` launches the daemon and menu-bar/tray UI. Choose **Show Metrics** from
+the Swictation icon to open the dashboard.
 
 - **Linux:** x86_64, Ubuntu 24.04+ or equivalent with glibc 2.39+.
   Install the [audio/UI libraries](docs/installation.md#linux-system-libraries)
@@ -37,7 +39,7 @@ Say “hello comma world period” to type “Hello, world.” See the
 ```sh
 swictation status       # Check whether services are running
 swictation stop         # Stop services
-swictation start --ui   # Start the daemon and tray UI
+swictation start        # Start the daemon and tray UI
 ```
 
 ## Update

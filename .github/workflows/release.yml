@@ -139,6 +139,7 @@ jobs:
           if validation.get('release_blockers', {}).get('open_count') != 0:
               raise SystemExit('Candidate did not pass the release-blocker gate')
           required = {'Test native lifecycle': 2, 'Test bootstrap and archive contracts': 2,
+              'Test UI database and protocol regressions': 2,
               'Smoke-test the exact packaged native lifecycle': 1,
               'Smoke-test the signed package in an isolated home': 1}
           evidence = validation.get('executed_steps', [])

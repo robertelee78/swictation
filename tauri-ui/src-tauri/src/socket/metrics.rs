@@ -285,7 +285,7 @@ mod tests {
         }
 
         // Test metrics_update
-        let json = r#"{"type":"metrics_update","state":"recording","wpm":120.5,"words":100,"latency_ms":150,"segments":10,"duration_s":60.5,"gpu_memory_mb":2048.0,"cpu_percent":45.2}"#;
+        let json = r#"{"type":"metrics_update","state":"recording","wpm":120.5,"words":100,"latency_ms":150,"segments":10,"duration_s":60.5,"gpu_memory_mb":2048.0,"gpu_memory_percent":25.0,"cpu_percent":45.2,"session_id":123}"#;
         let event: MetricsEvent = serde_json::from_str(json).unwrap();
         match event {
             MetricsEvent::MetricsUpdate {
@@ -296,7 +296,9 @@ mod tests {
                 segments,
                 duration_s,
                 gpu_memory_mb,
+                gpu_memory_percent,
                 cpu_percent,
+                session_id,
             } => {
                 assert_eq!(state, "recording");
                 assert_eq!(wpm, 120.5);
@@ -305,33 +307,35 @@ mod tests {
                 assert_eq!(segments, 10);
                 assert_eq!(duration_s, 60.5);
                 assert_eq!(gpu_memory_mb, 2048.0);
+                assert_eq!(gpu_memory_percent, 25.0);
                 assert_eq!(cpu_percent, 45.2);
+                assert_eq!(session_id, Some(123));
             }
             _ => panic!("Wrong event type"),
         }
 
         // Test transcription
-        let json = r#"{"type":"transcription","session_id":"test-123","text":"Hello world","timestamp":1234567890,"wpm":120.0,"latency_ms":100}"#;
+        let json = r#"{"type":"transcription","text":"Hello world","timestamp":1234567890,"wpm":120.0,"latency_ms":100,"words":2}"#;
         let event: MetricsEvent = serde_json::from_str(json).unwrap();
         match event {
             MetricsEvent::Transcription {
-                session_id,
                 text,
                 timestamp,
                 wpm,
                 latency_ms,
+                words,
             } => {
-                assert_eq!(session_id, "test-123");
                 assert_eq!(text, "Hello world");
                 assert_eq!(timestamp, 1234567890);
                 assert_eq!(wpm, 120.0);
                 assert_eq!(latency_ms, 100);
+                assert_eq!(words, 2);
             }
             _ => panic!("Wrong event type"),
         }
 
         // Test state_change
-        let json = r#"{"type":"state_change","daemon_state":"recording","timestamp":1234567890}"#;
+        let json = r#"{"type":"state_change","state":"recording","timestamp":1234567890}"#;
         let event: MetricsEvent = serde_json::from_str(json).unwrap();
         match event {
             MetricsEvent::StateChange { state, timestamp } => {

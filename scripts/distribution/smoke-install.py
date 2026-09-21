@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise packaged installation and daemon selection without services or inference."""
+"""Exercise packaged installation and daemon selection and UI startup without services or inference."""
 import argparse
 import hashlib
 import json
@@ -9,6 +9,7 @@ import re
 import subprocess
 import tarfile
 import tempfile
+from smoke_ui import check_ui_startup
 
 
 def check_model_selection(daemon, test_home, env, target):
@@ -128,6 +129,7 @@ with tempfile.TemporaryDirectory(prefix="swictation-release-smoke-") as temporar
     try:
         daemon = launcher.resolve(strict=True).parent / "swictation-daemon"
         failures = check_model_selection(daemon, test_home, env, metadata["target"])
+        failures.extend(check_ui_startup(daemon.parent.parent, test_home, env, metadata["target"]))
     finally:
         print(run(launcher, "uninstall", "--yes"), end="")
     if launcher.exists() or launcher.is_symlink():
@@ -135,5 +137,5 @@ with tempfile.TemporaryDirectory(prefix="swictation-release-smoke-") as temporar
     if service_attempts.exists():
         raise SystemExit("isolated install/uninstall unexpectedly attempted service management: " + service_attempts.read_text())
     if failures:
-        raise SystemExit("Packaged daemon model-selection smoke failed:\n" + "\n".join(failures))
-    print(f"Packaged install/version/daemon-selection/uninstall smoke passed: {expected}")
+        raise SystemExit("Packaged lifecycle smoke failed:\n" + "\n".join(failures))
+    print(f"Packaged install/version/daemon-selection/empty-profile UI/uninstall smoke passed: {expected}")

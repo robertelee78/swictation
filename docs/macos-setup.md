@@ -1,10 +1,5 @@
 # macOS setup
 
-Updated: 2026-09-21. The signed and notarized [0.8.0 native release](https://github.com/robertelee78/swictation/releases/tag/v0.8.0)
-is available and passed packaged installation checks. Microphone, Accessibility,
-CoreML inference and interactive dictation still need testing on your Mac. See
-[installation and migration](installation.md) for the full lifecycle contract.
-
 ## Requirements
 
 - Apple Silicon; Intel Macs are outside the supported artifact matrix.
@@ -16,23 +11,10 @@ No Node.js, npm, Rust compiler, or checkout is required for the installed applic
 
 ## Install and configure
 
-For an existing npm installation, first stop its services and remove its package:
-
 ```sh
-swictation stop
-npm uninstall -g --ignore-scripts swictation
-```
-
-Preserve `~/Library/Application Support/swictation`; it holds configuration, models,
-corrections and metrics. Remove the old package **before native setup** so old hooks
-cannot tear down newly installed services.
-
-Install the native release:
-
-```sh
-installer=$(mktemp /tmp/swictation-install.XXXXXX) &&
-  curl -fsSL https://github.com/robertelee78/swictation/releases/latest/download/install.sh -o "$installer" &&
-  sh "$installer"
+curl -fsSL https://github.com/robertelee78/swictation/releases/latest/download/install.sh | sh
+swictation setup
+swictation start
 ```
 
 The installer verifies the exact release archive and creates the stable command at
@@ -52,45 +34,27 @@ user LaunchAgents with stable native paths and library environment. Existing val
 configuration is preserved. Model weights live outside the release under
 `~/Library/Application Support/swictation/models`.
 
-Installation and setup do not prove recording or text insertion. Start the new services
-explicitly and complete permissions:
-
-```sh
-swictation start --ui
-swictation status
-```
+`swictation start` launches the daemon and menu-bar UI. Choose **Show Metrics**
+from the Swictation icon to open the dashboard.
 
 ## Privacy permissions
 
-Open **System Settings → Privacy & Security**. Grant Microphone access to the
-application requesting audio access, and enable the installed dictation component
-under **Accessibility** for text insertion. Use the current native component when
-selecting a binary; an old npm path points to the retired installation.
-
-Select the signed daemon app through the stable path used by the native service
-when macOS asks for the recording/text-insertion component:
+Open **System Settings → Privacy & Security** and enable **Microphone** and
+**Accessibility** for Swictation. If you need to select the app manually, use:
 
 ```text
 ~/Library/Application Support/swictation/install/SwictationDaemon.app
 ```
 
-Setup creates this alias to the active release's complete signed app bundle.
+Setup creates this stable path to the signed daemon app. Text insertion retries
+automatically after Accessibility access is granted. Speech received before recovery
+is discarded; speak again after enabling permission.
 
-Use the actual installed component identified by the permission dialog or diagnostic.
-The first migration creates a new native app identity, so macOS may ask for permissions
-again. Later releases retain the native app identity, but the privacy database remains
-under macOS control; installation success never proves permission. Restart after a
-permission change:
+Open TextEdit, press `Ctrl+Shift+D`, say “hello world period”, pause, and press
+the shortcut again to stop. Confirm the text appears once.
 
-```sh
-swictation stop
-swictation start --ui
-```
-
-Then open TextEdit, press `Ctrl+Shift+D`, say “hello world period”, pause, and press
-the shortcut again to stop. Confirm the text appears once. Test the microphone and
-injection in the applications you use. Permissions may require renewed attention
-after an update; record the actual behavior during host qualification.
+The red Swictation microphone is the app's recording control. The orange microphone
+indicator belongs to macOS and appears while an app uses the microphone.
 
 ## Configuration
 

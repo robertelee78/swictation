@@ -1,6 +1,8 @@
 //! User service ownership, stable native paths, and lifecycle state restoration.
 #[path = "service_apps.rs"]
 mod apps;
+#[path = "service_launchd.rs"]
+mod launchd;
 #[path = "service_units.rs"]
 mod units;
 use crate::{models, paths::Paths};
@@ -105,24 +107,10 @@ fn running(paths: &Paths, component: &str) -> Result<bool> {
         return Ok(false);
     }
     if cfg!(target_os = "macos") {
-        let output = run(
-            "launchctl",
-            &[
-                "print",
-                &format!("{}/com.swictation.{component}", domain()?),
-            ],
-        )?;
-        if !output.status.success() {
-            let error = String::from_utf8_lossy(&output.stderr);
-            if error.contains("Could not find service") || error.contains("could not find service")
-            {
-                return Ok(false);
-            }
-            bail!("cannot inspect launchd service: {error}");
-        }
-        return Ok(String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .any(|line| line.trim() == "state = running"));
+        return Ok(
+            launchd::inspect(&format!("{}/com.swictation.{component}", domain()?))?
+                .is_some_and(|state| state.running),
+        );
     }
     let name = format!("swictation-{component}.service");
     let output = run(
@@ -153,15 +141,8 @@ pub fn snapshot(paths: &Paths) -> Result<RunningState> {
             ("ui", &mut state.ui_loaded),
         ] {
             if owned(paths, component)? {
-                *loaded = run(
-                    "launchctl",
-                    &[
-                        "print",
-                        &format!("{}/com.swictation.{component}", domain()?),
-                    ],
-                )?
-                .status
-                .success();
+                *loaded = launchd::inspect(&format!("{}/com.swictation.{component}", domain()?))?
+                    .is_some();
             }
         }
     }
@@ -174,17 +155,7 @@ fn stop_component(paths: &Paths, component: &str) -> Result<()> {
     }
     if cfg!(target_os = "macos") {
         let name = format!("{}/com.swictation.{component}", domain()?);
-        let loaded = run("launchctl", &["print", &name])?;
-        if loaded.status.success() {
-            checked("launchctl", &["bootout", &name])?;
-        } else {
-            let message = String::from_utf8_lossy(&loaded.stderr);
-            if !message.contains("Could not find service")
-                && !message.contains("could not find service")
-            {
-                bail!("cannot inspect launchd service: {message}");
-            }
-        }
+        launchd::stop(&name)?;
     } else {
         checked(
             "systemctl",
@@ -226,21 +197,24 @@ fn launch(paths: &Paths, component: &str) -> Result<()> {
     if cfg!(target_os = "macos") {
         let domain = domain()?;
         let name = format!("{domain}/com.swictation.{component}");
-        let loaded = run("launchctl", &["print", &name])?.status.success();
-        if loaded && !running(paths, component)? {
-            checked("launchctl", &["bootout", &name])?;
-        }
-        if !loaded || !running(paths, component)? {
-            checked(
-                "launchctl",
-                &[
-                    "bootstrap",
-                    &domain,
-                    &unit_path(paths, component).to_string_lossy(),
-                ],
-            )?;
-        }
-        checked("launchctl", &["kickstart", &name])
+        launchd::launch(
+            &domain,
+            &name,
+            &unit_path(paths, component).to_string_lossy(),
+        )
+        .with_context(|| {
+            format!(
+                "could not start {component}; inspect {} and {}",
+                paths
+                    .home
+                    .join(format!("Library/Logs/swictation/{component}.log"))
+                    .display(),
+                paths
+                    .home
+                    .join(format!("Library/Logs/swictation/{component}-error.log"))
+                    .display()
+            )
+        })
     } else {
         checked(
             "systemctl",

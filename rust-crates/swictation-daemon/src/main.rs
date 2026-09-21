@@ -10,6 +10,7 @@ mod corrections;
 mod display_server;
 mod gpu;
 mod hotkey;
+mod injection_worker;
 mod ipc;
 mod pipeline;
 mod socket_utils;
@@ -848,46 +849,38 @@ async fn daemon_main(
     //
     // On macOS, CGEventSource is not Send/Sync, so we must use a dedicated OS thread
     // for text injection and communicate via a channel.
-    let (inject_tx, inject_rx) = std::sync::mpsc::channel::<String>();
+    let (inject_tx, inject_rx) = std::sync::mpsc::channel::<injection_worker::PendingText>();
 
     // Spawn dedicated thread for text injection (required for macOS CGEventSource)
     std::thread::spawn(move || {
+        use crate::injection_worker::{run, WorkerEvent};
         use crate::text_injection::TextInjector;
 
-        // Initialize text injector with display server detection
-        let text_injector = match TextInjector::new() {
-            Ok(injector) => {
-                info!(
-                    "Text injector initialized for: {:?}",
-                    injector.display_server_info().server_type
-                );
-                injector
-            }
-            Err(e) => {
-                error!("Failed to initialize text injector: {}", e);
-                error!("Text injection will be disabled. Install required tools:");
-                #[cfg(target_os = "linux")]
-                {
-                    error!("  For X11: sudo apt install xdotool");
-                    error!("  For Wayland: sudo apt install wtype");
+        run(
+            inject_rx,
+            TextInjector::new,
+            TextInjector::inject_text,
+            |event| match event {
+                WorkerEvent::Unavailable => {
+                    warn!("Text injection unavailable; retrying every 2 seconds. Dictation received before recovery will be discarded.");
+                    #[cfg(target_os = "linux")]
+                    warn!("Install an available text injection tool: xdotool, wtype, or ydotool");
+                    #[cfg(target_os = "macos")]
+                    warn!("Grant Accessibility permission to Swictation in System Settings");
                 }
-                #[cfg(target_os = "macos")]
-                {
-                    error!("  macOS: Grant Accessibility permissions in System Settings");
+                WorkerEvent::Ready { recovered: true } => {
+                    info!("Text injection recovered; new transcriptions can be typed");
                 }
-                return;
-            }
-        };
-
-        // Receive text to inject from channel
-        while let Ok(text) = inject_rx.recv() {
-            // Privacy: never log dictated content at info — journald persists it (ADR-034).
-            info!("Injecting text: {} chars", text.chars().count());
-            debug!("Injecting text content: {}", text);
-            if let Err(e) = text_injector.inject_text(&text) {
-                error!("Failed to inject text: {}", e);
-            }
-        }
+                WorkerEvent::Ready { recovered: false } => info!("Text injector ready"),
+                // Never log text or injection errors: tool stderr can echo
+                // dictated content. Counts preserve useful diagnostics (ADR-034).
+                WorkerEvent::Injected { chars } => info!("Injected text: {} chars", chars),
+                WorkerEvent::InjectionFailed { chars } => {
+                    error!("Text injection failed for {} chars; text will not be replayed. Retrying initialization in 2 seconds.", chars);
+                }
+            },
+            std::time::Duration::from_secs(2),
+        );
     });
 
     // Bridge async transcription results to the sync text injection thread
@@ -895,7 +888,10 @@ async fn daemon_main(
         while let Some(result) = transcription_rx.recv().await {
             match result {
                 Ok(text) => {
-                    if inject_tx.send(text).is_err() {
+                    if inject_tx
+                        .send(injection_worker::PendingText::new(text))
+                        .is_err()
+                    {
                         error!("Text injection thread has exited");
                         break;
                     }

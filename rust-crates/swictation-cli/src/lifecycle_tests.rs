@@ -163,6 +163,41 @@ fn parser_rejects_conflicting_modes_and_missing_confirmation() {
 }
 
 #[test]
+fn start_defaults_to_app_and_preserves_explicit_ui_compatibility() {
+    for args in [
+        vec!["swictation", "start"],
+        vec!["swictation", "start", "--ui"],
+    ] {
+        let cli = Cli::try_parse_from(args).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Start {
+                daemon_only: false,
+                ..
+            }
+        ));
+    }
+    let cli = Cli::try_parse_from(["swictation", "start", "--daemon-only"]).unwrap();
+    assert!(matches!(
+        cli.command,
+        Command::Start {
+            daemon_only: true,
+            ..
+        }
+    ));
+    assert!(Cli::try_parse_from(["swictation", "start", "--ui", "--daemon-only"]).is_err());
+    let help = Cli::try_parse_from(["swictation", "start", "--help"])
+        .err()
+        .unwrap();
+    assert_eq!(help.kind(), clap::error::ErrorKind::DisplayHelp);
+    assert!(help
+        .to_string()
+        .contains("Start the dictation daemon and desktop app"));
+    assert!(help.to_string().contains("--daemon-only"));
+    assert!(help.to_string().contains("already the default"));
+}
+
+#[test]
 fn archive_symlink_is_rejected() {
     let (_temp, p) = sandbox();
     let file = p.home.join("link.tar.gz");

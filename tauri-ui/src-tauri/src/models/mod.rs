@@ -24,7 +24,7 @@ pub struct TranscriptionRecord {
 }
 
 /// Lifetime statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LifetimeStats {
     pub total_words: i64,
     pub total_characters: i64,

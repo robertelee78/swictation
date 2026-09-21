@@ -1,7 +1,7 @@
 {
   "name": "swictation-ui",
   "private": true,
-  "version": "0.7.35",
+  "version": "0.8.2",
   "type": "module",
   "scripts": {
     "dev": "vite",

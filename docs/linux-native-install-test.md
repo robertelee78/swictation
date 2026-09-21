@@ -41,7 +41,7 @@ the native release and print the setup command. It should preserve settings and 
 ```sh
 swictation setup
 swictation doctor --deep
-swictation start --ui
+swictation start
 swictation status
 ```
 

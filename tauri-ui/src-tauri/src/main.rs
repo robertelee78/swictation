@@ -270,22 +270,12 @@ fn main() {
 
             // Get database path
             let db_path = utils::get_default_db_path();
-            log::info!("Opening database at: {:?}", db_path);
+            log::info!("Metrics database path: {:?}", db_path);
 
-            // Open database (or create if it doesn't exist yet)
-            let db = Database::new(&db_path)
-                .map_err(|e| {
-                    log::warn!("Database not found, will retry on first query: {}", e);
-                    e
-                })
-                .ok();
-
-            // Create app state
+            // The daemon creates the database after startup. Queries stay empty
+            // while it is absent and open the existing file once it appears.
             let state = AppState {
-                db: Mutex::new(db.unwrap_or_else(|| {
-                    // Fallback: try to create database if it doesn't exist
-                    Database::new(&db_path).expect("Failed to create database")
-                })),
+                db: Mutex::new(Database::new(&db_path)?),
             };
 
             app.manage(state);

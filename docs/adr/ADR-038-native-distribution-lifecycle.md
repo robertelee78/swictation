@@ -9,6 +9,9 @@
   publication proof and the remaining Linux/macOS desktop acceptance checks.
 - **2026-09-21 correction:** 0.8.1 aligns automatic daemon verification with CoreML
   startup and adds packaged-daemon selection and missing-model regression checks.
+- **2026-09-21 startup correction:** 0.8.2 starts daemon and UI by default, waits
+  for launchd removal during restart, recovers text insertion after permission is
+  granted, and allows UI startup before the daemon creates its metrics database.
 - **Supersedes:** ADR-027, ADR-028 and ADR-032's npm distribution mechanism;
   ADR-037's JavaScript registry and npm lifecycle entry point.
 - **Preserves:** ADR-034/035 configuration and upgrade safety, ADR-036 model integrity,
@@ -60,7 +63,11 @@ with scripts disabled before native setup so its hook cannot tear down new units
 
 ## Setup and evidence
 
-Setup is explicit and rerunnable. Existing valid TOML is preserved. Models retain
+Setup is explicit and rerunnable. Existing valid TOML is preserved. Normal `start`
+launches the daemon and tray UI; `start --daemon-only` is the explicit headless mode.
+The dashboard opens from the tray's Show Metrics action. A missing metrics database
+must not terminate the UI during first startup. Text insertion retries unavailable
+backends without replaying speech received before recovery. Models retain
 the exact pinned revision, size and SHA-256 manifest from ADR-036. Doctor checks
 artifacts rather than historical receipts. Repair reports unresolved components
 as failure. Services use explicit native paths and platform library environment;
@@ -69,9 +76,9 @@ no source checkout, npm package or JavaScript interpreter is referenced.
 CI builds each supported target and packages its exact inputs. Release publication
 requires both targets and validation, matching version/tag and source SHA, and
 macOS signing/notarization; there is no skip-build or npm fallback. Local fixture
-tests prove filesystem transitions, daemon model selection and missing-file failures,
-not real microphone, GPU, TCC
-or published-download operation. Those require the respective host/release proof.
+tests prove filesystem transitions, daemon model selection, missing-file failures
+and UI startup without an existing database. They do not prove real microphone,
+GPU, TCC or published-download operation. Those require the respective host/release proof.
 
 ## Acceptance
 

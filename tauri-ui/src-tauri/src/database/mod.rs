@@ -1,37 +1,51 @@
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OpenFlags};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 
 use crate::models::{LifetimeStats, SessionSummary, TranscriptionRecord};
 
-/// Thread-safe database wrapper for UI queries
+/// Queries the daemon-owned database, which may not exist during UI startup.
 pub struct Database {
-    conn: Arc<Mutex<Connection>>,
+    db_path: PathBuf,
 }
 
 impl Database {
-    /// Open existing metrics database
+    /// Remember the metrics path without opening or creating a database.
     pub fn new<P: AsRef<Path>>(db_path: P) -> Result<Self> {
-        let db_path = Self::expand_path(db_path)?;
-
-        // Ensure the database exists
-        if !db_path.exists() {
-            anyhow::bail!("Metrics database not found at {:?}", db_path);
-        }
-
-        let conn = Connection::open(&db_path)
-            .context("Failed to open metrics database")?;
-
         Ok(Self {
-            conn: Arc::new(Mutex::new(conn)),
+            db_path: Self::expand_path(db_path)?,
         })
+    }
+
+    /// Reopen on each operation so a database created later becomes visible.
+    /// Never use SQLITE_OPEN_CREATE: only the daemon owns schema creation.
+    fn open_existing(&self, writable: bool) -> Result<Option<Connection>> {
+        let flags = if writable {
+            OpenFlags::SQLITE_OPEN_READ_WRITE
+        } else {
+            OpenFlags::SQLITE_OPEN_READ_ONLY
+        };
+        match Connection::open_with_flags(&self.db_path, flags) {
+            Ok(conn) => Ok(Some(conn)),
+            Err(error) => {
+                if matches!(std::fs::metadata(&self.db_path), Err(missing)
+                    if missing.kind() == std::io::ErrorKind::NotFound)
+                {
+                    return Ok(None);
+                }
+                Err(error).with_context(|| {
+                    format!(
+                        "Failed to open metrics database at {}",
+                        self.db_path.display()
+                    )
+                })
+            }
+        }
     }
 
     /// Expand ~ and environment variables in path
     fn expand_path<P: AsRef<Path>>(path: P) -> Result<PathBuf> {
-        let path_str = path.as_ref().to_str()
-            .context("Invalid path encoding")?;
+        let path_str = path.as_ref().to_str().context("Invalid path encoding")?;
 
         let expanded = if path_str.starts_with('~') {
             if let Some(home) = dirs::home_dir() {
@@ -48,11 +62,18 @@ impl Database {
 
     /// Get recent sessions with pagination support (only completed sessions)
     pub fn get_recent_sessions(&self, limit: usize, offset: usize) -> Result<Vec<SessionSummary>> {
-        log::info!("🔍 get_recent_sessions called: limit={}, offset={}", limit, offset);
-        let conn = self.conn.lock().unwrap();
+        log::info!(
+            "🔍 get_recent_sessions called: limit={}, offset={}",
+            limit,
+            offset
+        );
+        let Some(conn) = self.open_existing(false)? else {
+            return Ok(Vec::new());
+        };
 
-        let mut stmt = conn.prepare(
-            "SELECT
+        let mut stmt = conn
+            .prepare(
+                "SELECT
                 s.id,
                 s.start_time,
                 s.end_time,
@@ -63,35 +84,37 @@ impl Database {
              FROM sessions s
              WHERE s.duration_s IS NOT NULL
              ORDER BY s.start_time DESC
-             LIMIT ?1 OFFSET ?2"
-        ).map_err(|e| {
-            log::error!("❌ SQL prepare error: {}", e);
-            e
-        })?;
+             LIMIT ?1 OFFSET ?2",
+            )
+            .map_err(|e| {
+                log::error!("❌ SQL prepare error: {}", e);
+                e
+            })?;
 
-        let sessions = stmt.query_map(params![limit, offset], |row| {
-            let start_time: f64 = row.get(1)?;
-            let end_time: Option<f64> = row.get(2)?;
-            let duration_s: f64 = row.get(3)?;
-            let words_dictated: i32 = row.get(4)?;
-            let wpm: f64 = row.get(5)?;
-            let avg_latency_ms: f64 = row.get(6)?;
+        let sessions = stmt
+            .query_map(params![limit, offset], |row| {
+                let start_time: f64 = row.get(1)?;
+                let end_time: Option<f64> = row.get(2)?;
+                let duration_s: f64 = row.get(3)?;
+                let words_dictated: i32 = row.get(4)?;
+                let wpm: f64 = row.get(5)?;
+                let avg_latency_ms: f64 = row.get(6)?;
 
-            Ok(SessionSummary {
-                id: row.get(0)?,
-                start_time: start_time as i64,
-                end_time: end_time.map(|t| t as i64),
-                duration_s,
-                words_dictated,
-                wpm,
-                avg_latency_ms,
-            })
-        })?
-        .collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(|e| {
-            log::error!("❌ Query execution error: {}", e);
-            e
-        })?;
+                Ok(SessionSummary {
+                    id: row.get(0)?,
+                    start_time: start_time as i64,
+                    end_time: end_time.map(|t| t as i64),
+                    duration_s,
+                    words_dictated,
+                    wpm,
+                    avg_latency_ms,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| {
+                log::error!("❌ Query execution error: {}", e);
+                e
+            })?;
 
         log::info!("✓ Returning {} sessions", sessions.len());
         Ok(sessions)
@@ -100,22 +123,28 @@ impl Database {
     /// Get total count of sessions for pagination (only completed sessions)
     pub fn get_session_count(&self) -> Result<usize> {
         log::info!("🔍 get_session_count called");
-        let conn = self.conn.lock().unwrap();
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM sessions WHERE duration_s IS NOT NULL",
-            [],
-            |row| row.get(0)
-        ).map_err(|e| {
-            log::error!("❌ get_session_count error: {}", e);
-            e
-        })?;
+        let Some(conn) = self.open_existing(false)? else {
+            return Ok(0);
+        };
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sessions WHERE duration_s IS NOT NULL",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|e| {
+                log::error!("❌ get_session_count error: {}", e);
+                e
+            })?;
         log::info!("✓ Session count: {}", count);
         Ok(count as usize)
     }
 
     /// Get all transcriptions for a session (from segments table)
     pub fn get_session_transcriptions(&self, session_id: i64) -> Result<Vec<TranscriptionRecord>> {
-        let conn = self.conn.lock().unwrap();
+        let Some(conn) = self.open_existing(false)? else {
+            return Ok(Vec::new());
+        };
 
         let mut stmt = conn.prepare(
             "SELECT
@@ -127,29 +156,36 @@ impl Database {
                 words
              FROM segments
              WHERE session_id = ?1 AND text IS NOT NULL
-             ORDER BY timestamp ASC"
+             ORDER BY timestamp ASC",
         )?;
 
-        let transcriptions = stmt.query_map([session_id], |row| {
-            let timestamp: f64 = row.get(3)?;
+        let transcriptions = stmt
+            .query_map([session_id], |row| {
+                let timestamp: f64 = row.get(3)?;
 
-            Ok(TranscriptionRecord {
-                id: row.get(0)?,
-                session_id: row.get(1)?,
-                text: row.get(2)?,
-                timestamp: timestamp as i64,
-                latency_ms: row.get(4)?,
-                words: row.get(5)?,
-            })
-        })?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+                Ok(TranscriptionRecord {
+                    id: row.get(0)?,
+                    session_id: row.get(1)?,
+                    text: row.get(2)?,
+                    timestamp: timestamp as i64,
+                    latency_ms: row.get(4)?,
+                    words: row.get(5)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
 
         Ok(transcriptions)
     }
 
     /// Search transcriptions by text content
-    pub fn search_transcriptions(&self, query: &str, limit: usize) -> Result<Vec<TranscriptionRecord>> {
-        let conn = self.conn.lock().unwrap();
+    pub fn search_transcriptions(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<TranscriptionRecord>> {
+        let Some(conn) = self.open_existing(false)? else {
+            return Ok(Vec::new());
+        };
 
         let search_pattern = format!("%{}%", query);
 
@@ -164,22 +200,23 @@ impl Database {
              FROM segments
              WHERE text IS NOT NULL AND text LIKE ?1
              ORDER BY timestamp DESC
-             LIMIT ?2"
+             LIMIT ?2",
         )?;
 
-        let transcriptions = stmt.query_map(params![search_pattern, limit], |row| {
-            let timestamp: f64 = row.get(3)?;
+        let transcriptions = stmt
+            .query_map(params![search_pattern, limit], |row| {
+                let timestamp: f64 = row.get(3)?;
 
-            Ok(TranscriptionRecord {
-                id: row.get(0)?,
-                session_id: row.get(1)?,
-                text: row.get(2)?,
-                timestamp: timestamp as i64,
-                latency_ms: row.get(4)?,
-                words: row.get(5)?,
-            })
-        })?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+                Ok(TranscriptionRecord {
+                    id: row.get(0)?,
+                    session_id: row.get(1)?,
+                    text: row.get(2)?,
+                    timestamp: timestamp as i64,
+                    latency_ms: row.get(4)?,
+                    words: row.get(5)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
 
         Ok(transcriptions)
     }
@@ -187,7 +224,9 @@ impl Database {
     /// Get lifetime statistics
     pub fn get_lifetime_stats(&self) -> Result<LifetimeStats> {
         log::info!("🔍 get_lifetime_stats called");
-        let conn = self.conn.lock().unwrap();
+        let Some(conn) = self.open_existing(false)? else {
+            return Ok(LifetimeStats::default());
+        };
 
         let mut stmt = conn.prepare(
             "SELECT
@@ -203,7 +242,7 @@ impl Database {
                 lowest_latency_ms,
                 lowest_latency_session
              FROM lifetime_stats
-             WHERE id = 1"
+             WHERE id = 1",
         )?;
 
         let mut rows = stmt.query([])?;
@@ -216,33 +255,23 @@ impl Database {
                 total_time_minutes: row.get(3)?,
                 average_wpm: row.get(4)?,
                 average_latency_ms: row.get(5)?,
-                best_wpm_value: row.get(6)?,
+                best_wpm_value: row.get::<_, Option<f64>>(6)?.unwrap_or_default(),
                 best_wpm_session: row.get(7)?,
                 estimated_time_saved_minutes: row.get(8)?,
-                lowest_latency_ms: row.get(9)?,
+                lowest_latency_ms: row.get::<_, Option<f64>>(9)?.unwrap_or_default(),
                 lowest_latency_session: row.get(10)?,
             })
         } else {
             // Return empty stats if no data exists yet
-            Ok(LifetimeStats {
-                total_words: 0,
-                total_characters: 0,
-                total_sessions: 0,
-                total_time_minutes: 0.0,
-                average_wpm: 0.0,
-                average_latency_ms: 0.0,
-                best_wpm_value: 0.0,
-                best_wpm_session: None,
-                estimated_time_saved_minutes: 0.0,
-                lowest_latency_ms: 0.0,
-                lowest_latency_session: None,
-            })
+            Ok(LifetimeStats::default())
         }
     }
 
     /// Reset all data in the database
     pub fn reset_database(&self) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let Some(conn) = self.open_existing(true)? else {
+            return Ok(());
+        };
 
         // Delete all data from tables
         conn.execute("DELETE FROM segments", [])?;
@@ -269,3 +298,6 @@ impl Database {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests;

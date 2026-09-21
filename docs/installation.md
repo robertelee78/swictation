@@ -69,7 +69,7 @@ Installation only supplies release files. Configure the host explicitly:
 ```sh
 swictation setup
 swictation doctor
-swictation start --ui
+swictation start
 swictation status
 ```
 
@@ -116,7 +116,7 @@ There is no need to download valid model files again merely to change distributi
    ```sh
    swictation setup
    swictation doctor
-   swictation start --ui
+   swictation start
    swictation status
    ```
 

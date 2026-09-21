@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-09-21
+
+### Fixed
+
+- `swictation start` launches the daemon and UI together. `--daemon-only` is
+  available for headless use; the existing `--ui` option still works.
+- Text insertion recovers automatically after Accessibility permission is granted.
+  Speech received while insertion is unavailable is discarded, never replayed later.
+- macOS stop/start waits for launchd to remove the old service before registering
+  it again, and reports immediate startup failures.
+- The UI opens before the daemon's metrics database exists and reads it once ready.
+- Release checks launch the packaged UI in an empty profile on both platforms.
+
 ## [0.8.1] - 2026-09-21
 
 ### Fixed
