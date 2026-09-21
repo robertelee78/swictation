@@ -1,0 +1,57 @@
+name: Diagnose isolated Apple signing keychain
+on:
+  push:
+    branches: [diagnostics/apple-signing]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: macos-14
+    environment: apple-release
+    steps:
+      - name: Probe import, partition access and real signing
+        env:
+          P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD }}
+          SIGNING_IDENTITY: ${{ vars.APPLE_DEVELOPER_ID_APPLICATION }}
+        run: |
+          python3 - <<'PY'
+          import base64, os, pathlib, secrets, subprocess, tempfile
+          os.umask(0o077)
+          material = base64.b64decode(os.environ.pop('P12_BASE64'))
+          password = os.environ.pop('P12_PASSWORD')
+          identity = os.environ.pop('SIGNING_IDENTITY')
+          with tempfile.TemporaryDirectory(prefix='swictation-keychain-probe-') as temporary:
+              root = pathlib.Path(temporary).resolve()
+              p12 = root / 'certificate.p12'
+              p12.write_bytes(material)
+              source = root / 'probe.c'
+              source.write_text('int main(void) { return 0; }\n')
+              for explicit_type in (True, False):
+                  label = 'explicit-cert-type' if explicit_type else 'automatic-type'
+                  keychain = root / (label + '.keychain-db')
+                  keypassword = secrets.token_hex(32)
+                  print('PROBE:', label, flush=True)
+                  def security(stage, *args):
+                      result = subprocess.run(['/usr/bin/security', *args], capture_output=True, text=True, timeout=20)
+                      print(stage, 'exit', result.returncode, flush=True)
+                      if result.returncode:
+                          print(result.stderr, flush=True)
+                      return result
+                  try:
+                      security('create', 'create-keychain', '-p', keypassword, str(keychain))
+                      security('unlock', 'unlock-keychain', '-p', keypassword, str(keychain))
+                      flags = ['-t', 'cert', '-f', 'pkcs12'] if explicit_type else []
+                      security('import', 'import', str(p12), '-P', password, '-k', str(keychain), '-T', '/usr/bin/codesign', *flags)
+                      result = security('identity', 'find-identity', '-v', '-p', 'codesigning', str(keychain))
+                      print(result.stdout, flush=True)
+                      security('partition', 'set-key-partition-list', '-S', 'apple-tool:,apple:,codesign:', '-k', keypassword, str(keychain))
+                      binary = root / label
+                      subprocess.run(['clang', str(source), '-o', str(binary)], check=True)
+                      signed = subprocess.run(['/usr/bin/codesign', '--force', '--sign', identity, '--keychain', str(keychain), '--options', 'runtime', '--timestamp', str(binary)], capture_output=True, text=True, timeout=30)
+                      print('codesign exit', signed.returncode, signed.stderr, flush=True)
+                  except subprocess.TimeoutExpired:
+                      print('PROBE TIMED OUT', label, flush=True)
+                  finally:
+                      subprocess.run(['/usr/bin/security', 'delete-keychain', str(keychain)], capture_output=True)
+          PY
