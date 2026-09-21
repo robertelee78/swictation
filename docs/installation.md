@@ -39,16 +39,11 @@ UI. Install the libraries above even if the CLI itself runs successfully.
 
 ## Fresh installation
 
-Fetch the installer successfully before running it:
-
 ```sh
-installer=$(mktemp /tmp/swictation-install.XXXXXX) &&
-  curl -fsSL https://github.com/robertelee78/swictation/releases/latest/download/install.sh -o "$installer" &&
-  sh "$installer"
+curl -fsSL https://github.com/robertelee78/swictation/releases/latest/download/install.sh | sh
 ```
 
-You can inspect the downloaded file before running its final command. The generated
-installer pins the exact release version, archive size, and checksum. It validates
+The installer pins the exact release version, archive size, and checksum. It validates
 its selected archive before activating the release. Unsupported hosts, damaged bytes,
 unsafe paths, and conflicting ownership fail without replacing a working release.
 
