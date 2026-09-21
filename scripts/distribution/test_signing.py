@@ -41,11 +41,14 @@ with open(os.environ['MOCK_SIGNING_LOG'], 'a') as log:
     log.write(json.dumps(record) + '\\n')
 if tool == 'codesign' and '--display' in args:
     print('TeamIdentifier={TEAM}', file=sys.stderr)
+if tool == 'codesign' and '--sign' in args and os.environ.get('MOCK_SIGNING_FAIL'):
+    sys.exit('Signing failure fixture')
+if tool == 'security' and args == ['list-keychains', '-d', 'user']:
+    print('    "/existing/login.keychain-db"')
+    print('    "/existing/System.keychain"')
 if tool == 'security' and args[0] == 'find-identity':
     print('  1) ' + 'A' * 40 + ' "Developer ID Application: Fixture ({TEAM})"')
     print('     1 valid identities found')
-if tool == 'security' and args[0] == 'set-key-partition-list' and '-s' in args:
-    sys.exit('The specified item could not be found in the keychain.')
 if tool == 'ditto':
     pathlib.Path(args[-1]).write_bytes(b'notary submission fixture')
 if tool == 'xcrun' and args[:2] == ['notarytool', 'submit']:
@@ -66,18 +69,33 @@ if tool == 'xcrun' and args[:2] == ['notarytool', 'submit']:
             self.assertNotEqual(result.returncode, 0)
         records = [json.loads(line) for line in self.log.read_text().splitlines()] if self.log.exists() else []
         self.assertTrue(all(not record["leaked_environment"] for record in records))
-        self.assertFalse(any(record["tool"] == "security" and record["args"][0] in
-                             {"list-keychains", "default-keychain"} for record in records))
+        self.assertFalse(any(record["tool"] == "security" and record["args"][0] == "default-keychain"
+                             for record in records))
         self.assertEqual(list(self.root.glob("swictation-sign.*")), [])
         return records
 
-    def test_ci_uses_hf2q_api_key_secrets_and_cleans_temporary_credentials(self):
+    def configure_ci_credentials(self):
         self.env.update(APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64=base64.b64encode(b"dummy p12").decode(),
                         APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD="dummy-password",
                         APPLE_NOTARY_KEY_P8_BASE64=base64.b64encode(b"dummy p8").decode(),
                         APPLE_NOTARY_KEY_ID="1234567890",
                         APPLE_NOTARY_ISSUER_ID="11111111-2222-3333-4444-555555555555")
+
+    def assert_search_list_restored(self, records):
+        lists = [record["args"] for record in records if record["tool"] == "security"
+                 and record["args"][0] == "list-keychains"]
+        self.assertEqual(len(lists), 3)
+        self.assertEqual(lists[0], ["list-keychains", "-d", "user"])
+        self.assertEqual(lists[1][:4], ["list-keychains", "-d", "user", "-s"])
+        self.assertTrue(lists[1][4].endswith("/release.keychain-db"))
+        existing = ["/existing/login.keychain-db", "/existing/System.keychain"]
+        self.assertEqual(lists[1][5:], existing)
+        self.assertEqual(lists[2], ["list-keychains", "-d", "user", "-s", *existing])
+
+    def test_ci_uses_api_key_secrets_and_cleans_temporary_credentials(self):
+        self.configure_ci_credentials()
         records = self.run_signer()
+        self.assert_search_list_restored(records)
         security = [record["args"][0] for record in records if record["tool"] == "security"]
         self.assertIn("import", security)
         self.assertIn("find-identity", security)
@@ -95,6 +113,15 @@ if tool == 'xcrun' and args[:2] == ['notarytool', 'submit']:
         stapled = [record["args"][-1] for record in records if record["tool"] == "xcrun"
                    and record["args"][:2] == ["stapler", "staple"]]
         self.assertEqual({Path(path).name for path in stapled}, {"Swictation.app", "SwictationDaemon.app"})
+
+    def test_ci_restores_search_list_and_deletes_keychain_after_signing_failure(self):
+        self.configure_ci_credentials()
+        self.env["MOCK_SIGNING_FAIL"] = "1"
+        records = self.run_signer(success=False)
+        self.assert_search_list_restored(records)
+        self.assertTrue(any(record["tool"] == "security" and record["args"][0] == "delete-keychain"
+                            for record in records))
+        self.assertFalse(any(record["tool"] == "xcrun" for record in records))
 
     def test_local_keychain_profile_never_imports_or_deletes_a_keychain(self):
         records = self.run_signer("--local-keychain", "--keychain-profile", "existing-notary-profile")

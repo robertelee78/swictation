@@ -75,13 +75,26 @@ repository=$(cd "$(dirname "$0")/../.." && pwd -P)
 umask 077
 temporary=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/swictation-sign.XXXXXXXX")
 created_keychain=''
+original_user_keychains=()
+keychain_list_modified=false
 cleanup() {
+  if [[ "$keychain_list_modified" == true ]]; then
+    security list-keychains -d user -s "${original_user_keychains[@]}" >/dev/null 2>&1 || true
+  fi
   if [[ -n "$created_keychain" ]]; then security delete-keychain "$created_keychain" >/dev/null 2>&1 || true; fi
   rm -rf "$temporary"
 }
 trap cleanup EXIT
 trap 'exit 130' HUP INT TERM
 if [[ "$local_keychain" != true ]]; then
+  while IFS= read -r original_keychain; do
+    original_keychain=${original_keychain#"${original_keychain%%[![:space:]]*}"}
+    original_keychain=${original_keychain#\"}
+    original_keychain=${original_keychain%\"}
+    [[ "$original_keychain" == /* ]] || fail 'user keychain search list contains a noncanonical path'
+    original_user_keychains+=("$original_keychain")
+  done < <(security list-keychains -d user)
+  [[ ${#original_user_keychains[@]} -gt 0 ]] || fail 'user keychain search list is empty'
   created_keychain="$temporary/release.keychain-db"
   signing_keychain=$created_keychain
   keychain_password=$(openssl rand -hex 32)
@@ -99,10 +112,13 @@ if [[ "$local_keychain" != true ]]; then
     || fail 'temporary keychain does not contain the intended signing identity'
   [[ $(grep -Ec '^[[:space:]]*1 valid identities found$' <<< "$identities") -eq 1 ]] \
     || fail 'temporary keychain contains an ambiguous signing identity set'
-  # Imported PKCS#12 keys do not consistently match security's -s attribute
-  # filter across macOS versions. This keychain contains only our imported key.
+  # This isolated keychain contains only the imported release identity.
   security set-key-partition-list -S apple-tool:,apple:,codesign: \
     -k "$keychain_password" "$created_keychain" >/dev/null
+  # codesign also uses the user search list for certificate-chain completion,
+  # even when identity selection supplies an explicit --keychain argument.
+  keychain_list_modified=true
+  security list-keychains -d user -s "$created_keychain" "${original_user_keychains[@]}"
   unset p12_password keychain_password
 fi
 notary_auth=()
@@ -120,6 +136,7 @@ if [[ -n "$signing_keychain" ]]; then signing_args+=(--keychain "$signing_keycha
 sign() {
   codesign --force "${signing_args[@]}" --options runtime --timestamp "$@"
 }
+printf 'Signing native release components\n'
 # Libraries first, then executables, then the enclosing bundle. The daemon's
 # stable identifier preserves microphone/accessibility identity across updates.
 while IFS= read -r -d '' library; do sign "$library"; done < <(find "$payload" -type f -name '*.dylib' -print0)
