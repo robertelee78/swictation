@@ -16,7 +16,7 @@ jobs:
           SIGNING_IDENTITY: ${{ vars.APPLE_DEVELOPER_ID_APPLICATION }}
         run: |
           python3 - <<'PY'
-          import base64, os, pathlib, secrets, subprocess, tempfile
+          import base64, os, pathlib, re, secrets, subprocess, tempfile
           os.umask(0o077)
           material = base64.b64decode(os.environ.pop('P12_BASE64'))
           password = os.environ.pop('P12_PASSWORD')
@@ -27,7 +27,8 @@ jobs:
               p12.write_bytes(material)
               source = root / 'probe.c'
               source.write_text('int main(void) { return 0; }\n')
-              for explicit_type in (True, False):
+              original = [line.strip().strip('"') for line in subprocess.check_output(['/usr/bin/security', 'list-keychains', '-d', 'user'], text=True).splitlines()]
+              for explicit_type in (False,):
                   label = 'explicit-cert-type' if explicit_type else 'automatic-type'
                   keychain = root / (label + '.keychain-db')
                   keypassword = secrets.token_hex(32)
@@ -48,10 +49,16 @@ jobs:
                       security('partition', 'set-key-partition-list', '-S', 'apple-tool:,apple:,codesign:', '-k', keypassword, str(keychain))
                       binary = root / label
                       subprocess.run(['clang', str(source), '-o', str(binary)], check=True)
-                      signed = subprocess.run(['/usr/bin/codesign', '--force', '--sign', identity, '--keychain', str(keychain), '--options', 'runtime', '--timestamp', str(binary)], capture_output=True, text=True, timeout=30)
-                      print('codesign exit', signed.returncode, signed.stderr, flush=True)
+                      fingerprint = re.search(r'\b[0-9A-F]{40}\b', result.stdout).group(0)
+                      for search_list in ('original', 'explicit'):
+                          if search_list == 'explicit':
+                              security('set-search-list', 'list-keychains', '-d', 'user', '-s', str(keychain), *original)
+                          for identity_kind, selector in [('name', identity), ('fingerprint', fingerprint)]:
+                              signed = subprocess.run(['/usr/bin/codesign', '--force', '--sign', selector, '--keychain', str(keychain), '--options', 'runtime', '--timestamp', str(binary)], capture_output=True, text=True, timeout=30)
+                              print('codesign', search_list, identity_kind, 'exit', signed.returncode, signed.stderr, flush=True)
                   except subprocess.TimeoutExpired:
                       print('PROBE TIMED OUT', label, flush=True)
                   finally:
+                      subprocess.run(['/usr/bin/security', 'list-keychains', '-d', 'user', '-s', *original], capture_output=True)
                       subprocess.run(['/usr/bin/security', 'delete-keychain', str(keychain)], capture_output=True)
           PY
