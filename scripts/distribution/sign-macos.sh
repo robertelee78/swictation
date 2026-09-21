@@ -93,8 +93,16 @@ if [[ "$local_keychain" != true ]]; then
   security unlock-keychain -p "$keychain_password" "$created_keychain"
   security import "$temporary/certificate.p12" -P "$p12_password" \
     -t cert -f pkcs12 -k "$created_keychain" -T /usr/bin/codesign
+  # Match the isolated imported identity before granting access to its key.
+  identities=$(security find-identity -v -p codesigning "$created_keychain")
+  [[ $(grep -Fc -- "\"$signing_identity\"" <<< "$identities") -eq 1 ]] \
+    || fail 'temporary keychain does not contain the intended signing identity'
+  [[ $(grep -Ec '^[[:space:]]*1 valid identities found$' <<< "$identities") -eq 1 ]] \
+    || fail 'temporary keychain contains an ambiguous signing identity set'
+  # Imported PKCS#12 keys do not consistently match security's -s attribute
+  # filter across macOS versions. This keychain contains only our imported key.
   security set-key-partition-list -S apple-tool:,apple:,codesign: \
-    -s -k "$keychain_password" "$created_keychain" >/dev/null
+    -k "$keychain_password" "$created_keychain" >/dev/null
   unset p12_password keychain_password
 fi
 notary_auth=()

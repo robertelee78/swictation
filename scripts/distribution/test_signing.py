@@ -41,6 +41,11 @@ with open(os.environ['MOCK_SIGNING_LOG'], 'a') as log:
     log.write(json.dumps(record) + '\\n')
 if tool == 'codesign' and '--display' in args:
     print('TeamIdentifier={TEAM}', file=sys.stderr)
+if tool == 'security' and args[0] == 'find-identity':
+    print('  1) ' + 'A' * 40 + ' "Developer ID Application: Fixture ({TEAM})"')
+    print('     1 valid identities found')
+if tool == 'security' and args[0] == 'set-key-partition-list' and '-s' in args:
+    sys.exit('The specified item could not be found in the keychain.')
 if tool == 'ditto':
     pathlib.Path(args[-1]).write_bytes(b'notary submission fixture')
 if tool == 'xcrun' and args[:2] == ['notarytool', 'submit']:
@@ -75,7 +80,12 @@ if tool == 'xcrun' and args[:2] == ['notarytool', 'submit']:
         records = self.run_signer()
         security = [record["args"][0] for record in records if record["tool"] == "security"]
         self.assertIn("import", security)
+        self.assertIn("find-identity", security)
         self.assertIn("delete-keychain", security)
+        partition = next(record["args"] for record in records if record["tool"] == "security"
+                         and record["args"][0] == "set-key-partition-list")
+        self.assertNotIn("-s", partition)
+        self.assertTrue(partition[-1].endswith("/release.keychain-db"))
         submission = next(record["args"] for record in records if record["tool"] == "xcrun"
                           and record["args"][:2] == ["notarytool", "submit"])
         self.assertIn("--key", submission)

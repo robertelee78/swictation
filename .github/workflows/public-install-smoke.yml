@@ -1,0 +1,30 @@
+name: Verify published native installation
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Expected current stable native version
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  public-install:
+    name: Public install and update (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Exercise anonymous public downloads and preserve user data
+        env:
+          EXPECTED_VERSION: ${{ inputs.version }}
+        run: python3 scripts/distribution/smoke-public.py --version "$EXPECTED_VERSION"
