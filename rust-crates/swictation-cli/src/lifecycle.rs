@@ -17,6 +17,14 @@ pub struct Lock {
     _file: fs::File,
 }
 
+impl Drop for Lock {
+    fn drop(&mut self) {
+        // A concurrently spawned process can inherit this open file description
+        // until exec. Closing only our descriptor would leave its lock behind.
+        let _ = FileExt::unlock(&self._file);
+    }
+}
+
 pub fn lock(paths: &Paths) -> Result<Lock> {
     paths::secure_dir(&paths.root)?;
     let lock_path = paths.root.join(".lock");
@@ -31,6 +39,7 @@ pub fn lock(paths: &Paths) -> Result<Lock> {
     paths::regular_owned(&lock_path)?;
     file.try_lock_exclusive()
         .context("Another swictation install/setup/update is running")?;
+    let guard = Lock { _file: file };
     let owner = paths.root.join(".owner");
     if fs::symlink_metadata(&owner).is_ok() {
         paths::regular_owned(&owner)?;
@@ -49,7 +58,7 @@ pub fn lock(paths: &Paths) -> Result<Lock> {
         file.write_all(OWNER)?;
         file.sync_all()?;
     }
-    Ok(Lock { _file: file })
+    Ok(guard)
 }
 
 fn pointer(paths: &Paths, name: &str) -> Result<Option<PathBuf>> {
@@ -400,4 +409,35 @@ fn reject_tree_links(dir: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod lock_tests {
+    use super::*;
+
+    #[test]
+    fn releasing_guard_unlocks_inherited_file_descriptions() {
+        let temporary = tempfile::tempdir().unwrap();
+        let home = fs::canonicalize(temporary.path()).unwrap();
+        let paths = Paths {
+            root: home.join("install"),
+            data: home.join("data"),
+            config: home.join("config"),
+            bin: home.join("bin"),
+            home,
+        };
+        let guard = lock(&paths).unwrap();
+        // dup and fork share the same open file description. A child between
+        // fork and exec must not extend the completed operation's lock lifetime.
+        let inherited = guard._file.try_clone().unwrap();
+        assert!(lock(&paths).is_err());
+        drop(guard);
+        let next = lock(&paths).expect("completed operation must release its lock");
+        drop(inherited);
+        assert!(
+            lock(&paths).is_err(),
+            "the next operation still owns its lock"
+        );
+        drop(next);
+    }
 }
