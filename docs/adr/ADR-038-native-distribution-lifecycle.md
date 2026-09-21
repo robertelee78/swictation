@@ -7,6 +7,8 @@
   0.8.0 release. Both packaged hosts passed CI installation checks; macOS signing and
   notarization passed. [Release evidence](../validation/native-release-0.8.0.md) tracks
   publication proof and the remaining Linux/macOS desktop acceptance checks.
+- **2026-09-21 correction:** 0.8.1 aligns automatic daemon verification with CoreML
+  startup and adds packaged-daemon selection and missing-model regression checks.
 - **Supersedes:** ADR-027, ADR-028 and ADR-032's npm distribution mechanism;
   ADR-037's JavaScript registry and npm lifecycle entry point.
 - **Preserves:** ADR-034/035 configuration and upgrade safety, ADR-036 model integrity,
@@ -67,7 +69,8 @@ no source checkout, npm package or JavaScript interpreter is referenced.
 CI builds each supported target and packages its exact inputs. Release publication
 requires both targets and validation, matching version/tag and source SHA, and
 macOS signing/notarization; there is no skip-build or npm fallback. Local fixture
-tests prove filesystem transitions and failures, not real microphone, GPU, TCC
+tests prove filesystem transitions, daemon model selection and missing-file failures,
+not real microphone, GPU, TCC
 or published-download operation. Those require the respective host/release proof.
 
 ## Acceptance

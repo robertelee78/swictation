@@ -3298,7 +3298,7 @@ dependencies = [
 
 [[package]]
 name = "swictation-cli"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -3338,7 +3338,7 @@ dependencies = [
 
 [[package]]
 name = "swictation-daemon"
-version = "0.7.35"
+version = "0.8.1"
 dependencies = [
  "anyhow",
  "chrono",

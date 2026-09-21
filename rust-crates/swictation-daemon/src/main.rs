@@ -431,8 +431,6 @@ fn main() -> Result<()> {
 
         info!("🧪 DRY-RUN MODE: Showing model selection without loading");
 
-        let vram_mb = crate::gpu::get_gpu_memory_mb().map(|(total, _free)| total);
-
         let model_verified = if config.stt_model_override != "auto" {
             info!("  Override active: {}", config.stt_model_override);
             let verified = match config.stt_model_override.as_str() {
@@ -454,6 +452,7 @@ fn main() -> Result<()> {
                     info!("    Path: {}", config.stt_0_6b_model_path.display());
                     config.stt_0_6b_model_path.join("encoder.onnx").exists()
                 }
+                #[cfg(all(target_os = "macos", feature = "coreml-native"))]
                 "1.1b-coreml" | "coreml-native" => {
                     info!("  Would load: Parakeet-TDT-1.1B (CoreML, forced)");
                     info!("    Path: {}", config.stt_coreml_model_path.display());
@@ -469,7 +468,15 @@ fn main() -> Result<()> {
                 }
             };
             verified
+        } else if config.has_auto_coreml_model() {
+            info!("  Mode: auto (CoreML-first)");
+            info!("  Would load: Parakeet-TDT-1.1B (CoreML)");
+            info!("    Path: {}", config.stt_coreml_model_path.display());
+            info!("    Reason: Native Apple Neural Engine acceleration");
+            true
         } else {
+            // Match the runtime's ONNX fallback using available, not total, VRAM.
+            let vram_mb = crate::gpu::get_gpu_memory_mb().map(|(_total, available)| available);
             info!("  Mode: auto (VRAM-based)");
             if let Some(vram) = vram_mb {
                 info!("  Detected: {}MB VRAM", vram);

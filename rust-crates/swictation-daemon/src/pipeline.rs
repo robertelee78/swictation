@@ -260,7 +260,7 @@ impl Pipeline {
             #[cfg(all(target_os = "macos", feature = "coreml-native"))]
             {
                 let coreml_model_path = config.stt_coreml_model_path.clone();
-                if coreml_model_path.join("encoder.mlmodelc").exists() {
+                if config.has_auto_coreml_model() {
                     info!("Native CoreML models found — using CoreML with full ANE acceleration");
                     info!("  Loading Parakeet-TDT-1.1B via native CoreML...");
                     match CoreMLRecognizer::new(&coreml_model_path) {

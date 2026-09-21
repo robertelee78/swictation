@@ -203,6 +203,13 @@ impl Default for DaemonConfig {
 }
 
 impl DaemonConfig {
+    /// Use the same CoreML-first choice during startup and dry-run verification.
+    /// This checks file presence only; the runtime still handles loading failures.
+    pub fn has_auto_coreml_model(&self) -> bool {
+        cfg!(all(target_os = "macos", feature = "coreml-native"))
+            && self.stt_coreml_model_path.join("encoder.mlmodelc").exists()
+    }
+
     /// Load configuration from file, or create default
     pub fn load() -> Result<Self> {
         let config_path = Self::default_config_path();

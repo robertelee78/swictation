@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-09-21
+
+### Fixed
+
+- macOS setup now verifies the CoreML model selected by automatic startup instead
+  of requiring an unselected ONNX model. Existing `auto` configuration is preserved.
+- Daemon dry-run respects compiled CoreML support and uses available GPU memory,
+  matching startup's ONNX fallback.
+- Packaged release checks now exercise the actual daemon's automatic model
+  selection and reject missing models on macOS and Linux.
+
 ## [0.8.0] - 2026-09-21
 
 ### Changed
