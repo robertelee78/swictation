@@ -2,10 +2,10 @@
 
 Updated: 2026-09-21. Governed by [ADR-038](adr/ADR-038-native-distribution-lifecycle.md).
 
-The native channel starts with version 0.8.0. Its first publication and complete
-clean-host qualification are pending. These instructions describe the new channel;
-an older GitHub release may not contain the installer or archives yet. A source build
-or local fixture test is not proof that a release has been published.
+The native channel starts with the published [0.8.0 release](https://github.com/robertelee78/swictation/releases/tag/v0.8.0).
+Its Linux and macOS packages passed installation checks; the macOS package is signed
+and notarized. See the [release evidence](validation/native-release-0.8.0.md) for
+the tested source, assets and remaining desktop/hardware checks.
 
 ## Supported hosts
 
@@ -18,10 +18,28 @@ Models and downloaded GPU libraries are separate user data. Platform audio, text
 injection tools, and macOS privacy permissions are still required for dictation.
 The optional wlroots tray requires host Python/PySide6; it is not part of speech inference.
 
+### Linux system libraries
+
+On Ubuntu 24.04, install the audio and desktop runtime libraries before setup:
+
+```sh
+sudo apt update
+sudo apt install libasound2t64 libwebkit2gtk-4.1-0 libgtk-3-0t64 libayatana-appindicator3-1
+```
+
+These provide ALSA audio, the Tauri webview, GTK and tray support; apt installs their
+transitive dependencies. Other distributions need the equivalent runtime packages.
+Development headers and compilers are unnecessary. The release's Linux ELF dependency
+inventory confirms the daemon's ALSA and UI's GTK/WebKitGTK requirements; see also
+[Tauri's runtime dependency documentation](https://v2.tauri.app/distribute/debian/).
+
+Setup and doctor check audio/text-injection tools. Setup's daemon verification can
+expose missing daemon libraries, but doctor does not currently load-test the desktop
+UI. Install the libraries above even if the CLI itself runs successfully.
+
 ## Fresh installation
 
-Once the native release is published, fetch the installer successfully before running
-it:
+Fetch the installer successfully before running it:
 
 ```sh
 installer=$(mktemp /tmp/swictation-install.XXXXXX) &&

@@ -1,9 +1,9 @@
 # macOS setup
 
-Updated: 2026-09-21. The native channel begins with 0.8.0; its first published
-release and packaged macOS qualification are pending. Follow this guide once the
-native release is available. See [installation and migration](installation.md) for
-release availability and the full lifecycle contract.
+Updated: 2026-09-21. The signed and notarized [0.8.0 native release](https://github.com/robertelee78/swictation/releases/tag/v0.8.0)
+is available and passed packaged installation checks. Microphone, Accessibility,
+CoreML inference and interactive dictation still need testing on your Mac. See
+[installation and migration](installation.md) for the full lifecycle contract.
 
 ## Requirements
 
@@ -27,7 +27,7 @@ Preserve `~/Library/Application Support/swictation`; it holds configuration, mod
 corrections and metrics. Remove the old package **before native setup** so old hooks
 cannot tear down newly installed services.
 
-When the native release has been published:
+Install the native release:
 
 ```sh
 installer=$(mktemp /tmp/swictation-install.XXXXXX) &&

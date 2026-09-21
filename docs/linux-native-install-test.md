@@ -1,8 +1,11 @@
 # Test the native Linux release
 
-Use this checklist after the linked release has been published. No source checkout,
+The [0.8.0 release](https://github.com/robertelee78/swictation/releases/tag/v0.8.0) is available for this test. No source checkout,
 Node runtime, or compiler is required by the new installation. Supported platform:
 Linux x86_64 with glibc 2.39 or newer and a user systemd session.
+
+On Ubuntu 24.04, install the [system audio/UI libraries](installation.md#linux-system-libraries)
+before setup. Also install your desktop's text-injection tool from the README prerequisites.
 
 ## 1. Retire the old npm installation
 
@@ -21,8 +24,9 @@ Fresh installations skip this step.
 ## 2. Install the published native release
 
 ```sh
-curl -fL https://github.com/robertelee78/swictation/releases/download/v0.8.0/install.sh -o /tmp/swictation-install.sh
-sh /tmp/swictation-install.sh
+installer=$(mktemp /tmp/swictation-install.XXXXXX) &&
+  curl -fsSL https://github.com/robertelee78/swictation/releases/download/v0.8.0/install.sh -o "$installer" &&
+  sh "$installer"
 export PATH="$HOME/.local/bin:$PATH"
 hash -r
 command -v swictation

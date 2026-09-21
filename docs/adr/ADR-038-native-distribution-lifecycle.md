@@ -3,9 +3,10 @@
 - **Status:** Implemented
 - **Date:** 2026-09-21
 - **Updated:** 2026-09-21
-- **Implementation note:** Native lifecycle and packaging replace npm; local signed
-  macOS installation passes. GitHub release qualification and Linux user acceptance
-  are tracked separately from implementation status.
+- **Implementation note:** Native lifecycle and packaging replace npm in the published
+  0.8.0 release. Both packaged hosts passed CI installation checks; macOS signing and
+  notarization passed. [Release evidence](../validation/native-release-0.8.0.md) tracks
+  publication proof and the remaining Linux/macOS desktop acceptance checks.
 - **Supersedes:** ADR-027, ADR-028 and ADR-032's npm distribution mechanism;
   ADR-037's JavaScript registry and npm lifecycle entry point.
 - **Preserves:** ADR-034/035 configuration and upgrade safety, ADR-036 model integrity,
@@ -76,4 +77,4 @@ or published-download operation. Those require the respective host/release proof
 - Config/model data survive install, update, rollback and default uninstall.
 - Setup, doctor, repair, service commands and model downloads need no npm runtime.
 - Build/release automation contains no product npm packaging or publishing.
-- No release is claimed published by this local migration.
+- Publication claims bind to the successful candidate and public asset receipts.

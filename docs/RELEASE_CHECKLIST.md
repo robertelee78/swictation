@@ -2,7 +2,8 @@
 
 Updated: 2026-09-21. [ADR-038](adr/ADR-038-native-distribution-lifecycle.md) governs
 distribution. This is a checklist of required evidence, not a record of completed
-validation. The first native release and packaged clean-host proofs remain pending.
+validation. The first native release is published; its actual results and remaining
+hardware/desktop checks are recorded in [0.8.0 release evidence](validation/native-release-0.8.0.md).
 
 ## Source and build inputs
 
@@ -85,7 +86,8 @@ Record commands, exit status, artifact digests, host versions and sanitized logs
   candidates. Verify the published installer still binds its own exact tag.
 - [ ] Exercise the documented public bootstrap on both hosts from the published
   assets and repeat the installed lifecycle checks.
-- [ ] Remove the pending-first-release notice only after publication and host proof.
+- [ ] Replace pending-publication notices with release availability and the actual
+  host-proof scope; retain explicit gaps for untested desktop/hardware behavior.
 - [ ] Update release notes, supported-platform limitations and governing ADR status
   to reflect actual evidence, including any remaining gaps.
 

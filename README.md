@@ -21,6 +21,9 @@ Pure Rust daemon with VAD-triggered auto-transcription, sub-second latency, and 
 #### Linux
 - **NVIDIA GPU** with 4GB+ VRAM for 0.6B model, 6GB+ for 1.1B model (or CPU fallback)
 - **Ubuntu 24.04+** (GLIBC 2.39+ required)
+- **System audio and UI libraries:** on Ubuntu 24.04, run
+  `sudo apt install libasound2t64 libwebkit2gtk-4.1-0 libgtk-3-0t64 libayatana-appindicator3-1`.
+  See [Linux system libraries](docs/installation.md#linux-system-libraries).
 - **Text injection tool:**
   - X11: `sudo apt install xdotool`
   - Wayland (GNOME): `sudo apt install ydotool && sudo usermod -aG input $USER` (then logout/login)
@@ -43,10 +46,25 @@ Pure Rust daemon with VAD-triggered auto-transcription, sub-second latency, and 
 
 ### Install and setup
 
-**The native distribution replaces npm starting with 0.8.0. Its first published
-release and clean-host qualification are still pending.** The command below is for
-use once that release provides `install.sh`; current older releases may not have it.
+**[Native releases](https://github.com/robertelee78/swictation/releases/latest)
+replace npm starting with 0.8.0.** Install and update use verified release bundles.
 No Node.js, npm, Rust toolchain, or source checkout is required on an installed host.
+
+For the first native Linux installation, follow the [install and dictation test
+checklist](docs/linux-native-install-test.md). Automated lifecycle checks pass on
+Linux and macOS; microphone, desktop permissions and GPU inference require host testing.
+
+**Coming from npm:** first stop the old services and remove the old package with its
+scripts disabled:
+
+```bash
+swictation stop
+npm uninstall -g --ignore-scripts swictation
+```
+
+Keep your configuration, models, GPU libraries, corrections and metrics. The
+[migration guide](docs/installation.md#migrate-an-existing-npm-installation) covers
+the complete sequence and recovery steps. Then install the native release:
 
 ```bash
 installer=$(mktemp /tmp/swictation-install.XXXXXX) &&
@@ -59,6 +77,7 @@ before activation. It installs `~/.local/bin/swictation` and prints PATH guidanc
 needed. Installation does not configure models or start dictation. Continue with:
 
 ```bash
+export PATH="$HOME/.local/bin:$PATH"
 swictation setup
 swictation doctor
 swictation start --ui
@@ -67,19 +86,6 @@ swictation start --ui
 Setup preserves existing valid configuration and downloads models into the existing
 platform data directory. Model files are pinned to exact upstream revisions, sizes,
 and SHA-256 digests (ADR-036). `swictation doctor --deep` verifies model content.
-
-**Coming from npm:** stop the old services and remove the old package with its scripts
-disabled **before native setup**:
-
-```bash
-swictation stop
-npm uninstall -g --ignore-scripts swictation
-```
-
-Then install the native release using the command above, run `swictation setup`, and
-explicitly start the new services. Preserve your configuration, models, GPU libraries,
-corrections, and metrics. See the [installation and migration guide](docs/installation.md)
-for the complete sequence and recovery steps.
 
 ### Update and rollback
 

@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-21
+
+### Changed
+- Replaced product npm distribution, JavaScript launchers and lifecycle hooks with
+  verified native GitHub release bundles for Linux x86_64 and macOS Apple Silicon.
+- Added a native Rust CLI for install, explicit setup, doctor, update checks, atomic
+  update, retained-release rollback and preservation-first uninstall.
+- Updates switch the CLI, daemon, UI and bundled libraries together while retaining
+  configuration, models, downloaded GPU libraries and learned data.
+- macOS releases are Developer ID signed and notarized. Publication reuses the exact
+  tested candidate and verifies the public asset bytes.
+- README and operator guides now use the native installation and `start --ui` flow.
+
+See the [migration guide](docs/installation.md), [Linux test checklist](docs/linux-native-install-test.md)
+and [release evidence](docs/validation/native-release-0.8.0.md). Real desktop dictation
+and hardware behavior remain host acceptance tests.
+
 ## [0.7.37] - 2026-08-10
 
 ### Fixed
