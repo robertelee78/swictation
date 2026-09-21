@@ -236,7 +236,7 @@ fn install_locked(
         receipt.release.version,
         paths.launcher().display()
     );
-    println!("Run `swictation setup`, then `swictation doctor`. Existing configuration and models were preserved.");
+    println!("Run `swictation setup`, then `swictation start`. Existing configuration and models were preserved.");
     if !std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).any(|p| p == paths.bin)
     {
         println!("Add {} to PATH for this shell.", paths.bin.display());
