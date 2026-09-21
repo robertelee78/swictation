@@ -285,9 +285,10 @@ impl MacOSTextInjector {
         let value = CFBoolean::true_value();
         let options = CFDictionary::from_CFType_pairs(&[(key.as_CFType(), value.as_CFType())]);
 
-        let api_says_trusted = unsafe {
-            AXIsProcessTrustedWithOptions(options.as_concrete_TypeRef() as *const c_void)
-        };
+        let api_says_trusted = Self::check_accessibility_permissions()
+            || unsafe {
+                AXIsProcessTrustedWithOptions(options.as_concrete_TypeRef() as *const c_void)
+            };
 
         if api_says_trusted {
             // API says we're trusted, but let's VALIDATE this actually works

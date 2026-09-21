@@ -858,7 +858,14 @@ async fn daemon_main(
 
         run(
             inject_rx,
-            TextInjector::new,
+            || -> Result<TextInjector> {
+                let injector = TextInjector::new()?;
+                debug!(
+                    "Text injector initialized for: {:?}",
+                    injector.display_server_info().server_type
+                );
+                Ok(injector)
+            },
             TextInjector::inject_text,
             |event| match event {
                 WorkerEvent::Unavailable => {

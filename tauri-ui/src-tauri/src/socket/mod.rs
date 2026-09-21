@@ -14,7 +14,6 @@ pub use metrics::MetricsSocket;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::socket::socket_utils;
 
     #[test]
