@@ -1,5 +1,10 @@
 # ADR-033: Config Path Migration & Dry-Run Detection Fix
 
+> **Distribution amendment, 2026-09-21:** npm installer and launcher references
+> below describe the earlier implementation. [ADR-038](ADR-038-native-distribution-lifecycle.md)
+> now governs native release installation and setup. Runtime/configuration decisions
+> in this record remain in force.
+
 - **Status:** Accepted
 - **Date:** 2026-03-24
 - **Issue:** v0.7.33 regression — model migration moves files but config retains stale paths; dry-run falsely reports success

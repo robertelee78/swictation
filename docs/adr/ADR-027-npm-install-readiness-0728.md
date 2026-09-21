@@ -1,7 +1,12 @@
 # ADR-027: npm Install Readiness for v0.7.28 (First macOS Release)
 
-**Status:** Accepted (Implemented 2026-03-23)
+> **Updated 2026-09-21:** ADR-038 replaces this npm distribution mechanism and
+> JavaScript lifecycle implementation. The original analysis below is historical;
+> use the native install/update/setup/uninstall contract for current operation.
+
+**Status:** Superseded by [ADR-038](ADR-038-native-distribution-lifecycle.md)
 **Date:** 2026-03-23
+**Updated:** 2026-09-21
 **Authors:** Robert (Product Owner), Winston (Architect), Quinn (QA), John (PM), Amelia (Dev), Mary (Analyst)
 **Deciders:** Robert
 **Scope:** npm install flow for `swictation@0.7.28` across Linux x64 and macOS ARM64

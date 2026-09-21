@@ -19,33 +19,13 @@ By default, NVIDIA's kernel module does not preserve GPU memory allocations duri
 
 Configure the NVIDIA kernel module to preserve video memory allocations during hibernation by setting the `NVreg_PreserveVideoMemoryAllocations` parameter.
 
-## Automatic Detection
+## Manual host configuration
 
-Swictation automatically detects if your system needs this configuration during installation:
+The retired npm installer included a laptop/NVIDIA hibernation helper. Native setup
+manages Swictation's user services and artifacts; it does not modify kernel parameters
+or initramfs, and must not be run with `sudo` for this purpose. Evaluate the manual
+host configuration below against your driver and distribution documentation.
 
-**Detection Criteria:**
-1. ✅ System is a laptop (battery detected in `/sys/class/power_supply/`)
-2. ✅ NVIDIA GPU is present (`nvidia-smi` available)
-3. ❌ Hibernation support not configured (`PreserveVideoMemoryAllocations != 1`)
-
-If all criteria are met, you'll see a warning during `npm install` with instructions to configure.
-
-## Manual Configuration
-
-### Option 1: Using Swictation Setup (Recommended)
-
-```bash
-sudo swictation setup
-```
-
-This interactive setup will:
-1. Detect your system configuration
-2. Prompt for NVIDIA hibernation setup
-3. Create the modprobe configuration file
-4. Update initramfs for your distribution
-5. Notify you to reboot
-
-### Option 2: Manual Configuration
 
 1. **Create modprobe configuration:**
 
@@ -89,9 +69,6 @@ After reboot, verify the configuration:
 # Check kernel parameter
 cat /sys/module/nvidia/parameters/PreserveVideoMemoryAllocations
 # Should output: 1
-
-# Run test suite
-node npm-package/tests/test-nvidia-hibernation.js
 ```
 
 ## Testing
@@ -217,10 +194,8 @@ cat /sys/module/nvidia/parameters/PreserveVideoMemoryAllocations
 - [NVIDIA Power Management Guide](https://download.nvidia.com/XFree86/Linux-x86_64/580.95.05/README/powermanagement.html)
 - [Arch Linux NVIDIA Wiki](https://wiki.archlinux.org/title/NVIDIA/Tips_and_tricks#Preserve_video_memory_after_suspend)
 
-## Implementation Files
+## Distribution boundary
 
-- **Detection:** `npm-package/src/utils/system-detect.js`
-- **Configuration:** `npm-package/src/nvidia-hibernation-setup.js`
-- **Postinstall Check:** `npm-package/postinstall.js` (Phase 7)
-- **CLI Integration:** `npm-package/bin/swictation` (setup command)
-- **Tests:** `npm-package/tests/test-nvidia-hibernation.js`
+NVIDIA kernel power management is a host administration task. See
+[native installation](installation.md) for Swictation setup and repair. The old
+JavaScript helper and npm lifecycle hook are retired.

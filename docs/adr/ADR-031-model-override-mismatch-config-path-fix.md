@@ -1,5 +1,10 @@
 # ADR-031: Model Override Mismatch & macOS Config Path Fix
 
+> **Distribution amendment, 2026-09-21:** npm installer and launcher references
+> below describe the earlier implementation. [ADR-038](ADR-038-native-distribution-lifecycle.md)
+> now governs native release installation and setup. Runtime/configuration decisions
+> in this record remain in force.
+
 - **Status:** Accepted
 - **Date:** 2026-03-24
 - **Issue:** [#5](https://github.com/anthropics/swictation/issues/5) — `stt_model_override="1.1b-coreml"` crashes with mutex error; config path mismatch

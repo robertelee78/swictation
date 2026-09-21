@@ -1,5 +1,10 @@
 # PRD: Swictation v0.7.29 Release — macOS Native Completion
 
+> **Historical distribution reference — 2026-09-21:** npm installation, JavaScript
+> lifecycle hooks, and package paths below are superseded by [ADR-038](../adr/ADR-038-native-distribution-lifecycle.md).
+> Preserve this document as design/investigation history; use the
+> [native installation guide](../installation.md) for current operator commands.
+
 **Author:** John (PM) with team input
 **Date:** 2026-03-23
 **Status:** Draft

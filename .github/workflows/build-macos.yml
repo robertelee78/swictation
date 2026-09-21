@@ -1,504 +1,171 @@
-name: CI - macOS Build and Test
+name: Build standalone macOS release
 
 on:
-  push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
-  workflow_dispatch:  # Allow manual triggering
-  workflow_call:  # Allow being called by other workflows (e.g., release.yml)
+  workflow_call:
+    inputs:
+      official_release:
+        type: boolean
+        default: false
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  TARGET: aarch64-apple-darwin
+  APPLE_TEAM_ID: '3T2D2YNTVW'
 
 jobs:
-  test-macos:
-    name: Test Suite (macOS)
-    runs-on: macos-14  # M1 runner
-
-    steps:
-    - uses: actions/checkout@v4
-      with:
-        submodules: recursive
-
-    - name: Install Rust
-      uses: actions-rust-lang/setup-rust-toolchain@v1
-      with:
-        toolchain: stable
-        target: aarch64-apple-darwin
-        components: clippy, rustfmt
-
-    - name: Cache Rust dependencies
-      uses: Swatinem/rust-cache@v2
-      with:
-        workspaces: |
-          rust-crates -> target
-          external/midstream -> target
-
-    - name: Check formatting
-      working-directory: rust-crates
-      run: cargo fmt --all -- --check
-
-    - name: Run clippy
-      working-directory: rust-crates
-      run: cargo clippy --all-targets --all-features --target aarch64-apple-darwin -- -D warnings
-
-    - name: Build all crates
-      working-directory: rust-crates
-      run: cargo build --all --verbose --target aarch64-apple-darwin
-
-    - name: Run tests
-      working-directory: rust-crates
-      run: cargo test --all --verbose --target aarch64-apple-darwin
-
-  build-macos:
-    name: Build macOS ARM64
-    runs-on: macos-14  # M1 runner
-    needs: test-macos
-
-    steps:
-    - uses: actions/checkout@v4
-      with:
-        submodules: recursive
-
-    - name: Install Rust
-      uses: actions-rust-lang/setup-rust-toolchain@v1
-      with:
-        toolchain: stable
-        target: aarch64-apple-darwin
-
-    - name: Cache Rust dependencies
-      uses: Swatinem/rust-cache@v2
-      with:
-        workspaces: |
-          rust-crates -> target
-
-    - name: Cache ONNX Runtime libraries
-      id: onnx-cache
-      uses: actions/cache@v4
-      with:
-        path: ~/.cache/onnxruntime
-        key: onnxruntime-macos-arm64-coreml-1.22.0
-        restore-keys: |
-          onnxruntime-macos-arm64-coreml-
-
-    - name: Download ONNX Runtime (on cache miss)
-      if: steps.onnx-cache.outputs.cache-hit != 'true'
-      run: |
-        mkdir -p ~/.cache/onnxruntime
-        cd ~/.cache/onnxruntime
-
-        # Download official ONNX Runtime macOS ARM64 release (1.22.0 with CoreML)
-        echo "Downloading ONNX Runtime 1.22.0 macOS ARM64 release..."
-        wget -q https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-osx-arm64-1.22.0.tgz
-
-        # Extract libraries
-        tar -xzf onnxruntime-osx-arm64-1.22.0.tgz
-
-        echo "✓ ONNX Runtime libraries downloaded and extracted"
-        ls -lh onnxruntime-osx-arm64-1.22.0/lib/
-
-    - name: Copy ONNX Runtime to platform package
-      run: |
-        mkdir -p npm-package/packages/darwin-arm64/lib
-        cp ~/.cache/onnxruntime/onnxruntime-osx-arm64-1.22.0/lib/*.dylib npm-package/packages/darwin-arm64/lib/
-
-        echo "✓ ONNX Runtime libraries copied to platform package"
-        ls -lh npm-package/packages/darwin-arm64/lib/
-
-    - name: Sign ONNX Runtime library with Developer ID
-      env:
-        APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
-        APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-        APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-      run: |
-        if [ -z "$APPLE_CERTIFICATE_BASE64" ]; then
-          echo "⚠️  APPLE_CERTIFICATE_BASE64 not set, skipping library signing"
-          exit 0
-        fi
-
-        # Create temporary keychain for library signing
-        KEYCHAIN_PATH=$RUNNER_TEMP/lib-signing.keychain-db
-        KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
-
-        security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-        security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
-        security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-
-        # Import certificate
-        echo "$APPLE_CERTIFICATE_BASE64" | base64 --decode > $RUNNER_TEMP/certificate.p12
-        security import $RUNNER_TEMP/certificate.p12 -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
-        security list-keychain -d user -s $KEYCHAIN_PATH
-
-        # Allow codesign to access the keychain
-        security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-
-        echo "✓ Developer certificate imported for library signing"
-
-        # Sign all dylib files in the platform package
-        for dylib in npm-package/packages/darwin-arm64/lib/*.dylib; do
-          if [ -f "$dylib" ]; then
-            echo "Signing $dylib with Developer ID..."
-            codesign -s "$APPLE_SIGNING_IDENTITY" -f "$dylib"
-            echo "✓ Signed: $(basename $dylib)"
-            codesign -dv "$dylib" 2>&1 | head -5
-          fi
-        done
-
-        echo "✓ All ONNX Runtime libraries signed"
-
-    - name: Build daemon (release, with native CoreML)
-      working-directory: rust-crates
-      run: |
-        cargo build --release --bin swictation-daemon --features coreml-native --target aarch64-apple-darwin
-        strip target/aarch64-apple-darwin/release/swictation-daemon
-
-    - name: Check binary
-      run: |
-        echo "Daemon binary info:"
-        file rust-crates/target/aarch64-apple-darwin/release/swictation-daemon
-        ls -lh rust-crates/target/aarch64-apple-darwin/release/swictation-daemon
-        du -sh rust-crates/target/aarch64-apple-darwin/release/swictation-daemon
-
-    - name: Verify CoreML support
-      run: |
-        echo "Checking for CoreML symbols in binary:"
-        nm rust-crates/target/aarch64-apple-darwin/release/swictation-daemon | grep -i coreml | head -5 || echo "CoreML symbols not found (may be dynamically loaded)"
-
-    - name: Import Apple Developer certificate and sign daemon
-      env:
-        APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
-        APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-        APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-      run: |
-        if [ -z "$APPLE_CERTIFICATE_BASE64" ]; then
-          echo "⚠️  APPLE_CERTIFICATE_BASE64 not set, skipping code signing"
-          exit 0
-        fi
-
-        # Create temporary keychain
-        KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
-        KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
-
-        security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-        security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
-        security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-
-        # Import certificate
-        echo "$APPLE_CERTIFICATE_BASE64" | base64 --decode > $RUNNER_TEMP/certificate.p12
-        security import $RUNNER_TEMP/certificate.p12 -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
-        security list-keychain -d user -s $KEYCHAIN_PATH
-
-        # Allow codesign to access the keychain
-        security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-
-        echo "✓ Developer certificate imported"
-        security find-identity -v -p codesigning $KEYCHAIN_PATH
-
-        # Sign the daemon binary with entitlements
-        DAEMON_BIN="rust-crates/target/aarch64-apple-darwin/release/swictation-daemon"
-        ENTITLEMENTS="rust-crates/swictation-daemon/entitlements/daemon.entitlements"
-
-        echo "Signing daemon with Developer ID and entitlements..."
-        echo "Entitlements file: $ENTITLEMENTS"
-        cat "$ENTITLEMENTS"
-
-        codesign -s "$APPLE_SIGNING_IDENTITY" -f --options runtime --entitlements "$ENTITLEMENTS" "$DAEMON_BIN"
-
-        echo "✓ Daemon signed with entitlements"
-        codesign -dv --entitlements - "$DAEMON_BIN" 2>&1 | head -20
-
-    - name: Upload daemon artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: swictation-daemon-macos-arm64
-        path: rust-crates/target/aarch64-apple-darwin/release/swictation-daemon
-        retention-days: 7
-
-    - name: Upload signed ONNX Runtime libraries
-      uses: actions/upload-artifact@v4
-      with:
-        name: onnxruntime-macos-arm64-signed
-        path: npm-package/packages/darwin-arm64/lib/*.dylib
-        retention-days: 7
-
-  build-tauri-macos:
-    name: Build Tauri UI (macOS)
+  build:
+    name: Build macOS payload without signing credentials
     runs-on: macos-14
-    needs: test-macos
-
+    outputs:
+      version: ${{ steps.package.outputs.version }}
+      source_sha: ${{ steps.package.outputs.source_sha }}
+      archive_sha256: ${{ steps.package.outputs.archive_sha256 }}
     steps:
-    - uses: actions/checkout@v4
-      with:
-        submodules: recursive
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          target: aarch64-apple-darwin
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            rust-crates -> target
+            tauri-ui/src-tauri -> ${{ runner.temp }}/ui-target
+      - name: Test native CLI and Rust workspace
+        working-directory: rust-crates
+        run: cargo test --locked --workspace --target "$TARGET"
+      - name: Pin the signing team in official CLI builds
+        if: inputs.official_release
+        run: |
+          [[ "$APPLE_TEAM_ID" =~ ^[A-Z0-9]{10}$ ]] || { echo 'Official releases require APPLE_TEAM_ID'; exit 1; }
+          printf 'SWICTATION_APPLE_TEAM_ID=%s\n' "$APPLE_TEAM_ID" >> "$GITHUB_ENV"
+      - name: Build native CLI and daemon with CoreML
+        working-directory: rust-crates
+        run: |
+          cargo build --locked --release --bin swictation --target "$TARGET"
+          cargo build --locked --release --bin swictation-daemon --features coreml-native --target "$TARGET"
+      - name: Set up Node for Tauri frontend build only
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: tauri-ui/package-lock.json
+      - name: Build desktop app bundle in a clean target directory
+        working-directory: tauri-ui
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/ui-target
+        run: |
+          npm ci --ignore-scripts
+          npm run tauri -- build --target "$TARGET" --bundles app -- --locked
+      - name: Fetch ONNX Runtime with CoreML support
+        run: bash scripts/distribution/download-onnx.sh "$TARGET" "$RUNNER_TEMP/onnxruntime"
+      - name: Stage standalone payload
+        run: |
+          python3 scripts/distribution/package.py stage --target "$TARGET" \
+            --source-sha "$(git rev-parse HEAD)" \
+            --cli "rust-crates/target/$TARGET/release/swictation" \
+            --daemon "rust-crates/target/$TARGET/release/swictation-daemon" \
+            --ui "$RUNNER_TEMP/ui-target/$TARGET/release/swictation-ui" \
+            --app "$RUNNER_TEMP/ui-target/$TARGET/release/bundle/macos/Swictation.app" \
+            --lib-dir "$RUNNER_TEMP/onnxruntime/onnxruntime-osx-arm64-1.22.0/lib" \
+            --stage-dir "$RUNNER_TEMP/swictation-payload"
+      - name: Archive unsigned payload and record exact identity
+        id: package
+        run: |
+          python3 scripts/distribution/package.py archive \
+            --stage-dir "$RUNNER_TEMP/swictation-payload" --output-dir "$RUNNER_TEMP/distribution"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          temporary = Path(os.environ['RUNNER_TEMP'])
+          release = json.loads((temporary / 'swictation-payload/release.json').read_text())
+          archive = temporary / 'distribution' / f"swictation-{release['version']}-{release['target']}.tar.gz"
+          digest = Path(str(archive) + '.sha256').read_text().split()[0]
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f"version={release['version']}\nsource_sha={release['source_sha']}\narchive_sha256={digest}\n")
+          PY
+      - name: Smoke-test unsigned CI package in an isolated home
+        if: ${{ !inputs.official_release }}
+        run: |
+          archive=("$RUNNER_TEMP"/distribution/swictation-*.tar.gz)
+          test "${#archive[@]}" = 1
+          python3 scripts/distribution/smoke-install.py --archive "${archive[0]}" --allow-unsigned-local
+      - name: Upload unsigned payload for the protected signing job
+        if: inputs.official_release
+        uses: actions/upload-artifact@v4
+        with:
+          name: swictation-macos-unsigned-payload
+          path: ${{ runner.temp }}/distribution/*
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload unsigned CI archive and checksum
+        if: ${{ !inputs.official_release }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: swictation-aarch64-apple-darwin
+          path: ${{ runner.temp }}/distribution/*
+          if-no-files-found: error
+          retention-days: 7
 
-    - name: Install Rust
-      uses: actions-rust-lang/setup-rust-toolchain@v1
-      with:
-        toolchain: stable
-        target: aarch64-apple-darwin
-
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '18'
-        cache: 'npm'
-        cache-dependency-path: tauri-ui/package-lock.json
-
-    - name: Install frontend dependencies
-      working-directory: tauri-ui
-      run: npm ci --ignore-scripts
-
-    - name: Build Tauri UI
-      working-directory: tauri-ui
-      run: npm run tauri build
-
-    - name: Check build output
-      run: |
-        echo "Tauri build artifacts:"
-        ls -lh tauri-ui/src-tauri/target/release/bundle/macos/ || echo "macOS bundle not found"
-        ls -lh tauri-ui/src-tauri/target/release/bundle/dmg/ || echo "DMG not found"
-
-    - name: Import Apple Developer certificate and sign UI
-      env:
-        APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
-        APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-        APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-      run: |
-        if [ -z "$APPLE_CERTIFICATE_BASE64" ]; then
-          echo "⚠️  APPLE_CERTIFICATE_BASE64 not set, skipping code signing"
-          exit 0
-        fi
-
-        # Create temporary keychain
-        KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
-        KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
-
-        security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-        security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
-        security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-
-        # Import certificate
-        echo "$APPLE_CERTIFICATE_BASE64" | base64 --decode > $RUNNER_TEMP/certificate.p12
-        security import $RUNNER_TEMP/certificate.p12 -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
-        security list-keychain -d user -s $KEYCHAIN_PATH
-
-        # Allow codesign to access the keychain
-        security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-
-        echo "✓ Developer certificate imported"
-        security find-identity -v -p codesigning $KEYCHAIN_PATH
-
-        # Sign the UI binary with entitlements
-        UI_BIN="tauri-ui/src-tauri/target/release/swictation-ui"
-        ENTITLEMENTS="tauri-ui/src-tauri/entitlements/ui.entitlements"
-
-        echo "Signing UI with Developer ID and entitlements..."
-        echo "Entitlements file: $ENTITLEMENTS"
-        cat "$ENTITLEMENTS"
-
-        codesign -s "$APPLE_SIGNING_IDENTITY" -f --options runtime --entitlements "$ENTITLEMENTS" "$UI_BIN"
-
-        echo "✓ UI signed with entitlements"
-        codesign -dv --entitlements - "$UI_BIN" 2>&1 | head -20
-
-    - name: Upload UI binary artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: swictation-ui-macos-arm64
-        path: tauri-ui/src-tauri/target/release/swictation-ui
-        retention-days: 7
-
-    - name: Upload Tauri bundle artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: swictation-ui-bundle-macos-arm64
-        path: |
-          tauri-ui/src-tauri/target/release/bundle/macos/**/*.app
-          tauri-ui/src-tauri/target/release/bundle/dmg/**/*.dmg
-        retention-days: 7
-      continue-on-error: true  # Don't fail if bundle format not found
-
-  integration-test-macos:
-    name: Integration Tests (macOS)
+  sign:
+    name: Sign and notarize the exact macOS release payload
+    needs: build
+    if: inputs.official_release
     runs-on: macos-14
-    needs: build-macos
-
+    environment: apple-release
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+      SOURCE_SHA: ${{ needs.build.outputs.source_sha }}
+      UNSIGNED_SHA256: ${{ needs.build.outputs.archive_sha256 }}
     steps:
-    - uses: actions/checkout@v4
-      with:
-        submodules: recursive
-
-    - name: Download daemon artifact
-      uses: actions/download-artifact@v4
-      with:
-        name: swictation-daemon-macos-arm64
-        path: ./test-bin
-
-    - name: Make daemon executable
-      run: chmod +x ./test-bin/swictation-daemon
-
-    - name: Test daemon launch
-      run: |
-        echo "Testing daemon launch:"
-        ./test-bin/swictation-daemon --version || echo "Version check failed (expected without models)"
-
-    - name: Check CoreML availability
-      run: |
-        echo "System info:"
-        system_profiler SPHardwareDataType | grep "Chip"
-        system_profiler SPSoftwareDataType | grep "System Version"
-
-    - name: Test unified memory detection
-      run: |
-        echo "Testing memory detection:"
-        sysinfo=$(system_profiler SPHardwareDataType)
-        echo "$sysinfo" | grep "Memory"
-
-  package-macos:
-    name: Package for npm
-    runs-on: macos-14
-    needs: [build-macos, build-tauri-macos]
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '18'
-
-    - name: Download daemon artifact
-      uses: actions/download-artifact@v4
-      with:
-        name: swictation-daemon-macos-arm64
-        path: ./artifacts/daemon
-
-    - name: Download UI artifact
-      uses: actions/download-artifact@v4
-      with:
-        name: swictation-ui-macos-arm64
-        path: ./artifacts/ui
-
-    - name: Download signed ONNX Runtime libraries
-      uses: actions/download-artifact@v4
-      with:
-        name: onnxruntime-macos-arm64-signed
-        path: ./artifacts/onnxruntime
-
-    - name: Install npm package dependencies
-      working-directory: npm-package
-      run: npm ci --ignore-scripts
-
-    - name: Copy binaries to platform package
-      run: |
-        # Copy daemon binary
-        mkdir -p npm-package/packages/darwin-arm64/bin
-        cp ./artifacts/daemon/swictation-daemon npm-package/packages/darwin-arm64/bin/
-        chmod +x npm-package/packages/darwin-arm64/bin/swictation-daemon
-
-        echo "Daemon binary copied:"
-        ls -lh npm-package/packages/darwin-arm64/bin/swictation-daemon
-        file npm-package/packages/darwin-arm64/bin/swictation-daemon
-
-        # Copy UI binary
-        if [ -f ./artifacts/ui/swictation-ui ]; then
-          cp ./artifacts/ui/swictation-ui npm-package/packages/darwin-arm64/bin/
-          chmod +x npm-package/packages/darwin-arm64/bin/swictation-ui
-          echo "UI binary copied:"
-          ls -lh npm-package/packages/darwin-arm64/bin/swictation-ui
-          file npm-package/packages/darwin-arm64/bin/swictation-ui
-        else
-          echo "ERROR: UI binary not found in artifacts!"
-          ls -la ./artifacts/ui/ || echo "UI artifacts directory not found"
-          exit 1
-        fi
-
-        # Copy signed ONNX Runtime libraries
-        mkdir -p npm-package/packages/darwin-arm64/lib
-        if [ -d ./artifacts/onnxruntime ]; then
-          cp ./artifacts/onnxruntime/*.dylib npm-package/packages/darwin-arm64/lib/ 2>/dev/null || true
-          echo "ONNX Runtime libraries copied:"
-          ls -lh npm-package/packages/darwin-arm64/lib/ || echo "No libraries found"
-
-          # Verify signatures
-          for dylib in npm-package/packages/darwin-arm64/lib/*.dylib; do
-            if [ -f "$dylib" ]; then
-              echo "Signature for $(basename $dylib):"
-              codesign -dv "$dylib" 2>&1 | head -3
-            fi
-          done
-        else
-          echo "⚠️  ONNX Runtime artifacts not found, will be downloaded during postinstall"
-        fi
-
-    - name: Verify binaries
-      run: |
-        echo "Platform package contents:"
-        ls -lR npm-package/packages/darwin-arm64/bin/
-
-        echo "Binary verification:"
-        file npm-package/packages/darwin-arm64/bin/* || echo "No binaries found"
-
-        echo "Verify Mach-O arm64 architecture:"
-        lipo -info npm-package/packages/darwin-arm64/bin/swictation-daemon || echo "lipo check failed"
-
-    - name: Sync versions
-      working-directory: npm-package
-      run: npm run version:sync
-
-    - name: Verify versions
-      working-directory: npm-package
-      run: npm run version:verify
-
-    - name: Create package tarball
-      working-directory: npm-package/packages/darwin-arm64
-      run: |
-        npm pack
-        ls -lh *.tgz
-
-    - name: Upload package artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: npm-package-darwin-arm64
-        path: npm-package/packages/darwin-arm64/*.tgz
-        retention-days: 7
-
-  performance-benchmark-macos:
-    name: Performance Benchmarks (macOS)
-    runs-on: macos-14
-    needs: build-macos
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-
-    steps:
-    - uses: actions/checkout@v4
-      with:
-        submodules: recursive
-
-    - name: Install Rust
-      uses: actions-rust-lang/setup-rust-toolchain@v1
-      with:
-        toolchain: stable
-        target: aarch64-apple-darwin
-
-    - name: Cache Rust dependencies
-      uses: Swatinem/rust-cache@v2
-      with:
-        workspaces: |
-          rust-crates -> target
-
-    - name: Run benchmarks
-      working-directory: rust-crates
-      run: cargo bench --target aarch64-apple-darwin || echo "Benchmarks not configured yet"
-      continue-on-error: true
-
-    - name: Upload benchmark results
-      uses: actions/upload-artifact@v4
-      with:
-        name: benchmark-results-macos
-        path: rust-crates/target/criterion
-        retention-days: 30
-      continue-on-error: true
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: swictation-macos-unsigned-payload
+          path: ${{ runner.temp }}/unsigned-distribution
+      - name: Verify and unpack the exact source-bound payload
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          archive="$RUNNER_TEMP/unsigned-distribution/swictation-$VERSION-$TARGET.tar.gz"
+          test "$(shasum -a 256 "$archive" | awk '{print $1}')" = "$UNSIGNED_SHA256"
+          python3 scripts/distribution/package.py verify --archive "$archive" \
+            --version "$VERSION" --target "$TARGET" --source-sha "$SOURCE_SHA"
+          mkdir "$RUNNER_TEMP/swictation-payload"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/swictation-payload"
+      - name: Sign, notarize, and verify official release
+        env:
+          APPLE_DEVELOPER_ID_APPLICATION: ${{ vars.APPLE_DEVELOPER_ID_APPLICATION }}
+          APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64 }}
+          APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD }}
+          APPLE_NOTARY_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_KEY_P8_BASE64 }}
+          APPLE_NOTARY_KEY_ID: ${{ vars.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ vars.APPLE_NOTARY_ISSUER_ID }}
+        run: bash scripts/distribution/sign-macos.sh "$RUNNER_TEMP/swictation-payload"
+      - name: Package signed release
+        run: |
+          python3 scripts/distribution/package.py archive \
+            --stage-dir "$RUNNER_TEMP/swictation-payload" --output-dir "$RUNNER_TEMP/distribution"
+      - name: Smoke-test the signed package in an isolated home
+        run: |
+          python3 scripts/distribution/smoke-install.py \
+            --archive "$RUNNER_TEMP/distribution/swictation-$VERSION-$TARGET.tar.gz"
+      - name: Upload signed archive and checksum
+        uses: actions/upload-artifact@v4
+        with:
+          name: swictation-aarch64-apple-darwin
+          path: ${{ runner.temp }}/distribution/*
+          if-no-files-found: error
+          retention-days: 7

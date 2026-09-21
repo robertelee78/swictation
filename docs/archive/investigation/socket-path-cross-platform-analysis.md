@@ -1,5 +1,10 @@
 # Socket Path Cross-Platform Analysis
 
+> **Historical distribution reference — 2026-09-21:** npm installation, JavaScript
+> lifecycle hooks, and package paths below are superseded by [ADR-038](../../adr/ADR-038-native-distribution-lifecycle.md).
+> Preserve this document as design/investigation history; use the
+> [native installation guide](../../installation.md) for current operator commands.
+
 > **Note:** Socket paths in this document reflect the old `/tmp` layout where mentioned as bugs/issues. Current paths are platform-specific — see `swictation-paths` crate. macOS: `~/Library/Application Support/swictation/swictation.sock`, Linux: `$XDG_RUNTIME_DIR/swictation.sock` (fallback: `~/.local/share/swictation/swictation.sock`).
 
 **Investigation Date:** 2025-11-28

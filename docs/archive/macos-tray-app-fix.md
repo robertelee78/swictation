@@ -1,5 +1,10 @@
 # macOS Tray App Window Close Behavior - Implementation Summary
 
+> **Historical distribution reference — 2026-09-21:** npm installation, JavaScript
+> lifecycle hooks, and package paths below are superseded by [ADR-038](../adr/ADR-038-native-distribution-lifecycle.md).
+> Preserve this document as design/investigation history; use the
+> [native installation guide](../installation.md) for current operator commands.
+
 ## Problem Statement
 When users close the Swictation window on macOS, the app exits completely. With launchd KeepAlive configuration, this causes the window to immediately reopen, making it impossible for users to close the window.
 

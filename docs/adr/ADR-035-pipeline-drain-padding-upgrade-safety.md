@@ -2,8 +2,22 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-08
+- **Updated:** 2026-09-21
 - **Issue:** Phase 2 of the six-reviewer audit (see ADR-034): latency/hallucination bug in STT chunking, lost final utterance on stop, config/GPU-lib destruction on upgrade, silent STT death
 - **Release:** v0.7.36 (planned)
+
+
+## Amendment — 2026-09-21: native distribution
+
+The true-length decoding, stop-drain, panic/IPC hardening and preservation requirements
+remain Accepted. ADR-038 moves executable upgrades into verified native release-bundle
+transitions. Update does not run setup, overwrite valid TOML, delete downloaded GPU
+libraries, or reset user model overrides. Explicit setup repairs host integration.
+JavaScript functions, receipt formats and npm test commands below record the prior
+implementation and its measured history; native lifecycle evidence is recorded
+separately and does not replace the daemon's runtime proof obligations.
+
+The amendment governs any conflicting mechanism reference in the original record below.
 
 ## Mantra
 

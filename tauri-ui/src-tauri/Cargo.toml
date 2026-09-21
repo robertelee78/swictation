@@ -63,3 +63,8 @@ codegen-units = 1
 lto = true
 opt-level = "z"
 strip = true
+
+# Stripped proc-macro dylibs can have malformed LINKEDIT data on macOS 27.
+# Keep compile-time helpers intact while still stripping the shipped UI binary.
+[profile.release.build-override]
+strip = false

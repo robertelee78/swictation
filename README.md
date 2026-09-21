@@ -9,7 +9,6 @@ Pure Rust daemon with VAD-triggered auto-transcription, sub-second latency, and 
 - **Linux:** X11/Wayland with NVIDIA CUDA acceleration
 - **macOS:** Apple Silicon (M1+) with CoreML/Metal acceleration
 
-[![Status](https://img.shields.io/badge/status-Production%20Ready-green)](https://github.com/robertelee78/swictation)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 [![Language](https://img.shields.io/badge/language-Rust-orange)](https://www.rust-lang.org/)
 
@@ -22,7 +21,6 @@ Pure Rust daemon with VAD-triggered auto-transcription, sub-second latency, and 
 #### Linux
 - **NVIDIA GPU** with 4GB+ VRAM for 0.6B model, 6GB+ for 1.1B model (or CPU fallback)
 - **Ubuntu 24.04+** (GLIBC 2.39+ required)
-- **Node.js 18+**
 - **Text injection tool:**
   - X11: `sudo apt install xdotool`
   - Wayland (GNOME): `sudo apt install ydotool && sudo usermod -aG input $USER` (then logout/login)
@@ -36,51 +34,64 @@ Pure Rust daemon with VAD-triggered auto-transcription, sub-second latency, and 
 
 #### macOS
 - **Apple Silicon** (M1 or later) - Intel Macs not supported
-- **macOS 14 Sonoma** or **macOS 15 Sequoia** (required for CoreML)
+- **macOS 14 or newer** (Apple Silicon)
 - **16GB+ unified memory** — this is a hard requirement, not a recommendation.
-  Postinstall aborts on Macs reporting less (the CoreML models need the headroom).
-- **Node.js 18+**
+  CoreML setup requires this memory headroom.
 - **Accessibility permissions** (granted during setup)
 
 📖 **[Full macOS Setup Guide](docs/macos-setup.md)** - Step-by-step install, permissions, and verification
 
-### Install
+### Install and setup
+
+**The native distribution replaces npm starting with 0.8.0. Its first published
+release and clean-host qualification are still pending.** The command below is for
+use once that release provides `install.sh`; current older releases may not have it.
+No Node.js, npm, Rust toolchain, or source checkout is required on an installed host.
 
 ```bash
-# Linux (x64)
-npm install -g swictation --foreground-scripts
-
-# macOS (Apple Silicon) — uses platform-specific optional package
-npm install -g swictation --foreground-scripts
-
-# Postinstall automatically (with retry and progress reporting):
-# - Detects platform and GPU, downloads optimized libraries (~1.5GB)
-# - Recommends and test-loads AI model (30-60s)
-# - Installs services (systemd on Linux, launchd on macOS)
-# - Shows platform-specific setup instructions
-
-# Start
-swictation start
+installer=$(mktemp /tmp/swictation-install.XXXXXX) &&
+  curl -fsSL https://github.com/robertelee78/swictation/releases/latest/download/install.sh -o "$installer" &&
+  sh "$installer"
 ```
 
-If postinstall was interrupted or you skipped it, the same work is reachable manually:
+The release-generated installer pins its own version and verifies the native archive
+before activation. It installs `~/.local/bin/swictation` and prints PATH guidance if
+needed. Installation does not configure models or start dictation. Continue with:
 
 ```bash
-swictation doctor            # what, if anything, is missing or broken
-swictation setup --repair    # run only the steps that are not healthy
-swictation start
+swictation setup
+swictation doctor
+swictation start --ui
 ```
 
-`swictation setup` with no flags runs the whole install (config, GPU libraries, models,
-services) and is still fine to use; `--repair` is the faster path once something is
-merely broken rather than absent. See [Troubleshooting](#troubleshooting).
+Setup preserves existing valid configuration and downloads models into the existing
+platform data directory. Model files are pinned to exact upstream revisions, sizes,
+and SHA-256 digests (ADR-036). `swictation doctor --deep` verifies model content.
 
-**Installs are tamper-evident.** Every model file is pinned to an immutable upstream
-revision and verified against a SHA-256 recorded in `models.manifest.json` before it
-takes its final name, so a truncated transfer, a proxy-injected error page, or an
-upstream force-push fails the download instead of surfacing later as an opaque daemon
-crash. A file that fails verification is never left in place: it is re-fetched on the
-next run, and `swictation doctor --deep` re-checks the whole tree on demand (ADR-036).
+**Coming from npm:** stop the old services and remove the old package with its scripts
+disabled **before native setup**:
+
+```bash
+swictation stop
+npm uninstall -g --ignore-scripts swictation
+```
+
+Then install the native release using the command above, run `swictation setup`, and
+explicitly start the new services. Preserve your configuration, models, GPU libraries,
+corrections, and metrics. See the [installation and migration guide](docs/installation.md)
+for the complete sequence and recovery steps.
+
+### Update and rollback
+
+```bash
+swictation update --check
+swictation update
+swictation update --rollback
+```
+
+Updates replace the verified release bundle and retain the previous release. They do
+not run setup or change user configuration, models, or learned data. Rollback changes
+release files only. [Lifecycle details](docs/installation.md#update-and-rollback).
 
 ### First Use
 
@@ -175,15 +186,17 @@ Configure phonetic sensitivity in Settings UI (0.0 = exact only, 1.0 = very fuzz
 ### CLI
 
 ```bash
-swictation doctor            # Check every install step, print a repair command per failure
+swictation doctor            # Inspect installed artifacts and setup health
 swictation download-models   # Download AI models (alias: download-model)
-swictation setup             # Run the install steps (config, models, services)
+swictation setup             # Configure models, libraries, and user services
 swictation start [--ui]      # Start the daemon (and optionally the tray UI)
 swictation stop              # Stop the daemon
 swictation status            # Service, socket, and platform status
 swictation toggle            # Toggle recording on/off (what the hotkey calls)
 swictation help              # Full usage
-swictation --version         # Version info for every component
+swictation --version         # Native CLI version
+swictation update --check    # Check for a native release
+swictation uninstall --yes   # Remove owned installation files; preserve user data
 ```
 
 `doctor` and `setup` are the install-repair pair and are covered in
@@ -191,7 +204,7 @@ swictation --version         # Version info for every component
 daemon is running right now — and needs a working install to be meaningful.
 
 **`download-models`** fetches the Silero VAD model plus one or more STT models into the
-platform data directory. With no arguments it downloads the platform default set. Pass
+platform data directory. With no arguments it uses native setup's selected model. Pass
 `--model=` (or a bare positional, e.g. `swictation download-model 1.1b-gpu`) to pick one,
 and `--force` to re-download over existing files.
 
@@ -199,10 +212,10 @@ and `--force` to re-download over existing files.
 |----------|-------------------|------|
 | Linux | `0.6b` (aliases `0.6b-gpu`, `0.6b-cpu`, `cpu-only`) | 2.55 GB |
 | Linux | `1.1b` (alias `1.1b-gpu`) | 6.96 GB |
-| Linux | `both` — default: VAD + 0.6B + 1.1B | ~9.5 GB |
+| Linux | `both` — VAD + 0.6B + 1.1B | ~9.5 GB |
 | macOS | `1.1b-coreml` (alias `coreml-native`) | 1.9 GB |
 | macOS | `0.6b-coreml` | 2.67 GB |
-| macOS | `both` — default: VAD + CoreML 1.1B | 1.9 GB |
+| macOS | Default selected model: CoreML 1.1B + VAD | 1.9 GB |
 
 CoreML bundles are macOS-only and are rejected on Linux. Silero VAD (629 KB) is always
 included.
@@ -256,46 +269,31 @@ file is valid and unset keys fall back to the values above (ADR-034).
 
 ## Troubleshooting
 
-### Start here: `swictation doctor`
+### Inspect and repair
 
-Whatever the symptom, run this first. `doctor` evaluates every install step against what
-is actually on disk and prints one line per step, with a repair command under each
-failure. It executes no install work and writes nothing, so it is safe to run on an
-install that is mid-failure — and it works even when the binaries themselves are missing.
-
-```bash
-swictation doctor          # health table for every install step
-swictation doctor --deep   # ...and verify file contents by hash, not just size
-swictation doctor --json   # machine-readable report (schemaVersion 1)
-```
-
-Exit codes: **0** nothing unhealthy, **1** at least one step unhealthy or blocked,
-**2** doctor itself failed to run. The last one is deliberately distinct so a crashed
-diagnostic is never mistaken for a broken install.
-
-A normal run compares sizes. `--deep` streams a SHA-256 of every model file, GPU library
-and platform binary and compares it against what was recorded when they were installed —
-minutes of I/O on a multi-gigabyte model tree, which is why it is opt-in rather than the
-default. Use it when a file is the right size but the daemon still misbehaves.
-
-### Then fix it: `swictation setup --repair`
-
-`--repair` re-runs only the steps whose check is currently failing, so a mangled service
-unit no longer costs you a 9 GB model re-download — and reinstalling the whole package
-stops being the first thing to reach for. Every step derives its state from disk and is
-idempotent, so running one twice is harmless.
+`doctor` checks artifacts on disk; a previous successful setup receipt does not make
+missing files healthy. It does not install anything. The native CLI itself must still
+be present to run diagnostics.
 
 ```bash
-swictation setup --repair     # run only the steps that are not healthy
-swictation setup --list       # list the install steps, their ids and what gates them
-swictation setup --<id>       # run exactly one step, e.g. --services
+swictation doctor
+swictation doctor --deep      # Verify model content by SHA-256
+swictation doctor --json      # Machine-readable report
+swictation setup --repair     # Repair unhealthy setup components
+swictation setup --list       # List the supported setup steps
+swictation setup --services   # Regenerate native service integration
+swictation setup --models    # Repair model files
+swictation setup --gpu-libs  # Configure the Linux GPU libraries
+swictation setup --config    # Create missing config; preserve existing valid TOML
 ```
 
-Step ids: `platform`, `binaries`, `config-reset`, `gpu-libs`, `models`, `config-heal`,
-`services`, `integration`, `verify`. (`cleanup` exists but runs only during npm install;
-naming it here is rejected rather than silently ignored, as is any unrecognized flag.)
-`--repair`, `--list` and `--<id>` are non-interactive — they never stop to ask about
-auto-start — so they are safe to script.
+Treat a nonzero result as unresolved work and read its diagnostic. Use `setup --list`
+and command help for the current step names. The native `--config` step preserves valid TOML; legacy `config-reset` and
+`config-heal` names are compatibility aliases, not permission to reset preferences.
+
+If release files are missing or corrupt, use the verified native installer described
+in the [installation guide](docs/installation.md). A repair of user services is separate
+from replacing the release bundle.
 
 ### Where things live
 
@@ -303,15 +301,14 @@ auto-start — so they are safe to script.
 |---|---|---|
 | Config | `~/.config/swictation/` | `~/Library/Application Support/swictation/` |
 | Data + models | `~/.local/share/swictation/` | `~/Library/Application Support/swictation/` |
-| Install log | `~/.local/share/swictation/install.log` | `~/Library/Logs/swictation/install.log` |
+| Active release | `~/.local/share/swictation/install/current/` | `~/Library/Application Support/swictation/install/current/` |
 | Daemon logs | `journalctl --user -u swictation-daemon` | `~/Library/Logs/swictation/daemon.log`, `daemon-error.log` |
 | Sockets | `$XDG_RUNTIME_DIR` (fallback: data dir) | `~/Library/Application Support/swictation/` |
 
 `swictation status` prints the resolved socket paths for your machine.
 
-**Installation issues:** run `swictation doctor` — its header prints the resolved install
-log path for your machine, along with the platform, target user, and selected model it
-resolved.
+**Installation issues:** run `swictation doctor` and retain its diagnostic output.
+`~/.local/bin/swictation` is the stable command path on both platforms.
 
 **Daemon won't start:**
 ```bash
@@ -320,7 +317,6 @@ journalctl --user -u swictation-daemon -n 50
 
 # macOS
 tail -n 50 ~/Library/Logs/swictation/daemon-error.log
-tail -n 20 ~/Library/Logs/swictation/launcher.log   # library/binary resolution
 log show --predicate 'processImagePath CONTAINS "swictation"' --last 5m
 ```
 
@@ -371,6 +367,7 @@ Transform (MidStream) → Platform-specific text injection
 - **macOS:** CoreAudio, CoreML execution, Accessibility API injection
 
 **Crates:**
+- `swictation-cli` - Native installation, setup, diagnostics, and service commands
 - `swictation-daemon` - Main binary (tokio async)
 - `swictation-audio` - Audio capture
 - `swictation-vad` - Voice activity detection
@@ -409,17 +406,10 @@ Auto-detects NVIDIA architecture (Maxwell through Blackwell):
 CPU fallback for older/unsupported GPUs.
 
 #### macOS (CoreML)
-Auto-detects Apple Silicon and unified memory, then reports the 35% GPU share:
-
-| Mac | Unified memory | GPU share | Model |
-|-----|----------------|-----------|-------|
-| Any Apple Silicon | under ~16GB | — | Install refused |
-| M1 (16GB) | 16GB | ~5.6GB | 1.1B CoreML |
-| M1 Pro/Max and later | 32GB+ | ~11GB+ | 1.1B CoreML |
-
-Every supported Mac runs the same native CoreML 1.1B bundle (1.9GB) with full Apple
-Neural Engine acceleration — there is no per-machine model downgrade, because machines
-too small for it are rejected at install time.
+CoreML setup requires Apple Silicon with at least 16 GiB unified memory. The default
+model is the native 1.1B CoreML bundle; no memory-share estimate from the former npm
+installer changes that requirement. Actual inference performance and memory use depend
+on the model, hardware and audio workload.
 
 📖 **[Architecture Details](docs/architecture.md)** (includes GPU model selection)
 
@@ -446,36 +436,17 @@ Configure in `config.toml`.
 ## Uninstall
 
 ```bash
-# 1. Stop the services FIRST (see note below)
-swictation stop
-
-# Linux
-systemctl --user disable swictation-daemon
-
-# macOS
-launchctl bootout gui/$(id -u)/com.swictation.daemon
-
-# 2. Remove the package
-npm uninstall -g swictation
+swictation uninstall         # Preview owned removal
+swictation uninstall --yes   # Remove native release files and service integration
 ```
 
-**Stop the services first — npm will not do it for you.** The package ships a
-`preuninstall.js` cleanup script, but npm 7 and later do not execute uninstall lifecycle
-scripts at all, so on any modern npm it never runs and you are left with a service unit
-pointing at deleted binaries (ADR-034). You can still invoke it by hand from the package
-directory before removing it: `node preuninstall.js --force`.
+Default uninstall preserves configuration, model weights, GPU libraries, corrections,
+and metrics. `--purge-config` removes only `config.toml`; `--purge-cache` removes
+models and downloaded GPU libraries. Review the printed paths before adding `--yes`. See
+[removal and preservation](docs/installation.md#uninstall).
 
-**User data and models are deliberately preserved.** Uninstalling never deletes your
-config, learned corrections, metrics database, or the downloaded models (up to ~9.5GB on
-Linux). Remove them explicitly when you actually want them gone:
-
-```bash
-# Linux
-rm -rf ~/.config/swictation ~/.local/share/swictation
-
-# macOS
-rm -rf ~/Library/Application\ Support/swictation ~/Library/Logs/swictation
-```
+Do not invoke the retired npm uninstall hook or delete a broad data directory to remove
+the native application.
 
 ---
 
@@ -491,6 +462,11 @@ rm -rf ~/Library/Application\ Support/swictation ~/Library/Logs/swictation
 ---
 
 ## Contributing
+
+The native CLI and daemon are Rust workspace members under `rust-crates/`. Node/npm
+remain development tools for the Tauri frontend in `tauri-ui/`; they are not installed
+runtime dependencies or a product distribution channel. See the
+[release checklist](docs/RELEASE_CHECKLIST.md) for artifact and host validation.
 
 Priority areas:
 1. AMD GPU support (ROCm)

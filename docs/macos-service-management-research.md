@@ -1,5 +1,10 @@
 # macOS Service Management Research
 
+> **Historical distribution reference — 2026-09-21:** npm installation, JavaScript
+> lifecycle hooks, and package paths below are superseded by [ADR-038](adr/ADR-038-native-distribution-lifecycle.md).
+> Preserve this document as design/investigation history; use the
+> [native installation guide](installation.md) for current operator commands.
+
 > **Note:** Log paths shown as `/tmp/swictation-daemon.log` in this document reflect the old `/tmp` layout. Current log path is `~/Library/Logs/swictation/` on macOS. See `swictation-paths` crate for current platform-specific paths.
 
 **Research Date:** 2025-11-23

@@ -2,7 +2,7 @@
 
 Detailed technical architecture documentation for the Swictation voice dictation system.
 
-> **Recent Changes (2026-03-23):** CoreML recognizer rewritten with windowed chunking for arbitrary-length audio (Section 4). macOS text injection overhauled to batched CGEvent delivery (Section 6). Tauri desktop application added (Section 7). npm postinstall hardened with resilient downloads, phase tracking, and structured error codes. Security: tar, ureq, lru crates updated; unused `statistical` crate removed.
+> **Distribution update (2026-09-21):** [ADR-038](adr/ADR-038-native-distribution-lifecycle.md) replaces npm with native release bundles and a Rust lifecycle CLI. The first native publication and clean-host proofs are pending; see [installation](installation.md). Node remains a Tauri frontend build dependency.
 
 ---
 
@@ -36,10 +36,10 @@ Swictation is a **pure Rust daemon** with VAD-triggered automatic transcription.
 ### 1. Daemon Process (`swictation-daemon`)
 
 **Binary:**
-- *Installed (npm):* `<platform-package>/bin/swictation-daemon`, where the platform
-  package is `@agidreams/linux-x64` or `@agidreams/darwin-arm64` under the global
-  `node_modules`. Resolved at runtime by `npm-package/src/resolve-binary.js`; run
-  `swictation --version` to print the resolved location.
+- *Installed:* `<data>/install/current/bin/swictation-daemon`; `<data>` is
+  `~/.local/share/swictation` on Linux or `~/Library/Application Support/swictation`
+  on macOS. `~/.local/bin/swictation` invokes the CLI in the same active release.
+
 - *Development build:* `rust-crates/target/release/swictation-daemon` in your checkout.
 
 **Purpose:** Main orchestrator coordinating audio → VAD → STT → transform → injection pipeline
@@ -277,16 +277,11 @@ The previous `Recognizer` implementation using sherpa-rs has been deprecated. Bo
 - **0.6B GPU:** 3500MB threshold for ~1.2GB peak = 2.3GB headroom (66%) - fits comfortably in 4GB GPUs
 - **0.6B CPU:** No VRAM required, uses ~960MB system RAM
 
-**macOS Unified Memory Architecture:**
-- Apple Silicon uses **unified memory** (CPU + GPU share system RAM)
-- GPU memory = 35% of total system RAM (65/35 split)
-- Example: M1 with 8GB RAM → ~2.8GB available for GPU
-- **Model Selection:** Based on GPU share of system memory
-  - ≥6GB GPU share → 1.1B model (16GB+ system RAM)
-  - ≥3.5GB GPU share → 0.6B model (10GB+ system RAM)
-  - <3.5GB GPU share → CPU fallback (8GB base model)
+**macOS:** CoreML setup requires at least 16 GiB unified memory and selects the native
+1.1B bundle. The old npm installer's 35% memory-share decision is not the native
+setup contract. Linux runtime model selection remains in the daemon; inspect
+`rust-crates/swictation-daemon/src/pipeline.rs` for current thresholds.
 
-**Source of Truth:** These thresholds are defined in `npm-package/postinstall.js` lines 1136-1156 (Linux) and detectUnifiedMemoryMacOS() (macOS), verified through real-world testing on production hardware (RTX A1000 4GB, RTX PRO 6000 Blackwell 97GB, Apple M1/M2/M3).
 
 **Adaptive Model Selection Decision Tree:**
 
@@ -337,7 +332,7 @@ The previous `Recognizer` implementation using sherpa-rs has been deprecated. Bo
 // Location: rust-crates/swictation-daemon/src/pipeline.rs
 // ADAPTIVE MODEL SELECTION based on GPU VRAM availability
 //
-// Decision tree (SOURCE OF TRUTH: npm-package/postinstall.js lines 1136-1156):
+// Linux runtime selection: rust-crates/swictation-daemon/src/pipeline.rs
 //   ≥6GB VRAM → 1.1B GPU (peak ~3.5GB, 2.5GB headroom = 42% safety margin)
 //   ≥3.5GB VRAM → 0.6B GPU (peak ~1.2GB, fits 4GB GPUs comfortably)
 //   <3.5GB or no GPU → 0.6B CPU fallback
@@ -516,7 +511,7 @@ Troubleshooting:
   1. Verify model files: ls ~/.local/share/swictation/models/parakeet-tdt-0.6b-v3-onnx
   2. Check CUDA availability: nvidia-smi
   3. Verify GPU libraries downloaded: ls ~/.local/share/swictation/gpu-libs
-  4. Check ONNX Runtime library: ls npm-package/lib/native/libonnxruntime.so
+  4. Check ONNX Runtime library: swictation doctor --deep
   5. Try CPU fallback by setting stt_model_override="0.6b-cpu" in config
 ```
 
@@ -528,7 +523,7 @@ Troubleshooting:
   1. Verify model files: ls ~/.local/share/swictation/models/parakeet-tdt-0.6b-v3-onnx
   2. Check available RAM (need ~1GB free)
   3. Ensure ONNX Runtime CPU EP is available
-  4. Check library path: ls npm-package/lib/native/libonnxruntime.so
+  4. Check library path: swictation doctor --deep
 ```
 
 **Usage Examples:**
@@ -578,7 +573,7 @@ $ swictation-daemon --test-model 0.6b-gpu
 - `rust-crates/swictation-daemon/src/gpu.rs` - GPU detection + VRAM measurement
 - `rust-crates/swictation-daemon/src/config.rs` - Configuration management
 - `rust-crates/swictation-daemon/src/main.rs` - CLI argument parsing
-- `npm-package/postinstall.js` - **SOURCE OF TRUTH** for VRAM thresholds (lines 1136-1156)
+- `rust-crates/swictation-cli/src/` - Native setup, model and library verification
 
 #### CoreML Native Backend (macOS)
 
@@ -1262,6 +1257,7 @@ The injector calls `AXIsProcessTrustedWithOptions` on first use to verify Access
 
 ```
 rust-crates/
+├── swictation-cli/         # Native lifecycle, setup, diagnostics and service CLI
 ├── swictation-daemon/      # Main daemon binary (tokio async)
 ├── swictation-audio/       # Audio capture (cpal/PipeWire)
 ├── swictation-vad/         # Voice Activity Detection (Silero v6 + ort)
@@ -1276,10 +1272,9 @@ tauri-ui/                   # Desktop application (Tauri 2, macOS/Linux)
 external/midstream/         # Text transformation (Git submodule)
 └── crates/text-transform/  # Voice commands → symbols
 
-npm-package/                # npm distribution wrapper
-├── postinstall.js          # First-time install orchestrator (8 phases)
-├── src/download.js         # Resilient downloader with retry + resume
-└── src/install-error.js    # Structured error classification (SW-E001–E010)
+config/                     # Nonsecret native setup assets and model manifest
+scripts/distribution/       # Native archive assembly and generated installer
+.github/workflows/          # Source-bound builds, signing and release gates
 ```
 
 ---
@@ -1300,19 +1295,13 @@ To support all NVIDIA GPUs from Maxwell (2014) through Blackwell (2024+), swicta
 | **MODERN** | sm_75-86 | Turing/Ampere<br>GTX 16, RTX 20/30, A100, RTX A-series | ~1.5GB | ~70% |
 | **LATEST** | sm_89-120 | Ada/Hopper/Blackwell<br>RTX 4090, H100, B100/B200, RTX 50 | ~1.5GB | ~15% |
 
-### Automatic Installation
+### Explicit GPU setup
 
-During `npm install`, the postinstall script:
-1. Detects GPU via `nvidia-smi --query-gpu=compute_cap`
-2. Maps compute capability to package variant
-3. Downloads from GitHub release `gpu-libs-v1.1.1`
-4. Extracts to `~/.local/share/swictation/gpu-libs/`
-
-**Benefits:**
-- ✅ 65-74% size reduction per user (downloads only what's needed)
-- ✅ Full GPU support (sm_50 through sm_120)
-- ✅ Zero user configuration
-- ✅ Architecture-specific optimized kernels
+`swictation setup --gpu-libs` detects the Linux GPU and selects the supported
+architecture package. The downloaded libraries live under the platform data directory's
+`gpu-libs/`, outside `<data>/install/current`. Their verification metadata ships with
+the native setup assets. Setup checks these files; a release update preserves them.
+Models are managed independently by `setup --models` and the pinned model manifest.
 
 ### Package Contents
 
@@ -1333,50 +1322,26 @@ Built using Docker with reproducible environment:
 - Verification: `cuobjdump` confirms all architectures present
 - Build location: `docker/onnxruntime-builder/`
 
-### Resilient npm Postinstall
+### Native installation and setup
 
-The `npm-package/postinstall.js` script was overhauled to provide production-grade reliability. It is the sole entry point for first-time installation on both Linux and macOS.
+[ADR-038](adr/ADR-038-native-distribution-lifecycle.md) owns the native lifecycle.
+A release-generated installer embeds exact archive version, size and SHA-256 values.
+The native CLI verifies bundle contents and ownership before activation. A locked,
+same-directory symlink replacement selects the entire release and retains one previous
+selection. Configuration, model weights and GPU libraries stay outside release files.
 
-**Phase tracking:** The install is divided into 8 phases, each announced with a `[N/8] Phase Name` banner printed to stdout and teed to a persistent log at `~/.local/share/swictation/install.log`. The log captures platform, Node version, and timestamped output for every phase.
+`swictation setup` explicitly configures the host; `doctor` checks artifacts on disk,
+`doctor --deep` performs content verification, and `setup --repair` repairs unhealthy
+components. Setup preserves valid TOML. An unresolved repair exits as failure; neither
+an old receipt nor an installed service proves speech readiness.
 
-**Download resilience (`npm-package/src/download.js`):**
+`update --check`, `update`, `update --rollback` and `uninstall` are native operations.
+Update does not run setup or change user data. Default uninstall removes only owned
+release/service integration; `--purge-config` and `--purge-cache` authorize separately
+scoped data removal. See the [operator guide](installation.md).
 
-```
-downloadWithRetry(url, dest, options)
-  attempt 1 → fail
-  wait 2 s (backoff × 4 per attempt)
-  attempt 2 → fail
-  wait 8 s
-  attempt 3 → succeed
-```
-
-- Exponential backoff: delays of 2 s, 8 s, 32 s (base 2 s, multiplier 4)
-- HTTP Range resume: if a partial file exists from a previous attempt, the download resumes from the byte offset rather than restarting
-- `ProgressReporter` class renders a `[=====>   ] N% speed ETA` bar on TTY; prints at 10% intervals on non-TTY (CI-friendly)
-
-**Disk space validation:** Before initiating any download the script measures available disk space and compares it against the expected artifact size plus a 10% safety buffer. If space is insufficient, installation fails immediately with actionable guidance rather than partway through a multi-gigabyte download.
-
-**Structured error classification (`npm-package/src/install-error.js`):**
-
-| Code | Summary |
-|------|---------|
-| SW-E001 | Unsupported platform or architecture |
-| SW-E002 | Insufficient disk space |
-| SW-E003 | Download failed (network) |
-| SW-E004 | Checksum verification failed |
-| SW-E005 | GPU detection failed |
-| SW-E006 | Service setup failed (permission) |
-| SW-E007 | Python/hf CLI not found |
-| SW-E008 | Model download failed |
-| SW-E009 | Binary not found in platform package |
-| SW-E010 | ONNX Runtime load failed |
-
-Each `InstallError` carries a `code`, human-readable `cause` (mapped from Node.js errno), a `fix` suggestion (platform-aware), and a help URL pointing to the wiki (`https://github.com/robertelee78/swictation/wiki/errors#<code>`).
-
-**macOS CoreML model pipeline:** Three-tier fallback for downloading `.mlmodelc` bundles:
-1. `hf` CLI (Hugging Face) — preferred when available
-2. Auto-install `hf` CLI then retry
-3. Direct HTTPS download from GitHub releases
+Node/npm are required only to develop/build the Tauri frontend. They are absent from
+installed service commands, model downloads and lifecycle operations.
 
 ---
 
@@ -1443,11 +1408,10 @@ An `audit.toml` file was added to manage advisories for transitive dependencies 
 
 **Service File:** `~/.config/systemd/user/swictation-daemon.service`
 
-Rendered from `npm-package/templates/swictation-daemon.service.template` by
-`npm-package/src/generate-service.js` — the single source of truth for this unit
-(ADR-034). The `__INSTALL_DIR__`, `__ORT_DYLIB_PATH__`, and `__LD_LIBRARY_PATH__`
-placeholders below are substituted at install time with the resolved platform-package
-and GPU-library paths.
+Generated by the native `swictation setup --services` implementation under
+`rust-crates/swictation-cli/src/`. The service command follows the stable current
+release, and its library paths name the bundled runtime and downloaded GPU libraries.
+The following example is schematic; the generated unit is authoritative.
 
 ```ini
 [Unit]
@@ -1457,7 +1421,7 @@ Wants=swictation-ui.service
 
 [Service]
 Type=simple
-ExecStart=__INSTALL_DIR__/swictation-daemon
+ExecStart=__DATA_DIR__/install/current/bin/swictation-daemon
 Restart=on-failure
 RestartSec=5
 
@@ -1518,13 +1482,11 @@ WantedBy=default.target
 
 The Tauri-based desktop application (`tauri-ui/`) provides a native menu-bar tray icon and metrics window. It is the tray on macOS and on Linux desktops with a conventional tray host (GNOME, KDE, X11).
 
-**Python/Qt fallback on wlroots.** On Sway, Hyprland, and River the Tauri tray does not
-render reliably, so postinstall installs `src/ui/swictation_tray.py` as the
-`swictation-ui.service` unit instead (`ExecStart=/usr/bin/python3 …`). That path needs
-`python3` and PySide6 6.8+ (`pip3 install -r requirements-qt-tray.txt`, or
-`python3-pyside6` from your distro). It is the only Python in the product: without it you
-lose the tray icon, and nothing else — the daemon, VAD, STT, transform, and injection are
-Rust and run unaffected.
+**Python/Qt tray on wlroots.** Native setup detects Sway, Hyprland and River and
+selects the packaged `share/swictation_tray.py` for the user UI service. This optional
+tray requires Python 3 and PySide6 6.8+ from the host; it is outside the Rust speech
+pipeline. The daemon, hotkeys and `swictation toggle` do not require a tray.
+The native packaged behavior still needs proof on each advertised desktop.
 
 ### Tray Icon and Window Management
 
@@ -1599,13 +1561,15 @@ every 1 s:
 
 Notifications mirror the Python tray's `showMessage` behavior so the user experience is consistent across platforms.
 
-### DMG Bundling
+### Native release bundling
 
-The macOS release artifact is a `.dmg` containing the signed `.app` bundle. Notable details:
-
-- `icon.icns` is a 1.8 MB multi-resolution file covering all macOS icon sizes (16–1024 px)
-- The Tauri build target is narrowed to `["app", "dmg"]` to avoid generating unused `.tar.gz` artifacts
-- Stale `.app` and `.dmg` files from previous builds are removed before each packaging run to prevent incremental build confusion
+The native distribution archive includes the Tauri UI with the CLI, daemon and required
+libraries. On macOS, preserve both the signed daemon app and Tauri UI app structures
+and their nested resources when
+packaging. A Tauri development build may also produce an app or DMG; that output alone
+is not the complete installed lifecycle archive. Native assembly is owned by
+`scripts/distribution/package.py`; exact release signing and notarization are enforced
+by the release workflow. See the [release checklist](RELEASE_CHECKLIST.md).
 
 ### Workspace Structure
 
@@ -1630,9 +1594,8 @@ tauri-ui/
 **Key Files:**
 - `tauri-ui/src-tauri/src/main.rs` — Tray icon setup, icon rendering, polling task, menu events
 - `tauri-ui/src-tauri/src/socket/daemon_ipc.rs` — IPC socket client for daemon commands
-- `npm-package/src/ui/swictation_tray.py` — Python tray app (Linux only, legacy)
 - `rust-crates/swictation-daemon/src/ipc.rs` — Daemon IPC server
 
 ---
 
-**Last Updated:** 2026-03-23 (CoreML windowed chunking, macOS batched CGEvent injection, Tauri desktop UI, resilient npm postinstall, version 0.7.28)
+**Last Updated:** 2026-09-21 (native distribution mechanism; runtime sections retain their own evidence)

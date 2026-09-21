@@ -1,7 +1,12 @@
 # ADR-032: Postinstall Script Logic Audit and Hardening
 
-**Status:** Accepted
+> **Updated 2026-09-21:** ADR-038 replaces this npm distribution mechanism and
+> JavaScript lifecycle implementation. The original analysis below is historical;
+> use the native install/update/setup/uninstall contract for current operation.
+
+**Status:** Superseded by [ADR-038](ADR-038-native-distribution-lifecycle.md)
 **Date:** 2026-03-24
+**Updated:** 2026-09-21
 **Authors:** Robert (Product Owner), Claude (Audit Lead)
 **Deciders:** Robert
 **Release:** v0.7.33 (bundled with ADR-031)

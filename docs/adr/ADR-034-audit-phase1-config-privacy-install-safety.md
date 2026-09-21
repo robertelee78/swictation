@@ -2,8 +2,22 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-08
+- **Updated:** 2026-09-21
 - **Issue:** Six-reviewer repo audit (4× Claude Fable 5 subagents, gpt-5.6-sol via codex, Kimi K3 via opencode) found first-contact breakage, a privacy leak, and destructive install paths; all findings verified against source at 435c3b7
 - **Release:** v0.7.36 (planned)
+
+
+## Amendment — 2026-09-21: native distribution
+
+The config defaults, transcript privacy, user-data preservation and scoped removal
+requirements remain Accepted. ADR-038 replaces the JavaScript installer, paths module,
+service renderer and uninstall hook with the native CLI and shared Rust path rules.
+Native `setup` owns service generation; native `uninstall` removes only owned user
+integration and release files. The old npm cleanup failure and cited JavaScript paths
+below are historical evidence, not current operator instructions. No sudo or source
+checkout deletion is introduced by this migration.
+
+The amendment governs any conflicting mechanism reference in the original record below.
 
 ## Mantra
 

@@ -1,5 +1,10 @@
 # Installation Fixes Required for v0.2.2
 
+> **Historical distribution reference — 2026-09-21:** npm installation, JavaScript
+> lifecycle hooks, and package paths below are superseded by [ADR-038](../adr/ADR-038-native-distribution-lifecycle.md).
+> Preserve this document as design/investigation history; use the
+> [native installation guide](../installation.md) for current operator commands.
+
 ## What Works Now (11/11/2025)
 
 ✅ Daemon v0.2.2 running with CUDA GPU acceleration

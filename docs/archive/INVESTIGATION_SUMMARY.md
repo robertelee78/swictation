@@ -1,5 +1,10 @@
 # v0.3.1 npm Installation Investigation Summary
 
+> **Historical distribution reference — 2026-09-21:** npm installation, JavaScript
+> lifecycle hooks, and package paths below are superseded by [ADR-038](../adr/ADR-038-native-distribution-lifecycle.md).
+> Preserve this document as design/investigation history; use the
+> [native installation guide](../installation.md) for current operator commands.
+
 **Date**: November 13, 2025
 **Task**: aa21b713-0664-4f80-92d7-009f2dc47a24
 **Status**: ✅ COMPLETE - Ready for Review

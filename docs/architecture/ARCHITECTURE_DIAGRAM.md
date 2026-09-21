@@ -8,7 +8,7 @@
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
 │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐            │
-│  │  Tauri UI    │    │   npm CLI    │    │   Daemon     │            │
+│  │  Tauri UI    │    │  Native CLI  │    │   Daemon     │            │
 │  │  (Frontend)  │    │  (Commands)  │    │  (Backend)   │            │
 │  └──────┬───────┘    └──────┬───────┘    └──────┬───────┘            │
 │         │                    │                    │                     │
@@ -351,8 +351,8 @@ swictation-daemon
 tauri-ui
     └── swictation-paths       (NEW - for database, socket paths)
 
-npm-package
-    └── (JavaScript equivalent of swictation-paths)
+swictation-cli
+    └── swictation-paths       (native lifecycle, setup and service commands)
 ```
 
 ---

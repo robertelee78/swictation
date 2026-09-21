@@ -1,0 +1,25 @@
+[package]
+name = "swictation-cli"
+version = "0.8.0"
+edition = "2021"
+rust-version = "1.88"
+
+[[bin]]
+name = "swictation"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+clap = { version = "4.5", features = ["derive"] }
+dirs = "5.0"
+flate2 = "1.0"
+fs2 = "0.4"
+libc = "0.2"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+semver = "1.0"
+sha2 = "0.10"
+tar = "0.4"
+tempfile = "3.0"
+toml = "0.8"

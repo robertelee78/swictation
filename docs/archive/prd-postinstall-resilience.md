@@ -1,5 +1,10 @@
 # PRD: Postinstall Resilience, Progress, and Error Messaging
 
+> **Historical distribution reference — 2026-09-21:** npm installation, JavaScript
+> lifecycle hooks, and package paths below are superseded by [ADR-038](../adr/ADR-038-native-distribution-lifecycle.md).
+> Preserve this document as design/investigation history; use the
+> [native installation guide](../installation.md) for current operator commands.
+
 **Author:** John (PM) + team input from Winston (Architect), Amelia (Dev), Quinn (QA)
 **Date:** 2026-03-23
 **Status:** Draft

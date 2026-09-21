@@ -1,192 +1,97 @@
-# Swictation Release Checklist
+# Native release checklist
 
-This checklist ensures that both Linux and macOS platforms are properly supported in every release.
+Updated: 2026-09-21. [ADR-038](adr/ADR-038-native-distribution-lifecycle.md) governs
+distribution. This is a checklist of required evidence, not a record of completed
+validation. The first native release and packaged clean-host proofs remain pending.
 
-## Pre-Release Build
+## Source and build inputs
 
-### Linux (x86_64-unknown-linux-gnu)
-- [ ] Build Rust binaries: `npm run build:linux` or `cargo build --release --target x86_64-unknown-linux-gnu`
-- [ ] Verify binary: `file rust-crates/target/x86_64-unknown-linux-gnu/release/swictation-daemon`
-- [ ] Test binary runs: `./rust-crates/target/x86_64-unknown-linux-gnu/release/swictation-daemon --help`
-- [ ] Copy to npm package:
-  - `cp rust-crates/target/x86_64-unknown-linux-gnu/release/swictation-daemon npm-package/bin/swictation-daemon`
-  - `cp rust-crates/target/x86_64-unknown-linux-gnu/release/swictation-daemon npm-package/lib/native/swictation-daemon.bin`
+- [ ] Choose an authorized release commit and increasing stable version; bind the
+  tag, Cargo versions, bundle manifests, and generated installer to that exact source.
+- [ ] Record the toolchain, dependency locks, target and build inputs. Do not ship
+  artifacts from a dirty or unidentified source tree.
+- [ ] Build the Rust CLI, daemon and Tauri UI for both supported targets:
+  `x86_64-unknown-linux-gnu` and `aarch64-apple-darwin`.
+- [ ] Build Linux against the Ubuntu 24.04 compatibility floor and macOS against
+  the macOS 14 deployment floor. Test each archive on its actual supported host.
+- [ ] Run focused lifecycle/setup tests and applicable daemon/UI regressions.
+- [ ] Use npm only for development/build dependencies in `tauri-ui/`. Product npm
+  packages, registry publication, lifecycle hooks and JavaScript launchers are retired.
 
-### macOS (aarch64-apple-darwin)
-Built by CI: `.github/workflows/build-macos.yml` (invoked from release.yml) compiles the
-daemon and places it at `npm-package/packages/darwin-arm64/bin/swictation-daemon`.
-- [ ] CI build-macos workflow green for the release tag
-- [ ] Verify binary artifact: `file npm-package/packages/darwin-arm64/bin/swictation-daemon`
-- [ ] Test binary runs: `./npm-package/packages/darwin-arm64/bin/swictation-daemon --help`
-- [ ] Verify CoreML support: `otool -L npm-package/packages/darwin-arm64/bin/swictation-daemon | grep onnxruntime`
+## Exact release artifacts
 
-## ONNX Runtime Libraries
+- [ ] Each native archive contains CLI, daemon, UI, required ONNX libraries,
+  `release.json`, pinned model metadata and nonsecret setup assets. Models and
+  downloaded GPU libraries remain outside the release bundle.
+- [ ] Inspect archive paths and types: reject absolute paths, traversal, links and
+  unexpected entries. Verify every required component and target identity.
+- [ ] Record each final archive's byte length and SHA-256. Generate `install.sh`
+  from those exact immutable values, with an exact versioned download URL.
+- [ ] Verify macOS Developer ID signatures, hardened runtime, secure timestamp,
+  Team ID and bundle identities. Require accepted notarization for the exact artifact.
+- [ ] Sign nested components before their containing app; assess the distributed
+  app using the appropriate Apple trust checks. Raw CLI and app assessment differ.
+- [ ] Keep signing credentials in the protected signing environment. Do not execute
+  untrusted candidate code while credentials are present.
+- [ ] Use the native release workflow to require both supported builds and their
+  validation. Do not bypass a failed target with skip-build or package-manager fallback.
 
-### Linux GPU Libraries
-- [ ] Verify CUDA libraries in `npm-package/lib/native/`:
-  - `libonnxruntime.so`
-  - `libonnxruntime_providers_cuda.so`
-  - `libonnxruntime_providers_shared.so`
-  - `libonnxruntime_providers_tensorrt.so`
-- [ ] Create tarball: `tar -czf cuda-libs-cuda12.tar.gz -C npm-package/lib/native/ lib*.so`
-- [ ] Test download: Verify `postinstall.js` can download from GitHub release
+## Packaged lifecycle proof on both hosts
 
-### macOS CoreML Library
-- [ ] Download ONNX Runtime for macOS:
-  ```bash
-  wget https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-osx-arm64-1.23.2.tgz
-  tar -xzf onnxruntime-osx-arm64-1.23.2.tgz
-  cp onnxruntime-osx-arm64-1.23.2/lib/libonnxruntime.1.23.2.dylib ./libonnxruntime.dylib
-  ```
-- [ ] Verify dylib: `file libonnxruntime.dylib` (should show Mach-O 64-bit arm64)
-- [ ] Test download: Verify `postinstall.js` can download from GitHub release
+Use an isolated user profile and the final packaged artifact, not source-tree binaries.
+Record commands, exit status, artifact digests, host versions and sanitized logs.
 
-## GitHub Releases
+- [ ] Fetch the generated installer, install, and run the installed `--version`.
+- [ ] Verify PATH guidance, `~/.local/bin/swictation`, receipt ownership and the
+  `<data>/install/current` selection.
+- [ ] Prove install alone does not configure models or claim speech readiness.
+- [ ] Run setup, inspect doctor output, start services, and test actual dictation.
+- [ ] Verify service definitions use stable native paths and correct library
+  environment; no Node interpreter, npm prefix or source checkout is referenced.
+- [ ] Migrate an existing npm installation: stop old services, remove it with
+  `npm uninstall -g --ignore-scripts swictation` before native setup, and preserve
+  config/model/GPU/correction/metrics data. Explicitly start the new services.
+- [ ] Exercise `update --check`, update between two real versions, and rollback.
+  Verify the CLI, daemon, UI and libraries switch together.
+- [ ] Compare configuration and user-data digests across update and rollback.
+- [ ] Verify service restoration and accurately reported restoration failures.
+- [ ] Exercise uninstall preview and confirmed removal. Default removal preserves
+  user data; each explicit purge affects only its named owned class.
+- [ ] Prove wrong hash/size/version/target, unsafe archives, foreign launchers,
+  interrupted download, insufficient disk space and concurrent writers preserve
+  the working release or report a precisely reconciled committed transition.
+- [ ] Test failed receipt/publication operations and stale partial recovery.
 
-### GPU Libraries Release (if updated)
-```bash
-# Only create if CUDA/ONNX Runtime versions changed
-gh release create gpu-libs-v1.2.0 \
-  --title "GPU Libraries v1.2.0" \
-  --notes "ONNX Runtime 1.23.2, CUDA 12.9, cuDNN 9.15.1"
+## Product proof
 
-gh release upload gpu-libs-v1.2.0 cuda-libs-cuda12.tar.gz
-```
+- [ ] Linux: prove microphone capture, VAD, STT, stop-drain, Secretary Mode and
+  text insertion in the actual X11/Wayland session. Verify CUDA where advertised.
+- [ ] macOS: complete the [host checklist](macos-testing-checklist.md), including
+  microphone and Accessibility permissions, CoreML inference and text insertion.
+- [ ] Verify the Tauri UI and tray on advertised desktops. Prove the native
+  wlroots selection uses the bundled Python/Qt tray and reports missing PySide6
+  accurately; dictation itself remains independent of the optional tray.
+- [ ] Reboot/login and verify the documented service behavior and retained settings.
+- [ ] Record what was not tested. Filesystem fixture tests do not prove GPU,
+  microphone, TCC, public-download operation, or host compatibility.
 
-### macOS ONNX Runtime Release (if updated)
-```bash
-# Only create if ONNX Runtime version changed
-gh release create onnx-runtime-macos-v1.23.2 \
-  --title "ONNX Runtime macOS CoreML v1.23.2" \
-  --notes "ONNX Runtime 1.23.2 with CoreML support for Apple Silicon"
+## Publication and verification
 
-gh release upload onnx-runtime-macos-v1.23.2 libonnxruntime.dylib
-```
+- [ ] Obtain the independently authorized release decision after reviewing the
+  exact source and artifact evidence. A local passing suite does not authorize publish.
+- [ ] Upload final assets without overwriting existing published bytes. If retrying,
+  compare already-present assets and fail on disagreement.
+- [ ] Fresh-download all published assets and compare bytes/digests with the tested
+  candidates. Verify the published installer still binds its own exact tag.
+- [ ] Exercise the documented public bootstrap on both hosts from the published
+  assets and repeat the installed lifecycle checks.
+- [ ] Remove the pending-first-release notice only after publication and host proof.
+- [ ] Update release notes, supported-platform limitations and governing ADR status
+  to reflect actual evidence, including any remaining gaps.
 
-### Main Package Release
-```bash
-# Bump version in package.json first
-npm version patch  # or minor, or major
+## Recovery
 
-# Create git tag and GitHub release
-git push --follow-tags
-
-gh release create v0.7.2 \
-  --title "v0.7.2: Bug fixes and improvements" \
-  --notes "See CHANGELOG.md for details"
-```
-
-## NPM Package Publishing
-
-### Pre-Publish Tests
-- [ ] Test on Linux:
-  ```bash
-  # On Linux machine or VM
-  npm install -g /path/to/swictation --foreground-scripts
-  swictation start
-  # Test dictation works
-  swictation stop
-  npm uninstall -g swictation
-  ```
-
-- [ ] Test on macOS:
-  ```bash
-  # On macOS machine (Apple Silicon)
-  npm install -g /path/to/swictation --foreground-scripts
-  swictation start
-  # Test dictation works
-  swictation stop
-  npm uninstall -g swictation
-  ```
-
-### Publish to NPM
-```bash
-# Login to npm
-npm login
-
-# Publish package
-npm publish
-
-# Test installation from npm
-npm install -g swictation  # on both platforms
-```
-
-## Post-Release Verification
-
-### Linux
-- [ ] Install from npm: `npm install -g swictation`
-- [ ] Verify postinstall downloads GPU libraries
-- [ ] Start daemon: `swictation start`
-- [ ] Test basic dictation
-- [ ] Check GPU usage in `nvidia-smi`
-- [ ] Stop daemon: `swictation stop`
-
-### macOS
-- [ ] Install from npm: `npm install -g swictation`
-- [ ] Verify postinstall downloads ONNX Runtime dylib
-- [ ] Start daemon: `swictation start`
-- [ ] Grant Accessibility permissions
-- [ ] Test basic dictation
-- [ ] Check GPU usage in Activity Monitor
-- [ ] Stop daemon: `swictation stop`
-
-## Documentation Updates
-
-- [ ] Update `README.md`:
-  - Supported platforms (Linux x86_64, macOS ARM64)
-  - Installation instructions for both platforms
-  - Platform-specific requirements
-  - Known limitations
-
-- [ ] Update `CHANGELOG.md`:
-  - Version number and date
-  - New features
-  - Bug fixes
-  - Breaking changes
-  - Platform-specific notes
-
-- [ ] Update `docs/INSTALLATION.md`:
-  - Platform-specific setup steps
-  - Troubleshooting for both platforms
-
-## Rollback Plan
-
-If issues are discovered after release:
-
-1. **NPM Package:**
-   ```bash
-   npm unpublish swictation@X.Y.Z  # within 72 hours
-   # or
-   npm deprecate swictation@X.Y.Z "Use version X.Y.Z+1 instead"
-   ```
-
-2. **GitHub Release:**
-   ```bash
-   gh release delete vX.Y.Z --yes
-   git tag -d vX.Y.Z
-   git push origin :refs/tags/vX.Y.Z
-   ```
-
-3. **Hotfix:**
-   - Fix the issue
-   - Increment patch version
-   - Follow this checklist again
-
-## Automation (Future)
-
-Consider creating `scripts/prepare-release.sh` to automate:
-- Platform detection
-- Binary building
-- Library verification
-- Tarball creation
-- Checksum generation
-- Pre-publish tests
-
-## Notes
-
-- **ONNX Runtime Versions:** Update `ORT_VERSION` in `postinstall.js` if upgrading
-- **CUDA Versions:** Update `GPU_LIBS_VERSION` in `postinstall.js` if upgrading
-- **Platform Detection:** `postinstall.js` uses `os.platform()` and `os.arch()`
-- **Binary Naming:**
-  - Linux: `swictation-daemon` (no suffix)
-  - macOS: `swictation-daemon-macos`
+Operators use `swictation update --rollback` for the retained previous native release.
+Publish a new immutable corrective version if necessary; do not rewrite release assets
+or delete/repoint a published tag to conceal a failure. Preserve evidence and report
+which source and artifact were affected.

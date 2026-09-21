@@ -1,7 +1,12 @@
 # ADR-028: Fix postinstall CoreML Model Sequencing and Platform-Aware Test Configuration
 
-**Status:** Accepted
+> **Updated 2026-09-21:** ADR-038 replaces this npm distribution mechanism and
+> JavaScript lifecycle implementation. The original analysis below is historical;
+> use the native install/update/setup/uninstall contract for current operation.
+
+**Status:** Superseded by [ADR-038](ADR-038-native-distribution-lifecycle.md)
 **Date:** 2026-03-24
+**Updated:** 2026-09-21
 **Authors:** Robert (Product Owner), Winston (Architect), Quinn (QA), John (PM), Amelia (Dev), Mary (Analyst)
 **Deciders:** Robert
 **Scope:** postinstall.js install flow, daemon config parsing, daemon dry-run verification

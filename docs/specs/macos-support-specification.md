@@ -1,5 +1,10 @@
 # macOS Support Specification for Swictation
 
+> **Historical distribution reference — 2026-09-21:** npm installation, JavaScript
+> lifecycle hooks, and package paths below are superseded by [ADR-038](../adr/ADR-038-native-distribution-lifecycle.md).
+> Preserve this document as design/investigation history; use the
+> [native installation guide](../installation.md) for current operator commands.
+
 **Version:** 1.0
 **Target:** Apple Silicon (M1/M2/M3/M4) macOS 13.0+
 **Status:** Planning Phase

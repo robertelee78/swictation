@@ -1,0 +1,173 @@
+name: Native release candidate preflight
+
+on:
+  push:
+    branches: ['release/**']
+
+permissions:
+  contents: read
+  actions: read
+  issues: read
+
+concurrency:
+  group: native-candidate-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  identity:
+    name: Validate candidate source and release blockers
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.identity.outputs.version }}
+      source_sha: ${{ steps.identity.outputs.source_sha }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate exact native candidate identity
+        id: identity
+        run: |
+          python3 - <<'PY'
+          import json, os, re, subprocess, tomllib
+          from pathlib import Path
+          if not os.environ['GITHUB_REF'].startswith('refs/heads/release/'):
+              raise SystemExit('Candidate preflight requires a release/** branch')
+          version = tomllib.loads(Path('rust-crates/swictation-cli/Cargo.toml').read_text())['package']['version']
+          if not re.fullmatch(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)', version):
+              raise SystemExit('Native CLI version must be canonical stable SemVer')
+          source = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          if source != os.environ['GITHUB_SHA']:
+              raise SystemExit('Checkout differs from the pushed candidate commit')
+          blockers = json.loads(subprocess.check_output(['gh', 'api', '--method', 'GET',
+              f"repos/{os.environ['GH_REPO']}/issues", '-f', 'state=open', '-f',
+              'labels=release-blocker', '-f', 'per_page=1'], text=True))
+          if not isinstance(blockers, list) or blockers:
+              raise SystemExit('Release candidate requires zero open release-blocker issues')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'version={version}\nsource_sha={source}\n')
+          PY
+  contracts:
+    needs: identity
+    uses: ./.github/workflows/ci.yml
+    with:
+      contracts_only: true
+  linux:
+    needs: identity
+    uses: ./.github/workflows/build-linux.yml
+  macos:
+    needs: identity
+    uses: ./.github/workflows/build-macos.yml
+    with:
+      official_release: true
+    secrets: inherit
+  collect:
+    name: Verify and seal the exact tested release candidate
+    needs: [identity, contracts, linux, macos]
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      VERSION: ${{ needs.identity.outputs.version }}
+      SOURCE_SHA: ${{ needs.identity.outputs.source_sha }}
+      DEPENDENCIES: ${{ toJSON(needs) }}
+      APPLE_TEAM_ID: '3T2D2YNTVW'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: swictation-x86_64-unknown-linux-gnu
+          path: ${{ runner.temp }}/candidate
+      - uses: actions/download-artifact@v4
+        with:
+          name: swictation-aarch64-apple-darwin
+          path: ${{ runner.temp }}/candidate
+      - name: Verify source-bound archives and render the immutable installer
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          for target in x86_64-unknown-linux-gnu aarch64-apple-darwin; do
+            python3 scripts/distribution/package.py verify \
+              --archive "$RUNNER_TEMP/candidate/swictation-$VERSION-$target.tar.gz" \
+              --version "$VERSION" --target "$target" --source-sha "$SOURCE_SHA"
+          done
+          python3 scripts/distribution/render-installer.py --version "$VERSION" \
+            --distribution-dir "$RUNNER_TEMP/candidate" --output "$RUNNER_TEMP/candidate/install.sh"
+          sh -n "$RUNNER_TEMP/candidate/install.sh"
+      - name: Record actual contract and smoke evidence with exact asset hashes
+        run: |
+          python3 - <<'PY'
+          import datetime, hashlib, json, os, subprocess
+          from pathlib import Path
+          repository, source = os.environ['GH_REPO'], os.environ['SOURCE_SHA']
+          run_id, attempt = int(os.environ['GITHUB_RUN_ID']), int(os.environ['GITHUB_RUN_ATTEMPT'])
+          dependencies = json.loads(os.environ['DEPENDENCIES'])
+          results = {name: dependencies[name]['result'] for name in ('identity', 'contracts', 'linux', 'macos')}
+          if set(results.values()) != {'success'}:
+              raise SystemExit('Every candidate dependency must have succeeded')
+          pages = json.loads(subprocess.check_output(['gh', 'api', '--paginate', '--slurp',
+              f'repos/{repository}/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100'], text=True))
+          jobs = [job for page in pages for job in page['jobs']]
+          required_steps = {'Test native lifecycle': 2, 'Test bootstrap and archive contracts': 2,
+              'Smoke-test the exact packaged native lifecycle': 1,
+              'Smoke-test the signed package in an isolated home': 1}
+          evidence = []
+          for step_name, expected_count in required_steps.items():
+              matches = [(job, step) for job in jobs for step in job.get('steps', []) if step['name'] == step_name]
+              if len(matches) != expected_count:
+                  raise SystemExit(f'Missing or ambiguous executed evidence for {step_name}')
+              for job, step in matches:
+                  if (job['conclusion'] != 'success' or job['status'] != 'completed'
+                          or job['head_sha'] != source or step['conclusion'] != 'success'
+                          or step['status'] != 'completed'):
+                      raise SystemExit(f'Unsuccessful executed evidence for {step_name}')
+                  evidence.append({'job_id': job['id'], 'job_name': job['name'], 'job_url': job['html_url'],
+                      'head_sha': job['head_sha'], 'job_conclusion': job['conclusion'],
+                      'step_name': step_name, 'step_number': step['number'], 'step_conclusion': step['conclusion']})
+          blockers = json.loads(subprocess.check_output(['gh', 'api', '--method', 'GET',
+              f'repos/{repository}/issues', '-f', 'state=open', '-f', 'labels=release-blocker',
+              '-f', 'per_page=1'], text=True))
+          if not isinstance(blockers, list) or blockers:
+              raise SystemExit('Release candidate requires zero open release-blocker issues')
+          directory = Path(os.environ['RUNNER_TEMP']) / 'candidate'
+          version = os.environ['VERSION']
+          names = {'install.sh'}
+          for target in ('x86_64-unknown-linux-gnu', 'aarch64-apple-darwin'):
+              archive = f'swictation-{version}-{target}.tar.gz'
+              names.update((archive, archive + '.sha256'))
+          if {path.name for path in directory.iterdir()} != names:
+              raise SystemExit('Candidate asset inventory differs from the five required release assets')
+          assets = []
+          for name in sorted(names):
+              path = directory / name
+              if not path.is_file() or path.is_symlink():
+                  raise SystemExit('Candidate assets must be regular files')
+              with path.open('rb') as content:
+                  digest = hashlib.file_digest(content, 'sha256').hexdigest()
+              assets.append({'name': name, 'sha256': digest, 'size': path.stat().st_size})
+          now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+          receipt = {'schema_version': 1, 'kind': 'swictation.release-candidate', 'repository': repository,
+              'version': version, 'tag': f'v{version}', 'source_sha': source, 'created_at': now,
+              'candidate': {'workflow_path': '.github/workflows/release-candidate-preflight.yml',
+                  'workflow_sha': os.environ['GITHUB_WORKFLOW_SHA'], 'head_branch': os.environ['GITHUB_REF_NAME'],
+                  'run_id': run_id, 'run_attempt': attempt, 'artifact_name': f'release-candidate-{source}'},
+              'validation': {'dependencies': results, 'executed_steps': evidence,
+                  'release_blockers': {'label': 'release-blocker', 'open_count': len(blockers), 'checked_at': now},
+                  'scope': 'Native CLI and installer contracts; packaged install/version/uninstall smoke; macOS signing and notarization.',
+                  'not_tested': ['microphone capture', 'desktop permission prompts', 'GPU hardware inference', 'interactive UI behavior']},
+              'assets': assets}
+          (directory / 'candidate-receipt.json').write_text(json.dumps(receipt, indent=2, sort_keys=True) + '\n')
+          PY
+      - name: Upload the immutable candidate and evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-candidate-${{ github.sha }}
+          path: ${{ runner.temp }}/candidate/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90

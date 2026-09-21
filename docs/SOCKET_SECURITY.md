@@ -71,17 +71,12 @@ $XDG_RUNTIME_DIR/swictation_metrics.sock  (mode: 0600, owner-only)
    - Updated: `metrics.rs` to use new socket paths
    - Updated: `mod.rs` to export utilities
 
-### JavaScript Components
+### Native CLI
 
-1. **New Module:** `npm-package/src/socket-paths.js`
-   - `getSocketDir()` - Same logic as Rust implementation
-   - `getIpcSocketPath()` - Main toggle socket path
-   - `getMetricsSocketPath()` - Metrics broadcast socket path
-
-2. **Updated:** `npm-package/bin/swictation`
-   - `handleStatus()` - Shows new socket paths
-   - `handleToggle()` - Uses new socket path
-   - `handleSetup()` - Updated hotkey examples
+The native `swictation` CLI under `rust-crates/swictation-cli/` uses the shared Rust
+path rules for status and toggle commands. ADR-038 removed the parallel JavaScript
+socket helpers and npm launcher. The socket ownership and permissions requirements
+remain unchanged.
 
 ## Hotkey Configuration Updates
 

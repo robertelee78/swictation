@@ -1,361 +1,270 @@
-name: Release - Build and Publish
+name: Publish verified native release candidate
 
 on:
   push:
-    tags:
-      - 'v*'  # Trigger on version tags (e.g., v0.7.9)
+    tags: ['v*']
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version to release (e.g., 0.7.9)'
-        required: false
-        type: string
-      dry_run:
-        description: 'Dry run (test without publishing)'
-        required: false
-        type: boolean
-        default: false
-      skip_build:
-        description: 'Skip builds (use existing artifacts for testing)'
-        required: false
-        type: boolean
-        default: false
 
-env:
-  NODE_VERSION: '18'
+permissions:
+  contents: read
+  actions: read
+  issues: read
+
+concurrency:
+  group: native-release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  # Build Linux binaries and npm package
-  build-linux:
-    name: Build Linux Package
-    if: ${{ !inputs.skip_build }}
-    uses: ./.github/workflows/build-linux.yml
-    secrets: inherit
-
-  # Build macOS binaries and npm package
-  build-macos:
-    name: Build macOS Package
-    if: ${{ !inputs.skip_build }}
-    uses: ./.github/workflows/build-macos.yml
-    secrets: inherit
-
-  # Verify version synchronization before publishing
-  verify-versions:
-    name: Verify Version Sync
-    runs-on: ubuntu-latest
-    needs: [build-linux, build-macos]
-    if: always() && (needs.build-linux.result == 'success' || inputs.skip_build) && (needs.build-macos.result == 'success' || inputs.skip_build)
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: ${{ env.NODE_VERSION }}
-
-    - name: Install dependencies
-      working-directory: npm-package
-      run: npm install --omit=optional
-
-    - name: Verify version synchronization
-      working-directory: npm-package
-      run: |
-        npm run version:verify
-        echo "✓ All versions synchronized"
-
-    - name: Display versions
-      working-directory: npm-package
-      run: |
-        echo "Distribution version:"
-        node -e "console.log(require('./versions.json').distribution)"
-
-        echo ""
-        echo "Package versions:"
-        node -e "const main = require('./package.json'); const linux = require('./packages/linux-x64/package.json'); const macos = require('./packages/darwin-arm64/package.json'); console.log('  main:', main.version); console.log('  linux-x64:', linux.version); console.log('  darwin-arm64:', macos.version);"
-
-  # Publish platform packages to npm
-  publish-platform-packages:
-    name: Publish Platform Packages
-    runs-on: ubuntu-latest
-    needs: [verify-versions]
+  publish:
+    name: Publish the exact successful candidate without rebuilding
+    runs-on: ubuntu-24.04
     permissions:
-      contents: read
-      id-token: write  # Required for npm provenance
-
+      contents: write
+      actions: read
+      issues: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      APPLE_TEAM_ID: '3T2D2YNTVW'
     steps:
-    - uses: actions/checkout@v4
-
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: ${{ env.NODE_VERSION }}
-        registry-url: 'https://registry.npmjs.org'
-
-    - name: Download Linux package artifact
-      uses: actions/download-artifact@v4
-      with:
-        name: npm-package-linux-x64
-        path: ./artifacts/linux-x64/
-      continue-on-error: ${{ inputs.skip_build }}
-
-    - name: Download macOS package artifact
-      uses: actions/download-artifact@v4
-      with:
-        name: npm-package-darwin-arm64
-        path: ./artifacts/darwin-arm64/
-      continue-on-error: ${{ inputs.skip_build }}
-
-    - name: Extract packages
-      run: |
-        mkdir -p npm-package/packages/linux-x64
-        mkdir -p npm-package/packages/darwin-arm64
-
-        # Extract Linux package if available
-        if [ -f ./artifacts/linux-x64/*.tgz ]; then
-          echo "Extracting Linux package..."
-          tar -xzf ./artifacts/linux-x64/*.tgz -C npm-package/packages/linux-x64 --strip-components=1
-        else
-          echo "⚠️  Linux package not found (may be using existing)"
-        fi
-
-        # Extract macOS package if available
-        if [ -f ./artifacts/darwin-arm64/*.tgz ]; then
-          echo "Extracting macOS package..."
-          tar -xzf ./artifacts/darwin-arm64/*.tgz -C npm-package/packages/darwin-arm64 --strip-components=1
-        else
-          echo "⚠️  macOS package not found (may be using existing)"
-        fi
-
-    - name: Verify npm authentication
-      env:
-        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      run: |
-        npm whoami
-        echo "✓ Authenticated to npm registry"
-
-    - name: Publish @agidreams/linux-x64
-      if: ${{ !inputs.dry_run }}
-      env:
-        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      working-directory: npm-package/packages/linux-x64
-      run: |
-        npm publish --provenance --access public
-        echo "✓ @agidreams/linux-x64 published"
-
-    - name: Dry run @agidreams/linux-x64
-      if: ${{ inputs.dry_run }}
-      working-directory: npm-package/packages/linux-x64
-      run: |
-        npm publish --dry-run --access public
-        echo "✓ @agidreams/linux-x64 dry run successful"
-
-    - name: Publish @agidreams/darwin-arm64
-      if: ${{ !inputs.dry_run }}
-      env:
-        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      working-directory: npm-package/packages/darwin-arm64
-      run: |
-        npm publish --provenance --access public
-        echo "✓ @agidreams/darwin-arm64 published"
-
-    - name: Dry run @agidreams/darwin-arm64
-      if: ${{ inputs.dry_run }}
-      working-directory: npm-package/packages/darwin-arm64
-      run: |
-        npm publish --dry-run --access public
-        echo "✓ @agidreams/darwin-arm64 dry run successful"
-
-    - name: Get published versions
-      id: versions
-      run: |
-        LINUX_VERSION=$(node -e "console.log(require('./npm-package/packages/linux-x64/package.json').version)")
-        MACOS_VERSION=$(node -e "console.log(require('./npm-package/packages/darwin-arm64/package.json').version)")
-
-        echo "linux_version=$LINUX_VERSION" >> $GITHUB_OUTPUT
-        echo "macos_version=$MACOS_VERSION" >> $GITHUB_OUTPUT
-
-    outputs:
-      linux_version: ${{ steps.versions.outputs.linux_version }}
-      macos_version: ${{ steps.versions.outputs.macos_version }}
-
-  # Wait for npm registry propagation
-  wait-for-packages:
-    name: Wait for Registry Propagation
-    runs-on: ubuntu-latest
-    needs: [publish-platform-packages]
-    if: ${{ !inputs.dry_run }}
-
-    steps:
-    - name: Wait for @agidreams/linux-x64
-      run: |
-        VERSION="${{ needs.publish-platform-packages.outputs.linux_version }}"
-        echo "Waiting for @agidreams/linux-x64@$VERSION to be available..."
-
-        MAX_ATTEMPTS=60
-        ATTEMPT=0
-        while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
-          if npm view @agidreams/linux-x64@$VERSION version &>/dev/null; then
-            echo "✓ @agidreams/linux-x64@$VERSION is available"
-            break
-          fi
-
-          ATTEMPT=$((ATTEMPT + 1))
-          echo "Attempt $ATTEMPT/$MAX_ATTEMPTS - waiting 5s..."
-          sleep 5
-        done
-
-        if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
-          echo "⚠️  Timeout waiting for package (may still be propagating)"
-        fi
-
-    - name: Wait for @agidreams/darwin-arm64
-      run: |
-        VERSION="${{ needs.publish-platform-packages.outputs.macos_version }}"
-        echo "Waiting for @agidreams/darwin-arm64@$VERSION to be available..."
-
-        MAX_ATTEMPTS=60
-        ATTEMPT=0
-        while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
-          if npm view @agidreams/darwin-arm64@$VERSION version &>/dev/null; then
-            echo "✓ @agidreams/darwin-arm64@$VERSION is available"
-            break
-          fi
-
-          ATTEMPT=$((ATTEMPT + 1))
-          echo "Attempt $ATTEMPT/$MAX_ATTEMPTS - waiting 5s..."
-          sleep 5
-        done
-
-        if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
-          echo "⚠️  Timeout waiting for package (may still be propagating)"
-        fi
-
-  # Publish main swictation package
-  publish-main-package:
-    name: Publish Main Package
-    runs-on: ubuntu-latest
-    needs: [wait-for-packages]
-    if: always() && (needs.wait-for-packages.result == 'success' || inputs.dry_run)
-    permissions:
-      contents: read
-      id-token: write  # Required for npm provenance
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: ${{ env.NODE_VERSION }}
-        registry-url: 'https://registry.npmjs.org'
-
-    - name: Install dependencies
-      working-directory: npm-package
-      run: npm install --omit=optional
-
-    - name: Verify platform packages are available
-      if: ${{ !inputs.dry_run }}
-      working-directory: npm-package
-      run: |
-        LINUX_VERSION="${{ needs.publish-platform-packages.outputs.linux_version }}"
-        MACOS_VERSION="${{ needs.publish-platform-packages.outputs.macos_version }}"
-
-        echo "Verifying @agidreams/linux-x64@$LINUX_VERSION..."
-        npm view @agidreams/linux-x64@$LINUX_VERSION version
-
-        echo "Verifying @agidreams/darwin-arm64@$MACOS_VERSION..."
-        npm view @agidreams/darwin-arm64@$MACOS_VERSION version
-
-        echo "✓ Both platform packages are available"
-
-    - name: Publish swictation
-      if: ${{ !inputs.dry_run }}
-      env:
-        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      working-directory: npm-package
-      run: |
-        npm publish --provenance --access public
-        echo "✓ swictation published"
-
-    - name: Dry run swictation
-      if: ${{ inputs.dry_run }}
-      working-directory: npm-package
-      run: |
-        npm publish --dry-run --access public
-        echo "✓ swictation dry run successful"
-
-    - name: Get main package version
-      id: version
-      run: |
-        VERSION=$(node -e "console.log(require('./npm-package/package.json').version)")
-        echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-    outputs:
-      version: ${{ steps.version.outputs.version }}
-
-  # Create GitHub release
-  create-github-release:
-    name: Create GitHub Release
-    runs-on: ubuntu-latest
-    needs: [publish-main-package]
-    if: always() && needs.publish-main-package.result == 'success' && !inputs.dry_run
-    permissions:
-      contents: write  # Required for creating releases
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Get release notes
-      id: notes
-      run: |
-        VERSION="${{ needs.publish-main-package.outputs.version }}"
-
-        # Extract release notes from CHANGELOG.md if available
-        if [ -f npm-package/CHANGELOG.md ]; then
-          # Get section for this version
-          NOTES=$(awk "/## \[${VERSION}\]/,/## \[/" npm-package/CHANGELOG.md | head -n -1 | tail -n +2)
-        else
-          NOTES="Release version ${VERSION}"
-        fi
-
-        # Save to file for multiline output
-        echo "$NOTES" > release-notes.txt
-
-    - name: Create GitHub Release
-      uses: softprops/action-gh-release@v1
-      with:
-        tag_name: v${{ needs.publish-main-package.outputs.version }}
-        name: Release v${{ needs.publish-main-package.outputs.version }}
-        body_path: release-notes.txt
-        draft: false
-        prerelease: false
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  # Summary
-  release-summary:
-    name: Release Summary
-    runs-on: ubuntu-latest
-    needs: [publish-platform-packages, publish-main-package, create-github-release]
-    if: always()
-
-    steps:
-    - name: Display summary
-      run: |
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo "🎉 Release Complete"
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo ""
-        echo "Published packages:"
-        echo "  ✓ @agidreams/linux-x64@${{ needs.publish-platform-packages.outputs.linux_version }}"
-        echo "  ✓ @agidreams/darwin-arm64@${{ needs.publish-platform-packages.outputs.macos_version }}"
-        echo "  ✓ swictation@${{ needs.publish-main-package.outputs.version }}"
-        echo ""
-        echo "Installation:"
-        echo "  npm install -g swictation@${{ needs.publish-main-package.outputs.version }}"
-        echo ""
-        echo "Registry:"
-        echo "  https://www.npmjs.com/package/swictation"
-        echo ""
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Resolve successful exact-source release preflight and immutable artifact
+        run: |
+          python3 - <<'PY'
+          import json, os, re, subprocess, tomllib
+          from pathlib import Path
+          repository = os.environ['GH_REPO']
+          def api(endpoint, paginate=False):
+              command = ['gh', 'api'] + (['--paginate', '--slurp'] if paginate else [])
+              return json.loads(subprocess.check_output(command + [endpoint], text=True))
+          version = tomllib.loads(Path('rust-crates/swictation-cli/Cargo.toml').read_text())['package']['version']
+          if not re.fullmatch(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)', version):
+              raise SystemExit('Native CLI version must be canonical stable SemVer')
+          if os.environ['GITHUB_REF'] != f'refs/tags/v{version}':
+              raise SystemExit('Publication requires an exact version tag matching the native CLI')
+          source = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          subprocess.run(['git', 'fetch', '--no-tags', 'origin', '+refs/heads/main:refs/remotes/origin/main'], check=True)
+          subprocess.run(['git', 'merge-base', '--is-ancestor', source, 'refs/remotes/origin/main'], check=True)
+          workflow = '.github/workflows/release-candidate-preflight.yml'
+          pages = api(f'repos/{repository}/actions/workflows/release-candidate-preflight.yml/runs?head_sha={source}&status=success&event=push&per_page=100', True)
+          runs = [run for page in pages for run in page['workflow_runs']
+              if run['head_sha'] == source and run['status'] == 'completed' and run['conclusion'] == 'success'
+              and run['event'] == 'push' and run.get('head_branch', '').startswith('release/')
+              and run.get('path', '').split('@', 1)[0] == workflow
+              and run.get('repository', {}).get('full_name') == repository
+              and run.get('head_repository', {}).get('full_name') == repository]
+          if not runs:
+              raise SystemExit('No successful release/** candidate preflight exists for this exact commit')
+          run = max(runs, key=lambda item: (item['run_number'], item['run_attempt']))
+          artifact_name = f'release-candidate-{source}'
+          pages = api(f"repos/{repository}/actions/runs/{run['id']}/artifacts?per_page=100", True)
+          artifacts = [artifact for page in pages for artifact in page['artifacts']
+              if artifact['name'] == artifact_name and not artifact['expired']]
+          if len(artifacts) != 1:
+              raise SystemExit('Expected exactly one unexpired immutable candidate artifact')
+          artifact = artifacts[0]
+          if (artifact.get('workflow_run', {}).get('head_sha') != source
+                  or artifact.get('workflow_run', {}).get('id') != run['id']
+                  or not re.fullmatch(r'sha256:[0-9a-f]{64}', artifact.get('digest', ''))):
+              raise SystemExit('Candidate artifact has no matching source/run identity and SHA-256 digest')
+          selection = {'repository': repository, 'version': version, 'tag': f'v{version}', 'source_sha': source,
+              'workflow_path': workflow, 'run_id': run['id'], 'run_attempt': run['run_attempt'],
+              'head_branch': run['head_branch'], 'run_url': run['html_url'],
+              'artifact_id': artifact['id'], 'artifact_name': artifact_name, 'artifact_digest': artifact['digest']}
+          (Path(os.environ['RUNNER_TEMP']) / 'candidate-selection.json').write_text(json.dumps(selection, indent=2) + '\n')
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              output.write(f'VERSION={version}\nSOURCE_SHA={source}\n')
+          PY
+      - name: Download immutable candidate and validate receipt against live job evidence
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, re, shutil, stat, subprocess, zipfile
+          from collections import Counter
+          from pathlib import Path
+          temporary = Path(os.environ['RUNNER_TEMP'])
+          selected = json.loads((temporary / 'candidate-selection.json').read_text())
+          repository, version, source = selected['repository'], selected['version'], selected['source_sha']
+          archive = temporary / 'candidate-artifact.zip'
+          with archive.open('xb') as output:
+              subprocess.run(['gh', 'api', f"repos/{repository}/actions/artifacts/{selected['artifact_id']}/zip"], stdout=output, check=True)
+          with archive.open('rb') as content:
+              actual = 'sha256:' + hashlib.file_digest(content, 'sha256').hexdigest()
+          if actual != selected['artifact_digest']:
+              raise SystemExit('Downloaded GitHub artifact differs from its immutable SHA-256 digest')
+          asset_names = {'install.sh'}
+          for target in ('x86_64-unknown-linux-gnu', 'aarch64-apple-darwin'):
+              name = f'swictation-{version}-{target}.tar.gz'
+              asset_names.update((name, name + '.sha256'))
+          expected_names = asset_names | {'candidate-receipt.json'}
+          destination = temporary / 'candidate'
+          destination.mkdir(mode=0o700)
+          with zipfile.ZipFile(archive) as bundle:
+              entries = bundle.infolist()
+              if len(entries) != len(expected_names) or {entry.filename for entry in entries} != expected_names:
+                  raise SystemExit('Candidate artifact must contain exactly five release assets and its receipt')
+              for entry in entries:
+                  limit = 2 * 1024**3 if entry.filename.endswith('.tar.gz') else 256 * 1024
+                  if entry.is_dir() or stat.S_ISLNK(entry.external_attr >> 16) or not 0 < entry.file_size <= limit:
+                      raise SystemExit('Unsafe candidate artifact member or size')
+                  with bundle.open(entry) as content, (destination / entry.filename).open('xb') as output:
+                      shutil.copyfileobj(content, output)
+          receipt = json.loads((destination / 'candidate-receipt.json').read_text())
+          if (receipt.get('schema_version') != 1 or receipt.get('kind') != 'swictation.release-candidate'
+                  or any(receipt.get(key) != selected[key] for key in ('repository', 'version', 'tag', 'source_sha'))):
+              raise SystemExit('Candidate receipt differs from the tagged source/version')
+          candidate = receipt.get('candidate', {})
+          if (any(candidate.get(key) != selected[key] for key in ('workflow_path', 'head_branch', 'run_id', 'run_attempt', 'artifact_name'))
+                  or candidate.get('workflow_sha') != source):
+              raise SystemExit('Candidate receipt identifies a different workflow execution')
+          assets = receipt.get('assets', [])
+          if len(assets) != len(asset_names) or {asset.get('name') for asset in assets} != asset_names:
+              raise SystemExit('Candidate receipt has an incomplete or duplicate asset inventory')
+          for asset in assets:
+              path = destination / asset['name']
+              if type(asset.get('size')) is not int or asset['size'] != path.stat().st_size:
+                  raise SystemExit('Candidate asset size differs from the tested receipt')
+              if not re.fullmatch(r'[0-9a-f]{64}', asset.get('sha256', '')):
+                  raise SystemExit('Candidate asset hash is not canonical')
+              with path.open('rb') as content:
+                  if hashlib.file_digest(content, 'sha256').hexdigest() != asset['sha256']:
+                      raise SystemExit('Candidate asset bytes differ from the tested receipt')
+          validation = receipt.get('validation', {})
+          if validation.get('dependencies') != {name: 'success' for name in ('identity', 'contracts', 'linux', 'macos')}:
+              raise SystemExit('Candidate dependencies did not all succeed')
+          if validation.get('release_blockers', {}).get('open_count') != 0:
+              raise SystemExit('Candidate did not pass the release-blocker gate')
+          required = {'Test native lifecycle': 2, 'Test bootstrap and archive contracts': 2,
+              'Smoke-test the exact packaged native lifecycle': 1,
+              'Smoke-test the signed package in an isolated home': 1}
+          evidence = validation.get('executed_steps', [])
+          if Counter(item.get('step_name') for item in evidence) != Counter(required):
+              raise SystemExit('Candidate lacks the required executed contract and package smoke evidence')
+          pages = json.loads(subprocess.check_output(['gh', 'api', '--paginate', '--slurp',
+              f"repos/{repository}/actions/runs/{selected['run_id']}/attempts/{selected['run_attempt']}/jobs?per_page=100"], text=True))
+          jobs = {job['id']: job for page in pages for job in page['jobs']}
+          for item in evidence:
+              job = jobs.get(item['job_id'], {})
+              steps = [step for step in job.get('steps', []) if step['number'] == item['step_number']]
+              if (job.get('head_sha') != source or job.get('status') != 'completed' or job.get('conclusion') != 'success'
+                      or item.get('head_sha') != source or item.get('job_conclusion') != 'success'
+                      or item.get('step_conclusion') != 'success' or len(steps) != 1
+                      or steps[0]['name'] != item['step_name'] or steps[0]['conclusion'] != 'success'
+                      or steps[0]['status'] != 'completed'):
+                  raise SystemExit('Receipt evidence does not match the successful GitHub job/step')
+          PY
+      - name: Verify exact package layout and installer pins without rebuilding
+        run: |
+          for target in x86_64-unknown-linux-gnu aarch64-apple-darwin; do
+            python3 scripts/distribution/package.py verify \
+              --archive "$RUNNER_TEMP/candidate/swictation-$VERSION-$target.tar.gz" \
+              --version "$VERSION" --target "$target" --source-sha "$SOURCE_SHA"
+          done
+          python3 scripts/distribution/render-installer.py --version "$VERSION" \
+            --distribution-dir "$RUNNER_TEMP/candidate" --output "$RUNNER_TEMP/expected-install.sh"
+          cmp "$RUNNER_TEMP/expected-install.sh" "$RUNNER_TEMP/candidate/install.sh"
+          sh -n "$RUNNER_TEMP/candidate/install.sh"
+      - name: Define and enforce the final source, candidate, and blocker gates
+        run: |
+          cat > "$RUNNER_TEMP/check-publication-gates.py" <<'PY'
+          import datetime, json, os, subprocess
+          from pathlib import Path
+          temporary = Path(os.environ['RUNNER_TEMP'])
+          selected = json.loads((temporary / 'candidate-selection.json').read_text())
+          repository, source, tag = selected['repository'], selected['source_sha'], selected['tag']
+          blockers = json.loads(subprocess.check_output(['gh', 'api', '--method', 'GET',
+              f'repos/{repository}/issues', '-f', 'state=open', '-f', 'labels=release-blocker',
+              '-f', 'per_page=1'], text=True))
+          if not isinstance(blockers, list) or blockers:
+              raise SystemExit('Publication requires zero open release-blocker issues')
+          run = json.loads(subprocess.check_output(['gh', 'api',
+              f"repos/{repository}/actions/runs/{selected['run_id']}"], text=True))
+          if (run['head_sha'] != source or run['run_attempt'] != selected['run_attempt']
+                  or run['head_branch'] != selected['head_branch'] or run['event'] != 'push'
+                  or run['status'] != 'completed' or run['conclusion'] != 'success'):
+              raise SystemExit('Selected candidate execution is no longer the exact successful preflight')
+          subprocess.run(['git', 'fetch', '--no-tags', 'origin', '+refs/heads/main:refs/remotes/origin/main'], check=True)
+          subprocess.run(['git', 'merge-base', '--is-ancestor', source, 'refs/remotes/origin/main'], check=True)
+          main = subprocess.check_output(['git', 'rev-parse', 'refs/remotes/origin/main'], text=True).strip()
+          lines = subprocess.check_output(['git', 'ls-remote', '--tags', 'origin', f'refs/tags/{tag}', f'refs/tags/{tag}^{{}}'], text=True).splitlines()
+          references = {line.split()[1]: line.split()[0] for line in lines}
+          if references.get(f'refs/tags/{tag}^{{}}', references.get(f'refs/tags/{tag}')) != source:
+              raise SystemExit('Remote release tag no longer resolves to the tested candidate commit')
+          gate = {'source_sha': source, 'main_sha': main, 'tag': tag,
+              'release_blocker_open_count': len(blockers), 'candidate_run_id': selected['run_id'],
+              'candidate_run_attempt': selected['run_attempt'],
+              'checked_at': datetime.datetime.now(datetime.timezone.utc).isoformat()}
+          (temporary / 'publication-gates.json').write_text(json.dumps(gate, indent=2) + '\n')
+          PY
+          python3 "$RUNNER_TEMP/check-publication-gates.py"
+      - name: Upload the exact candidate assets to a draft release
+        run: |
+          gh release create "v$VERSION" --draft --verify-tag --title "Swictation v$VERSION" \
+            --generate-notes --target "$SOURCE_SHA" "$RUNNER_TEMP"/candidate/*
+      - name: Verify draft assets before making the release public
+        run: |
+          gh release download "v$VERSION" --dir "$RUNNER_TEMP/draft-download" --pattern '*'
+          for asset in "$RUNNER_TEMP"/candidate/*; do
+            cmp "$asset" "$RUNNER_TEMP/draft-download/$(basename "$asset")"
+          done
+      - name: Publish the verified draft
+        run: |
+          python3 "$RUNNER_TEMP/check-publication-gates.py"
+          gh release edit "v$VERSION" --draft=false
+      - name: Verify public bytes and create the publication receipt
+        run: |
+          gh release download "v$VERSION" --dir "$RUNNER_TEMP/published-download" --pattern '*'
+          python3 - <<'PY'
+          import datetime, hashlib, json, os, subprocess
+          from pathlib import Path
+          temporary = Path(os.environ['RUNNER_TEMP'])
+          selected = json.loads((temporary / 'candidate-selection.json').read_text())
+          candidate = temporary / 'candidate'
+          published = temporary / 'published-download'
+          if {path.name for path in candidate.iterdir()} != {path.name for path in published.iterdir()}:
+              raise SystemExit('Public release asset inventory differs from the verified candidate')
+          assets = []
+          for expected in sorted(candidate.iterdir()):
+              actual = published / expected.name
+              with expected.open('rb') as stream:
+                  expected_hash = hashlib.file_digest(stream, 'sha256').hexdigest()
+              with actual.open('rb') as stream:
+                  actual_hash = hashlib.file_digest(stream, 'sha256').hexdigest()
+              if actual.stat().st_size != expected.stat().st_size or actual_hash != expected_hash:
+                  raise SystemExit('GitHub is serving bytes that differ from the exact tested candidate')
+              assets.append({'name': actual.name, 'size': actual.stat().st_size, 'sha256': actual_hash})
+          release = json.loads(subprocess.check_output(['gh', 'api',
+              f"repos/{selected['repository']}/releases/tags/{selected['tag']}"], text=True))
+          if release['draft'] or release['prerelease'] or release['tag_name'] != selected['tag']:
+              raise SystemExit('GitHub release is not the expected published stable release')
+          candidate_receipt = json.loads((candidate / 'candidate-receipt.json').read_text())
+          receipt = {'schema_version': 1, 'kind': 'swictation.publication',
+              'repository': selected['repository'], 'version': selected['version'], 'tag': selected['tag'],
+              'source_sha': selected['source_sha'], 'candidate': selected,
+              'publication': {'workflow_run_id': int(os.environ['GITHUB_RUN_ID']),
+                  'workflow_run_attempt': int(os.environ['GITHUB_RUN_ATTEMPT']),
+                  'release_id': release['id'], 'release_url': release['html_url'], 'published_at': release['published_at']},
+              'gates': json.loads((temporary / 'publication-gates.json').read_text()),
+              'served_assets': assets, 'byte_verification': 'all published assets match the immutable candidate',
+              'verified_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+              'not_tested': candidate_receipt['validation']['not_tested']}
+          (temporary / 'publication-receipt.json').write_text(json.dumps(receipt, indent=2, sort_keys=True) + '\n')
+          PY
+      - name: Attach and verify the publication receipt
+        run: |
+          gh release upload "v$VERSION" "$RUNNER_TEMP/publication-receipt.json"
+          gh release download "v$VERSION" --dir "$RUNNER_TEMP/receipt-download" --pattern publication-receipt.json
+          cmp "$RUNNER_TEMP/publication-receipt.json" "$RUNNER_TEMP/receipt-download/publication-receipt.json"
+      - name: Retain the publication evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: publication-receipt-${{ env.SOURCE_SHA }}
+          path: |
+            ${{ runner.temp }}/publication-receipt.json
+            ${{ runner.temp }}/candidate/candidate-receipt.json
+          if-no-files-found: error
+          retention-days: 90

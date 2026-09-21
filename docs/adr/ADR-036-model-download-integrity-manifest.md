@@ -2,8 +2,23 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-08
+- **Updated:** 2026-09-21
 - **Issue:** Audit Phase 3 (see ADR-034, ADR-035): model downloads had **zero** verification and resolved against mutable `main` refs. GPU tarballs have had SHA-512 via `checksums.txt` since gpu-libs-v1.2.0; the ~12 GB of model weights every install pulls had nothing.
 - **Release:** v0.7.36 (planned)
+
+
+## Amendment — 2026-09-21: native distribution
+
+Pinned immutable model revisions, exact per-file size/SHA-256 verification and
+staged publication remain Accepted. The manifest now lives at
+`config/models.manifest.json` and ships as a native setup asset. ADR-038 replaces
+`lib/model-downloader.js`, postinstall delegation and npm provenance with the native
+CLI and verified release bundle. Missing or malformed integrity metadata is a setup
+failure; the old unverified `main` fallback below is retired. Historical JavaScript
+proofs below are not proof of the native downloader. Deep verification and native
+failure-path tests must establish the retained integrity contract.
+
+The amendment governs any conflicting mechanism reference in the original record below.
 
 ## Mantra
 

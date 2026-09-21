@@ -1,5 +1,10 @@
 # Task Implementation Summary: NVIDIA Hibernation Support
 
+> **Historical distribution reference — 2026-09-21:** npm installation, JavaScript
+> lifecycle hooks, and package paths below are superseded by [ADR-038](../../adr/ADR-038-native-distribution-lifecycle.md).
+> Preserve this document as design/investigation history; use the
+> [native installation guide](../../installation.md) for current operator commands.
+
 **Task ID:** 862d8f73-7493-44e8-a59e-14a138a932b6
 **Status:** ✅ Complete (Ready for Review)
 **Commit:** a4d0e9d

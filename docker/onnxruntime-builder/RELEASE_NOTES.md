@@ -1,5 +1,10 @@
 # GPU Libraries v1.1.0 - Multi-Architecture CUDA Support
 
+> These are historical GPU-library release notes. Operator distribution changed on
+> 2026-09-21 under [ADR-038](../../docs/adr/ADR-038-native-distribution-lifecycle.md).
+> The native channel's first release and clean-host proof are pending.
+> The compatibility claims below concern this GPU bundle, not the full application.
+
 ## What's New in v1.1.0
 
 ### Native Blackwell sm_120 Support 🎉
@@ -71,23 +76,21 @@ nvidia-smi --query-gpu=name,compute_cap --format=csv
 
 ## Installation
 
-### Automatic (with swictation npm package)
-The swictation npm package will automatically detect your GPU and download the correct package during `npm install`.
+### Native setup
 
-### Manual Installation
+For a native installation, use the [installation guide](../../docs/installation.md),
+then configure GPU libraries explicitly:
 
-1. **Download the appropriate package** for your GPU architecture
-2. **Extract to your swictation installation:**
-   ```bash
-   tar -xzf cuda-libs-<variant>.tar.gz
-   cd <variant>/libs
-   cp *.so ~/.local/share/swictation/gpu-libs/
-   ```
+```sh
+swictation setup --gpu-libs
+swictation doctor --deep
+```
 
-3. **Verify installation:**
-   ```bash
-   npx swictation test-gpu
-   ```
+Setup chooses the architecture package and verifies the pinned artifact before
+publication into the user data directory. A release update preserves these libraries.
+Do not copy arbitrary `.so` files over an installed set: that bypasses verification
+and can combine incompatible runtimes. Actual CUDA inference still requires a GPU
+host test; file verification alone does not prove it.
 
 ## Technical Details
 
@@ -142,7 +145,7 @@ sm_120
 - ✅ Native sm_120 (Blackwell) support via CUDA 12.9
 - ✅ sm_100 (Blackwell B100/B200) support
 - ✅ Three optimized architecture packages (was single package)
-- ✅ Automatic GPU detection in npm postinstall
+- Historical v1.1.0 added GPU detection to its npm installer; native setup now owns this operation.
 - ✅ Docker-based reproducible build system
 
 ### Improved

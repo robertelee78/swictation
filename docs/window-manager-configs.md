@@ -4,8 +4,9 @@
 
 **Two things to know before copying these:**
 
-- **Only one command is installed: `swictation`.** There are no `swictation-toggle` or
-  `swictation-ui` binaries — use `swictation toggle` and `swictation start --ui`.
+- **Only `swictation` is added to PATH.** Use `swictation start`,
+  `swictation toggle`, and `swictation start --ui`. The daemon and UI binaries
+  remain inside the managed release bundle.
 - **Status-bar indicators show whether the daemon is running, not whether it is
   recording.** The examples below poll
   `systemctl --user is-active swictation-daemon`, which reports `active` /
@@ -13,12 +14,18 @@
   (`swictation_metrics.sock`), which needs a real client to read; a bar module cannot
   poll it with `cat`.
 
-**Tray icon on Sway, Hyprland, and River:** these wlroots compositors do not host the
-Tauri tray, so postinstall installs a small Python/Qt tray instead
-(`swictation-ui.service` running `/usr/bin/python3 …/swictation_tray.py`). It needs
-`python3` plus PySide6 6.8+ — `pip3 install -r requirements-qt-tray.txt`, or
-`python3-pyside6` from your distro. Skip it if you do not want the tray: dictation,
-hotkeys, and the CLI work without it, and everything except that tray is Rust.
+Run `swictation setup` before using these examples so the native user services and
+models exist. The startup examples launch the managed daemon through `swictation start`.
+Ensure `~/.local/bin` is on the desktop session's PATH, or use the command's absolute
+path. Choose one startup method for your session.
+
+**Tray icon on Sway, Hyprland, and River:** native setup selects the bundled
+Python/Qt tray on these wlroots compositors. Install Python 3 and PySide6 6.8+
+(`pip3 install -r requirements-qt-tray.txt` from a source checkout, or your
+distribution's PySide6 package) if you want that tray. Dictation, hotkeys and
+`swictation toggle` operate independently. The native service points into the current
+release's `share/` assets. See [native installation](installation.md); packaged host
+qualification for the new distribution remains pending.
 
 ---
 
@@ -56,7 +63,7 @@ hotkeys, and the CLI work without it, and everything except that tray is Rust.
 
 ```bash
 # Start swictation daemon on i3 startup
-exec --no-startup-id swictation-daemon
+exec --no-startup-id swictation start
 
 # Optional: Bind dictation toggle to hotkey
 # Note: Swictation registers its own global hotkey via global-hotkeys crate
@@ -70,7 +77,7 @@ bindsym $mod+Shift+d exec --no-startup-id swictation toggle
 
 ```bash
 # Auto-start swictation daemon
-exec --no-startup-id swictation-daemon
+exec --no-startup-id swictation start
 
 # Add swictation status to i3status
 # File: ~/.config/i3status/config
@@ -113,7 +120,7 @@ for_window [class="swictation-ui"] floating enable
 
 ```bash
 # Start swictation daemon
-exec swictation-daemon
+exec swictation start
 
 # Optional: Manual toggle binding
 bindsym $mod+Shift+d exec swictation toggle
@@ -125,7 +132,7 @@ bindsym $mod+Shift+d exec swictation toggle
 
 ```bash
 # Auto-start swictation
-exec swictation-daemon
+exec swictation start
 
 # Waybar integration
 bar {
@@ -150,26 +157,15 @@ bar {
 
 #### Startup with systemd
 
-**File:** `~/.config/systemd/user/swictation-daemon.service`
+Generate the native service definitions from your Sway session and start the daemon:
 
-```ini
-[Unit]
-Description=Swictation voice dictation daemon for Sway
-PartOf=graphical-session.target
-
-[Service]
-Type=simple
-ExecStart=%h/.local/share/swictation/bin/swictation-daemon
-Restart=on-failure
-
-[Install]
-WantedBy=sway-session.target
-```
-
-**Enable:**
 ```bash
-systemctl --user enable swictation-daemon.service
+swictation setup --services
+swictation start
 ```
+
+Use `swictation start --ui` to include the wlroots tray. See the
+[managed service instructions](#systemd-user-service-universal) for login startup.
 
 ---
 
@@ -186,7 +182,7 @@ systemctl --user enable swictation-daemon.service
 #!/bin/sh
 
 # Start swictation daemon
-swictation-daemon &
+swictation start
 
 # Rest of your bspwm config...
 ```
@@ -238,7 +234,7 @@ polybar mybar &
 
 ```bash
 # Startup apps
-exec-once = swictation-daemon
+exec-once = swictation start
 
 # Optional: Manual toggle binding
 bind = SUPER SHIFT, D, exec, swictation toggle
@@ -253,13 +249,8 @@ bind = SUPER SHIFT, S, exec, swictation start --ui
 
 ```bash
 # Auto-start applications
-exec-once = swictation-daemon
+exec-once = swictation start
 exec-once = waybar
-
-# Window rules for swictation UI
-windowrulev2 = float, class:(swictation start --ui)
-windowrulev2 = size 800 600, class:(swictation start --ui)
-windowrulev2 = center, class:(swictation start --ui)
 ```
 
 **File:** `~/.config/waybar/config` (same as Sway example above)
@@ -277,7 +268,7 @@ windowrulev2 = center, class:(swictation start --ui)
 
 ```lua
 -- Auto-start swictation daemon
-awful.spawn.with_shell("swictation-daemon")
+awful.spawn.with_shell("swictation start")
 
 -- Optional: Add keybinding for manual toggle
 awful.key({ modkey, "Shift" }, "d",
@@ -345,7 +336,7 @@ swictation_widget:buttons(gears.table.join(
 #!/bin/sh
 
 # Start swictation daemon before dwm
-swictation-daemon &
+swictation start
 
 # Start dwm
 exec dwm
@@ -360,7 +351,7 @@ If you've applied the autostart patch to dwm:
 ```bash
 #!/bin/sh
 
-swictation-daemon &
+swictation start
 ```
 
 Make executable:
@@ -374,7 +365,7 @@ chmod +x ~/.dwm/autostart.sh
 
 ```c
 static const char *swictation_toggle[] = {
-    "swictation toggle", NULL
+    "swictation", "toggle", NULL
 };
 
 static Key keys[] = {
@@ -408,7 +399,7 @@ from libqtile import hook
 # Auto-start swictation on Qtile startup
 @hook.subscribe.startup_once
 def autostart():
-    subprocess.Popen(["swictation-daemon"])
+    subprocess.Popen(["swictation", "start"])
 
 # Optional: Add keybinding
 from libqtile.config import Key
@@ -462,7 +453,7 @@ screens = [
 2. Click "Add"
 3. Fill in:
    - Name: `Swictation`
-   - Command: `swictation-daemon`
+   - Command: `swictation start`
    - Comment: `Voice dictation service`
 4. Click "Add"
 
@@ -474,7 +465,7 @@ screens = [
 [Desktop Entry]
 Type=Application
 Name=Swictation Voice Dictation
-Exec=swictation-daemon
+Exec=swictation start
 Icon=microphone
 Comment=Voice-to-text dictation daemon
 X-GNOME-Autostart-enabled=true
@@ -571,7 +562,7 @@ gnome-extensions enable swictation@example.com
 
 1. System Settings → Startup and Shutdown → Autostart
 2. Click "Add..." → "Add Application..."
-3. Find or type: `swictation-daemon`
+3. Find or type: `swictation start`
 4. Click "OK"
 
 #### Autostart (Manual Method)
@@ -582,7 +573,7 @@ gnome-extensions enable swictation@example.com
 [Desktop Entry]
 Type=Application
 Name=Swictation Voice Dictation
-Exec=swictation-daemon
+Exec=swictation start
 Icon=audio-input-microphone
 Comment=Voice-to-text dictation daemon
 X-KDE-autostart-after=panel
@@ -628,7 +619,7 @@ Use "Command Output" widget:
 2. Click "+" (Add)
 3. Fill in:
    - Name: `Swictation`
-   - Command: `swictation-daemon`
+   - Command: `swictation start`
    - Description: `Voice dictation`
 4. Click "OK"
 
@@ -656,7 +647,7 @@ Use "Generic Monitor" plugin:
 2. Click "+" (Add)
 3. Fill in:
    - Name: `Swictation`
-   - Command: `swictation-daemon`
+   - Command: `swictation start`
    - Comment: `Voice dictation daemon`
 4. Click "Add"
 
@@ -668,7 +659,7 @@ Use "Generic Monitor" plugin:
 [Desktop Entry]
 Type=Application
 Name=Swictation
-Exec=swictation-daemon
+Exec=swictation start
 Icon=microphone
 Comment=Voice dictation daemon
 X-GNOME-Autostart-enabled=true
@@ -691,7 +682,7 @@ X-GNOME-Autostart-enabled=true
 #!/bin/bash
 
 # Start swictation daemon
-swictation-daemon &
+swictation start
 ```
 
 Make executable:
@@ -736,7 +727,7 @@ openbox --reconfigure
 #!/bin/sh
 
 # Start swictation daemon
-swictation-daemon &
+swictation start
 
 # Start fluxbox (must be last)
 exec fluxbox
@@ -755,48 +746,35 @@ Mod4 Shift D :Exec swictation toggle
 
 ## Systemd User Service (Universal)
 
-**Works with any window manager/DE**
+Requires a working systemd user session and graphical-session target.
 
-### Create Service File
+### Configure and start managed services
 
-**File:** `~/.config/systemd/user/swictation-daemon.service`
-
-```ini
-[Unit]
-Description=Swictation voice dictation daemon
-After=graphical-session.target
-PartOf=graphical-session.target
-
-[Service]
-Type=simple
-ExecStart=%h/.local/share/swictation/bin/swictation-daemon
-Restart=on-failure
-RestartSec=5
-
-# Environment variables (if needed)
-Environment="DISPLAY=:0"
-Environment="WAYLAND_DISPLAY=wayland-0"
-
-[Install]
-WantedBy=graphical-session.target
-```
-
-### Enable and Start
+Run this from your graphical session after completing initial setup:
 
 ```bash
-# Reload systemd user daemon
-systemctl --user daemon-reload
+swictation setup --services
+swictation start
+swictation status
+```
 
-# Enable service (auto-start on login)
+Native setup generates the service paths and library environment for the current
+release. Use `swictation start --ui` to start the tray as well. Keep these generated
+units under native management; use `setup --services` to repair their paths.
+
+To start the daemon automatically with the graphical session:
+
+```bash
 systemctl --user enable swictation-daemon.service
+```
 
-# Start service now
-systemctl --user start swictation-daemon.service
+Optionally enable `swictation-ui.service` too if you want the tray at login.
+Alternatively, use your window manager's startup command shown above.
 
-# Check status
-systemctl --user status swictation-daemon.service
+Inspect the generated service and logs with:
 
-# View logs
+```bash
+systemctl --user cat swictation-daemon.service
 journalctl --user -u swictation-daemon.service -f
 ```
 
@@ -841,5 +819,5 @@ ydotool type "test"    # Universal
 
 ---
 
-**Last updated:** 2024-11-15
-**Tested on:** i3 4.23, Sway 1.9, Hyprland 0.40, GNOME 46, KDE Plasma 6
+**Native command examples updated:** 2026-09-21. Packaged desktop qualification is pending.
+**Historical desktop coverage (2024-11-15):** i3 4.23, Sway 1.9, Hyprland 0.40, GNOME 46, KDE Plasma 6.

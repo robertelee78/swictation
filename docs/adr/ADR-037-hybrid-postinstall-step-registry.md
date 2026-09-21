@@ -1,7 +1,12 @@
 # ADR-037: Hybrid Postinstall — Idempotent Step Registry Shared by Install, Setup, Repair, and Doctor
 
-- **Status:** Accepted
+> **Updated 2026-09-21:** ADR-038 replaces this npm distribution mechanism and
+> JavaScript lifecycle implementation. The original analysis below is historical;
+> use the native install/update/setup/uninstall contract for current operation.
+
+- **Status:** Superseded by [ADR-038](ADR-038-native-distribution-lifecycle.md)
 - **Date:** 2026-08-09
+- **Updated:** 2026-09-21
 - **Issue:** The 3,300-line all-or-nothing postinstall is the structural cause of the
   v0.7.29–0.7.35 install-fix treadmill (ADR-034/035 audit; spike evidence below)
 - **Release:** v0.7.37 target (Phase A may ride v0.7.36 if the GPU-box session lands first)

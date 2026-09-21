@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "swictation-cli",
     "swictation-paths",
     "swictation-audio",
     "swictation-stt",

@@ -1,0 +1,128 @@
+#!/bin/sh
+# Rendered for a release by render-installer.py. Keep the outer conditional:
+# a truncated curl | sh transfer must not execute a partial installer.
+if :; then
+main() {
+  set -eu
+  umask 077
+  repository='robertelee78/swictation'
+  apple_team_id='@SWICTATION_APPLE_TEAM_ID@'
+  release_version='@SWICTATION_RELEASE_VERSION@'
+  linux_sha256='@SWICTATION_LINUX_SHA256@'
+  linux_size='@SWICTATION_LINUX_SIZE@'
+  macos_sha256='@SWICTATION_MACOS_SHA256@'
+  macos_size='@SWICTATION_MACOS_SIZE@'
+
+  fail() { printf 'swictation installer: %s\n' "$1" >&2; exit 1; }
+  case "$#" in
+    0) ;;
+    2) [ "$1" = --version ] || fail 'usage: install.sh [--version VERSION]'
+       [ "${2#v}" = "$release_version" ] \
+         || fail 'this installer is pinned to one release; download install.sh from the desired release' ;;
+    *) fail 'usage: install.sh [--version VERSION]' ;;
+  esac
+  for required in curl tar awk mktemp; do
+    command -v "$required" >/dev/null 2>&1 || fail "missing required command: $required"
+  done
+  case "$(uname -s):$(uname -m)" in
+    Linux:x86_64) target=x86_64-unknown-linux-gnu; expected=$linux_sha256; expected_size=$linux_size ;;
+    Darwin:arm64)
+      target=aarch64-apple-darwin
+      expected=$macos_sha256; expected_size=$macos_size
+      macos_major=$(/usr/bin/sw_vers -productVersion)
+      macos_major=${macos_major%%.*}
+      case "$macos_major" in ''|*[!0-9]*) fail 'cannot determine macOS version' ;; esac
+      [ "$macos_major" -ge 14 ] || fail 'macOS 14 or newer is required'
+      printf '%s\n' "$apple_team_id" | grep -Eq '^[A-Z0-9]{10}$' \
+        || fail 'this installer has no pinned Apple signing identity; use the release installer'
+      ;;
+    *) fail 'supported systems: Linux x86_64 (glibc), macOS 14+ Apple Silicon' ;;
+  esac
+  if command -v sha256sum >/dev/null 2>&1; then
+    digest() { sha256sum "$1" | awk '{print $1}'; }
+  elif command -v shasum >/dev/null 2>&1; then
+    digest() { shasum -a 256 "$1" | awk '{print $1}'; }
+  else
+    fail 'sha256sum or shasum is required'
+  fi
+  fetch() {
+    curl --fail --silent --show-error --location --proto '=https' \
+      --proto-redir '=https' --tlsv1.2 --connect-timeout 15 \
+      --max-time 600 --max-redirs 5 "$@"
+  }
+  printf '%s\n' "$release_version" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' \
+    || fail 'release version must be a canonical version such as 0.7.37'
+  printf '%s\n' "$expected" | grep -Eq '^[0-9a-f]{64}$' || fail 'installer has no pinned release checksum'
+  case "$expected_size" in ''|*[!0-9]*) fail 'installer has no pinned release size' ;; esac
+  [ "$expected_size" -gt 0 ] && [ "$expected_size" -le 2147483648 ] || fail 'invalid pinned release size'
+  asset="swictation-$release_version-$target.tar.gz"
+  base_url="https://github.com/$repository/releases/download/v$release_version"
+  temporary=$(mktemp -d "${TMPDIR:-/tmp}/swictation-install.XXXXXXXX")
+  cleanup() { rm -rf "$temporary"; }
+  trap cleanup EXIT
+  trap 'exit 1' HUP INT TERM
+  archive="$temporary/$asset"
+  fetch --max-filesize 1024 "$base_url/$asset.sha256" --output "$temporary/checksum" \
+    || fail 'checksum download failed'
+  # Require exactly one checksum for exactly this archive; never execute checksum text.
+  sidecar_sha=$(awk -v name="$asset" '
+    NR == 1 && NF == 2 && length($1) == 64 && $1 !~ /[^0-9a-f]/ && $2 == name { hash = $1; valid = 1 }
+    END { if (NR == 1 && valid) print hash; else exit 1 }
+  ' "$temporary/checksum") || fail 'release checksum is malformed or names a different archive'
+  [ "$sidecar_sha" = "$expected" ] || fail 'release checksum sidecar differs from the installer pin'
+  (ulimit -f $(( (expected_size + 511) / 512 ));
+    fetch --max-filesize "$expected_size" "$base_url/$asset" --output "$archive") \
+    || fail 'release download failed'
+  [ "$(wc -c < "$archive" | awk '{print $1}')" = "$expected_size" ] || fail 'release byte length mismatch'
+  [ "$(digest "$archive")" = "$expected" ] || fail 'release checksum mismatch'
+
+  # Extract only a single regular CLI file to stdout. Other archive paths, links,
+  # and permissions are never materialized by the shell bootstrap.
+  tar -tzf "$archive" > "$temporary/members" || fail 'invalid release archive'
+  awk '$0 == "bin/swictation" { count++ } END { exit count != 1 }' "$temporary/members" \
+    || fail 'release must contain exactly one bin/swictation'
+  tar -tvzf "$archive" -- bin/swictation > "$temporary/cli-member" \
+    || fail 'cannot inspect the release command'
+  awk 'NR == 1 && substr($1, 1, 1) == "-" { valid = 1 } END { exit !(NR == 1 && valid) }' \
+    "$temporary/cli-member" || fail 'release command must be a regular file'
+  candidate="$temporary/swictation"
+  (ulimit -f 262144; tar -xOzf "$archive" -- bin/swictation > "$candidate") \
+    || fail 'cannot extract the release command within its size bound'
+  [ -s "$candidate" ] || fail 'release command is empty'
+  chmod 0500 "$candidate"
+  if [ "$target" = aarch64-apple-darwin ]; then
+    [ "$(/usr/bin/lipo -archs "$candidate")" = arm64 ] || fail 'release command is not an arm64 executable'
+    /usr/bin/codesign --verify --strict --all-architectures "$candidate" \
+      || fail 'release command signature verification failed'
+    signing=$(/usr/bin/codesign --display --verbose=4 "$candidate" 2>&1) \
+      || fail 'cannot inspect the release signing identity'
+    printf '%s\n' "$signing" | grep -qx "TeamIdentifier=$apple_team_id" \
+      || fail 'release signing team does not match the pinned identity'
+    printf '%s\n' "$signing" | grep -qx 'Identifier=com.swictation.cli' \
+      || fail 'release command signing identifier does not match'
+    printf '%s\n' "$signing" | grep -Eq '^Authority=Developer ID Application: .+ \('"$apple_team_id"'\)$' \
+      || fail 'release command is not Developer ID signed'
+    printf '%s\n' "$signing" | grep -qx 'Authority=Developer ID Certification Authority' \
+      || fail 'release signing intermediate is missing'
+    printf '%s\n' "$signing" | grep -qx 'Authority=Apple Root CA' \
+      || fail 'release signing root is missing'
+    printf '%s\n' "$signing" | grep -Eq '^CodeDirectory .* flags=0x[0-9a-f]+\(runtime\)( |$)' \
+      || fail 'release command does not use the hardened runtime'
+    printf '%s\n' "$signing" | grep -Eq '^Timestamp=.+$' || fail 'release signing timestamp is missing'
+    /usr/bin/codesign --verify --strict --all-architectures --check-notarization \
+      --test-requirement '=notarized' "$candidate" \
+      || fail 'Apple could not verify the release notarization ticket'
+  fi
+  [ "$("$candidate" --version </dev/null)" = "swictation $release_version" ] \
+    || fail 'release command version does not match the requested version'
+  "$candidate" __install --archive "$archive" --sha256 "$expected" </dev/null
+  # Printed as a command for the user's shell, with literal variables.
+  # shellcheck disable=SC2016
+  case ":${PATH:-}:" in
+    *:"$HOME/.local/bin":*) ;;
+    *) printf '\nAdd swictation to your shell: export PATH="$HOME/.local/bin:$PATH"\n' ;;
+  esac
+  printf '\nNext: swictation setup\n'
+}
+main "$@" </dev/null
+fi

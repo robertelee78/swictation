@@ -1,4 +1,0 @@
-# This directory will contain build scripts:
-# - build.sh (main build script that compiles Rust binaries for Apple Silicon)
-#
-# Scripts will be created in later tasks.
