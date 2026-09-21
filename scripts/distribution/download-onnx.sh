@@ -19,7 +19,8 @@ destination=$2
 mkdir -p "$destination"
 archive="$destination/$distribution-$version.tgz"
 curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
-  --tlsv1.2 --connect-timeout 15 --max-time 600 --max-filesize "$expected_size" \
+  --tlsv1.2 --retry 3 --retry-delay 2 --retry-max-time 600 \
+  --connect-timeout 15 --max-time 600 --max-filesize "$expected_size" \
   "https://github.com/microsoft/onnxruntime/releases/download/v$version/$distribution-$version.tgz" \
   --output "$archive"
 python3 - "$archive" "$expected_size" "$expected_sha256" <<'PY'

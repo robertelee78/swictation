@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of requiring an unselected ONNX model. Existing `auto` configuration is preserved.
 - Daemon dry-run respects compiled CoreML support and uses available GPU memory,
   matching startup's ONNX fallback.
+- Release builds retry transient ONNX Runtime download failures.
 - Packaged release checks now exercise the actual daemon's automatic model
   selection and reject missing models on macOS and Linux.
 
